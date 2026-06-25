@@ -1,0 +1,195 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[codz]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py.cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+# .python-version
+
+# UV
+# uv.lock
+
+# pdm
+.pdm-python
+.pdm-build/
+
+# pixi
+.pixi
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# Redis
+*.rdb
+*.aof
+*.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.envrc
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+*.env
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# PyCharm / IDE
+.idea/
+.vscode/
+*.swp
+
+# Visual Studio Code
+tempCodeRunnerFile.py
+
+# Ruff stuff:
+.ruff_cache/
+
+# PyPI configuration file
+.pypirc
+
+# Marimo
+marimo/_static/
+marimo/_lsp/
+__marimo__/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# macOS
+.DS_Store
+
+# ─────────────────────────────────────────────────────
+# Argus project-specific
+# ─────────────────────────────────────────────────────
+
+# Claude Code local config (Bash 权限白名单等)
+.claude/
+
+# Test cases (各项目独立 repo 或本地数据，不进 argus repo)
+# 注意：用 `tests/*` 而不是 `tests/` —— 后者会让 git 不再递归进入该目录，
+# 导致下面的 `!tests/_template/` 例外失效。
+tests/*
+# 例外：tests/_template 是 argus 自带的「新项目骨架」模板，需要进 argus repo
+# 供其他人 clone 后参考（_accounts.json.example / README 写法等）
+!tests/_template/
+!tests/_template/**
+
+# Argus run artifacts (报告/截图/缓存)
+.argus_runs/
+
+# argus.mcp.client 的本地外部 MCP 配置（含 token）— .example 文件入库
+.argus/mcp_clients.json
+
+# argus-drive 在 repo 根目录生成的「最近一次报告」产物（symlink + 实体文件）
+/__auto__.html
+/latest.html
