@@ -7,7 +7,7 @@ import time
 
 from openai import OpenAI
 
-from .grid import img_to_png_bytes
+from .grid import img_to_png_bytes, draw_coordinate_grid
 from .logger import get_logger
 
 log = get_logger("brain")
@@ -202,6 +202,73 @@ def _extract_json(raw: str) -> dict:
     return json.loads(text)
 
 
+# action.type 方言别名 → argus 规范 type
+_ACTION_TYPE_ALIASES = {
+    "click": "tap", "left_click": "tap", "tap_point": "tap", "touch": "tap",
+    "double_click": "tap", "double_tap": "tap",
+    "type": "input", "type_text": "input", "input_text": "input", "text": "input",
+    "key": "press_key", "keypress": "press_key", "press": "press_key", "key_press": "press_key",
+    "scroll": "swipe", "drag": "swipe", "swipe_action": "swipe",
+}
+
+
+def _coerce_xy(action: dict, dst_x: str = "x", dst_y: str = "y") -> bool:
+    """把方言坐标(coordinate/position/point=[x,y])归一到 action[dst_x/dst_y]。
+    已有 dst_x/dst_y 则不动。返回是否成功定位坐标。"""
+    if dst_x in action and dst_y in action:
+        return True
+    for key in ("coordinate", "position", "point", "coord", "xy"):
+        v = action.get(key)
+        if isinstance(v, (list, tuple)) and len(v) >= 2:
+            action[dst_x], action[dst_y] = int(v[0]), int(v[1])
+            return True
+    return False
+
+
+def _normalize_action(action: dict) -> dict:
+    """把 GUI-agent 类模型(Qwen2.5-VL 等)的动作方言翻译成 argus 规范 schema。
+
+    这些模型受 grounding 训练强 prior 影响，倾向吐 {"type":"click","coordinate":[x,y]}
+    而非 argus 约定的 {"type":"tap","x":..,"y":..}，不翻译会被 execute_action 当未知
+    type / KeyError('x') 吞掉，每个动作变空操作。这里做无副作用的兼容映射。
+    """
+    if not isinstance(action, dict):
+        return action
+    raw_type = str(action.get("type", "")).lower().strip()
+    norm_type = _ACTION_TYPE_ALIASES.get(raw_type, raw_type)
+    action["type"] = norm_type
+
+    if norm_type == "tap":
+        _coerce_xy(action)
+    elif norm_type == "swipe":
+        # 起点 coordinate / 终点 coordinate2|to|end；或方言 direction 滚动
+        direction = str(action.get("direction", "")).lower()
+        if direction in ("up", "down") and "y1" not in action:
+            action["type"] = "scroll_up" if direction == "up" else "scroll_down"
+        else:
+            if "x1" not in action:
+                _coerce_xy(action, "x1", "y1")
+            if "x2" not in action:
+                for key in ("coordinate2", "to", "end", "target"):
+                    v = action.get(key)
+                    if isinstance(v, (list, tuple)) and len(v) >= 2:
+                        action["x2"], action["y2"] = int(v[0]), int(v[1])
+                        break
+    elif norm_type == "input":
+        if "text" not in action:
+            for key in ("value", "content", "input"):
+                if key in action:
+                    action["text"] = action[key]
+                    break
+    elif norm_type == "press_key":
+        if "key" not in action:
+            for key in ("keys", "value", "button"):
+                if key in action:
+                    action["key"] = action[key]
+                    break
+    return action
+
+
 def _image_block(png_bytes: bytes) -> dict:
     b64 = base64.standard_b64encode(png_bytes).decode()
     return {
@@ -297,7 +364,8 @@ class Brain:
                current_step_index: int = 1,
                completed_evidence: list[str] | None = None,
                plan_hint: str = "",
-               retry_feedback: str = "") -> dict | None:
+               retry_feedback: str = "",
+               use_grid: bool = False) -> dict | None:
         """Given a test case, screenshot, and UI tree, decide the next action.
 
         Args:
@@ -315,14 +383,21 @@ class Brain:
 
         Returns the decision dict, or None if all retries failed.
         """
-        # Always send the RAW screenshot (no grid overlay, no element marks)
-        # so the LLM can use its native visual grounding without occlusion.
-        if skill_context is not None and skill_context.raw_image is not None:
-            current_png = img_to_png_bytes(skill_context.raw_image)
-        else:
-            current_png = screenshot_png
-
         w, h = screen_size
+
+        # 默认发 RAW 截图（无网格/无标记），让 LLM 用原生视觉定位。
+        # 例外：use_grid（多次 no_effect 卡住时由 agent 触发一次）→ 叠坐标网格兜底，
+        # 让 LLM 照网格读精确像素坐标（复用 grid.draw_coordinate_grid）。
+        if skill_context is not None and skill_context.raw_image is not None:
+            if use_grid:
+                base = skill_context.raw_image
+                scale = base.width / w if w else 1.0
+                current_png = img_to_png_bytes(
+                    draw_coordinate_grid(base.copy(), scale, w, h))
+            else:
+                current_png = img_to_png_bytes(skill_context.raw_image)
+        else:
+            current_png = screenshot_png  # 无 raw_image 时降级原图（网格不可用）
 
         # Collect supplementary text from skills
         skills_text = ""
@@ -398,6 +473,16 @@ class Brain:
                 lines += ["", "### Planner 对当前 step 的预判", plan_hint]
             step_progress_section = "\n".join(lines) + "\n\n"
 
+        # ── 网格兜底提示（use_grid 时）──
+        grid_section = ""
+        if use_grid:
+            grid_section = (
+                "## 📐 坐标网格兜底（已多次点击无效，可能定位不准）\n"
+                "本张截图**叠加了红色坐标网格**：每 100px 粗线带数字标签、50px 中线带小标签。\n"
+                "请照网格读出目标元素的**精确像素坐标**(x, y) 再 tap，不要凭感觉估。\n"
+                "网格只是辅助读数，目标元素本身位置不变。\n\n"
+            )
+
         # ── Retry feedback — if previous decision was rejected ──
         retry_section = ""
         if retry_feedback:
@@ -411,6 +496,7 @@ class Brain:
         user_content.append({
             "type": "text",
             "text": (
+                f"{grid_section}"
                 f"{retry_section}"
                 f"## 屏幕尺寸\n宽={w}, 高={h}。"
                 f"所有坐标必须在此范围内 (0 <= x <= {w}, 0 <= y <= {h})。\n\n"
@@ -449,6 +535,8 @@ class Brain:
             try:
                 raw, final_msg = self._call_with_tools(messages)
                 decision = _extract_json(raw)
+                if isinstance(decision.get("action"), dict):
+                    decision["action"] = _normalize_action(decision["action"])
 
                 self.history.append({
                     "observation": decision.get("observation", ""),
@@ -567,7 +655,10 @@ class Brain:
         lines = []
         for i, h in enumerate(self.history, 1):
             line = f"{i}. {h['observation']} → {json.dumps(h['action'], ensure_ascii=False)}"
-            if h.get("no_effect"):
+            if h.get("focused_input"):
+                line += ("  ✅ 该 tap 唤起了软键盘=已成功聚焦输入框（像素变化虽小但有效，"
+                         "**不要再点别处/重复点**，下一步直接用 input 动作输入文字）")
+            elif h.get("no_effect"):
                 line += "  ⚠️ 该动作未产生任何可见变化（点击可能落空/被遮挡/坐标偏差，请勿重复同一坐标）"
             lines.append(line)
         return "\n".join(lines)

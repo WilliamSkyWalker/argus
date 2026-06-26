@@ -169,6 +169,9 @@ class Agent:
         steps_detail: list[dict] = []
         start_time = time.time()
         prev_raw_image = None
+        prev_ime_visible = False  # 上一回合软键盘是否可见（检测 tap 是否唤起键盘=聚焦输入框）
+        consec_no_effect = 0      # 连续 no_effect 次数（定位不准的信号）
+        grid_tried = False        # 本卡顿周期是否已发过坐标网格兜底图（只发一次）
 
         # turn = LLM 调用次数（含被 reject 的、含成功的 sub-action）。
         # max_steps 是兜底防失控；正常路径走 PER_STEP_SUB_ACTION_LIMIT 控流。
@@ -273,10 +276,33 @@ class Agent:
                                         "scroll_up", "scroll_down", "press_key"):
                     diff_res = ctx.skill_results.get("visual_diff")
                     if diff_res and not diff_res.metadata.get("changed", True):
-                        prev_entry["no_effect"] = True
-                        log.warning("[Turn %d] 上次 %s 无可见变化 (change=%.2f%%)",
-                                    turn, prev_action_type,
-                                    diff_res.metadata.get("change_ratio", 0) * 100)
+                        # 例外：tap 后软键盘从无→有 = 成功聚焦了输入框。键盘弹出在截图里
+                        # 像素变化极小（visual_diff 会判 unchanged），但这是**有效**操作 —
+                        # 不能当 no_effect 让 LLM 去重复点别处，要正向提示它「已聚焦，去 input」。
+                        if prev_action_type == "tap" and ime_visible and not prev_ime_visible:
+                            prev_entry["focused_input"] = True
+                            consec_no_effect = 0  # 聚焦成功，重置卡住计数
+                            log.info("[Turn %d] 上次 tap 唤起软键盘，判定输入框已聚焦"
+                                     "（不计 no_effect，提示 LLM 直接 input）", turn)
+                        else:
+                            prev_entry["no_effect"] = True
+                            consec_no_effect += 1
+                            log.warning("[Turn %d] 上次 %s 无可见变化 (change=%.2f%%, 连续%d次)",
+                                        turn, prev_action_type,
+                                        diff_res.metadata.get("change_ratio", 0) * 100,
+                                        consec_no_effect)
+                    else:
+                        consec_no_effect = 0  # 有可见变化，重置
+                        grid_tried = False
+
+            prev_ime_visible = ime_visible  # 记录本回合键盘态，供下一回合检测 tap 是否唤起键盘
+
+            # 连续多次点击无效 = 大概率定位不准 → 兜底发一次坐标网格图帮 LLM 读精确坐标
+            use_grid = consec_no_effect >= 2 and not grid_tried
+            if use_grid:
+                grid_tried = True
+                log.info("[Turn %d] 连续 %d 次 no_effect，本回合发坐标网格图兜底（仅一次）",
+                         turn, consec_no_effect)
 
             # ── 3. Think — LLM 决策（带 step 上下文 + planner hint + retry_feedback）──
             t_llm = time.time()
@@ -288,6 +314,7 @@ class Agent:
                 completed_evidence=completed_evidence,
                 plan_hint=plan_hints_by_idx.get(current_step_index, ""),
                 retry_feedback=retry_feedback,
+                use_grid=use_grid,
             )
             log.info("[Turn %d] LLM 决策完成 (%.2fs)", turn, time.time() - t_llm)
 

@@ -87,6 +87,64 @@ def _parse_ios_ui_tree(xml_str: str, scale: float) -> list[dict]:
     return elements
 
 
+def _parse_android_ui_tree(xml_str: str, scale: float) -> list[dict]:
+    """Extract clickable elements from Android uiautomator XML.
+
+    Android 节点用 ``bounds="[x1,y1][x2,y2]"``（设备像素，与截图同一坐标系）。
+    **关键：无 text / content-desc 的裸 clickable 节点也编号** —— Flutter App 的
+    输入框、图标按钮常常没有 a11y 标签（text/desc 全空），LLM 无法靠文字匹配定位，
+    只能靠「编号 + 精确中心」点击。不标的话就只能视觉估算 → 小元素必偏。
+    """
+    elements = []
+    try:
+        root = ET.fromstring(xml_str)
+    except ET.ParseError:
+        return elements
+
+    bound_re = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
+    # 先求屏幕尺寸（用于过滤整屏背景容器）
+    screen_w = screen_h = 0
+    for elem in root.iter():
+        m = bound_re.match(elem.get("bounds", "") or "")
+        if m:
+            screen_w = max(screen_w, int(m.group(3)))
+            screen_h = max(screen_h, int(m.group(4)))
+
+    idx = 0
+    seen = set()
+    for elem in root.iter():
+        if elem.get("clickable") != "true":
+            continue
+        m = bound_re.match(elem.get("bounds", "") or "")
+        if not m:
+            continue
+        x1, y1, x2, y2 = (int(m.group(i)) for i in range(1, 5))
+        w, h = x2 - x1, y2 - y1
+        if w < 12 or h < 12:
+            continue
+        # 跳过近整屏的背景/遮罩容器（>92% 屏宽且 >92% 屏高）
+        if screen_w and screen_h and w >= 0.92 * screen_w and h >= 0.92 * screen_h:
+            continue
+        key = (x1, y1, x2, y2)
+        if key in seen:
+            continue
+        seen.add(key)
+        label = (elem.get("content-desc") or elem.get("text") or "").strip()
+        cls = (elem.get("class") or "").rsplit(".", 1)[-1]
+        idx += 1
+        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+        elements.append({
+            "index": idx,
+            "label": label,
+            "type": cls or "node",
+            "center": (cx, cy),
+            "bounds": (x1, y1, x2, y2),
+            "pixel_bounds": (x1, y1, x2, y2),   # Android: tree px == screenshot px
+            "pixel_center": (cx, cy),
+        })
+    return elements
+
+
 def _parse_browser_dom(html_str: str, scale: float) -> list[dict]:
     """Extract interactive elements from browser DOM summary."""
     elements = []
@@ -188,8 +246,10 @@ class ElementMarkerSkill(Skill):
         if not ui_tree or ui_tree.strip() in ("", "N/A", "none"):
             return SkillResult(text="[Element Marker: UI tree 为空]")
 
-        # Try iOS XML first, then browser DOM
-        if ui_tree.strip().startswith("<"):
+        # 按树类型分发：Android(bounds=) / iOS(frame=) / browser DOM
+        if 'bounds="[' in ui_tree:
+            elements = _parse_android_ui_tree(ui_tree, scale)
+        elif ui_tree.strip().startswith("<"):
             elements = _parse_ios_ui_tree(ui_tree, scale)
         else:
             elements = _parse_browser_dom(ui_tree, scale)
