@@ -171,7 +171,6 @@ class Agent:
         prev_raw_image = None
         prev_ime_visible = False  # 上一回合软键盘是否可见（检测 tap 是否唤起键盘=聚焦输入框）
         consec_no_effect = 0      # 连续 no_effect 次数（定位不准的信号）
-        grid_tried = False        # 本卡顿周期是否已发过坐标网格兜底图（只发一次）
 
         # turn = LLM 调用次数（含被 reject 的、含成功的 sub-action）。
         # max_steps 是兜底防失控；正常路径走 PER_STEP_SUB_ACTION_LIMIT 控流。
@@ -293,15 +292,18 @@ class Agent:
                                         consec_no_effect)
                     else:
                         consec_no_effect = 0  # 有可见变化，重置
-                        grid_tried = False
 
             prev_ime_visible = ime_visible  # 记录本回合键盘态，供下一回合检测 tap 是否唤起键盘
 
-            # 连续多次点击无效 = 大概率定位不准 → 兜底发一次坐标网格图帮 LLM 读精确坐标
-            use_grid = consec_no_effect >= 2 and not grid_tried
+            # 定位不准的重试阶梯（按连续 no_effect 次数升级）：
+            #   首次(0)      —— brain 原始坐标，不吸附不网格
+            #   重试 1-2 次  —— 打开 tap 吸附，把坐标回吸到最近可交互节点（含输入框）
+            #   重试 3-4 次  —— 发坐标网格红线图，让 LLM 照网格读精确坐标
+            if hasattr(self.platform, "set_snap_enabled"):
+                self.platform.set_snap_enabled(consec_no_effect in (1, 2))
+            use_grid = consec_no_effect in (3, 4)
             if use_grid:
-                grid_tried = True
-                log.info("[Turn %d] 连续 %d 次 no_effect，本回合发坐标网格图兜底（仅一次）",
+                log.info("[Turn %d] 连续 %d 次 no_effect，发坐标网格图帮 LLM 读精确坐标",
                          turn, consec_no_effect)
 
             # ── 3. Think — LLM 决策（带 step 上下文 + planner hint + retry_feedback）──

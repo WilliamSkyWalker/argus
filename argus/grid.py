@@ -6,6 +6,12 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 def load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    # freetype on some systems raises "division by zero" when *rendering* text
+    # at tiny sizes (1-7 observed) — and that crash happens at draw.text() time,
+    # outside this try/except. Clamp small-but-nonzero sizes to a safe floor so
+    # a downscaled overlay (scale < 1) can never bring the whole run down.
+    if 0 < size < 8:
+        size = 8
     try:
         return ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", size)
     except Exception:

@@ -1629,7 +1629,11 @@ def _run_dispatched_devices(cfg: dict, test_cases: list[str],
                 log.info("[%d/%d Worker %d] 结果: %s",
                          n_done, total, worker_idx, result.get("result", "?"))
             except Exception as e:
-                log.error("[%d/%d Worker %d] 用例异常: %s", n_done, total, worker_idx, e)
+                # exc_info so a framework crash (vs a test fail) leaves a stack
+                # in the log instead of a bare message — a bare "division by
+                # zero" cost a full debug cycle once.
+                log.error("[%d/%d Worker %d] 用例异常: %s",
+                          n_done, total, worker_idx, e, exc_info=True)
                 result = {"result": "error", "reason": str(e),
                           "steps": 0, "duration": 0, "steps_detail": []}
 

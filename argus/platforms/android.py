@@ -18,15 +18,26 @@ from .base import Platform
 
 log = get_logger("android")
 
-# tap 吸附到 clickable 节点：执行 tap 前，若 UI tree 中存在包含该坐标的
-# clickable 节点，则把落点修正到该节点 bounds 中心。对没有可用 UI tree 的
-# app（如 Flutter，树里无 clickable 节点）天然 no-op —— 永远找不到包含节点，
-# 原样 tap，行为与改动前逐字节相同。可用 TAP_SNAP_TO_CLICKABLE=0 关闭。
+# tap 吸附到可交互节点：执行 tap 前的坐标修正，分两条规则——
+#   ① 落点已落在某可交互节点内 → **原样点，不挪到中心**。落点既然已在节点内，
+#      Android 本就会把这一下派发给它，挪到几何中心无收益；而 Flutter 自绘控件的
+#      a11y bounds 常 ≠ 真实触摸热区（如紫圈输入栏：热区在右侧圆环，a11y 节点却满宽、
+#      中心是死区），挪到中心反而把对的落点改成死点。尊重 brain 的节点内精确落点。
+#   ② 落点落在所有可交互节点之外、但紧邻某小节点（间隙 ≤ 屏宽×NEAR 比例）
+#      → 回吸到该节点中心，补偿 VLM 对小元素的小幅坐标偏移（差一点点点歪）。
+# 「可交互节点」= clickable="true" 或 focusable="true"。focusable 覆盖输入框/可编辑
+#   文字节点（如展开后的紫圈输入条占位文字），让 brain 点歪到输入条右侧空白/图标时，
+#   能回吸到左侧可编辑文字节点完成聚焦。
+# 吸附不再每次 tap 都跑：首次定位用 brain 原始坐标（_snap_enabled=False），仅在连续
+#   no_effect 的重试 1-2 次由 agent 打开（见 agent.py 的 consec_no_effect 阶梯）。
+# 对没有可用 UI tree 的 app（如纯 Flutter Canvas，树里无可交互节点）天然 no-op。
+# 可用 TAP_SNAP_TO_CLICKABLE=0 彻底关闭（连重试也不吸附）。
 _TAP_SNAP_TO_CLICKABLE = os.environ.get(
     "TAP_SNAP_TO_CLICKABLE", "1").strip().lower() not in ("0", "false", "no", "off")
-# 吸附安全阈值：包含坐标的最小 clickable 节点若面积大于屏幕的此比例，
-# 视为全屏/大容器，放弃吸附（避免把 tap 拽到无意义的容器中心）。
+# 吸附安全阈值：节点面积大于屏幕的此比例视为全屏/大容器，不作为吸附目标。
 _TAP_SNAP_MAX_AREA_RATIO = 0.55
+# 回吸近邻阈值：落点在节点外、间隙 ≤ 屏宽×此值时，才视为「差一点点」回吸（约 43px@1080）。
+_TAP_SNAP_NEAR_MARGIN_RATIO = 0.04
 
 ANDROID_PROMPT_SEGMENT = """你正在操作一个 Android 设备来执行测试用例。
 
@@ -69,6 +80,8 @@ class AndroidPlatform(Platform):
         self._u2: u2.Device | None = None
         # 最近一次 dump 的原始 UI tree XML，供 tap 吸附复用（不额外 dump）
         self._last_raw_tree: str = ""
+        # tap 吸附开关：首次定位关、重试 1-2 次时由 agent 打开（见 set_snap_enabled）
+        self._snap_enabled: bool = False
 
     def _find_adb(self) -> str:
         """Locate adb executable. Check PATH first, then common Android SDK locations."""
@@ -172,10 +185,26 @@ class AndroidPlatform(Platform):
         return serial
 
     def _detect_screen_size(self) -> None:
-        """Detect physical screen size and density."""
+        """Detect screen size and density.
+
+        ``wm size`` may report two lines on devices whose resolution has been
+        overridden (common on Samsung: "FHD/QHD" toggle)::
+
+            Physical size: 1440x3088
+            Override size: 1080x2316
+
+        ``screencap`` returns the *override* (current) resolution, and
+        uiautomator2 taps operate in that same space — so we MUST use the
+        Override size when present, not the Physical one. Grabbing the first
+        ``\\d+x\\d+`` match (Physical) would desync coordinates AND make the
+        brain's grid-overlay font scale (screenshot.width / screen_width < 1)
+        small enough to hit a freetype size 1-7 crash.
+        """
         # Physical size: e.g. "Physical size: 1080x2340"
         output = self._adb("shell", "wm", "size")
-        match = re.search(r"(\d+)x(\d+)", output)
+        match = re.search(r"Override size:\s*(\d+)x(\d+)", output) \
+            or re.search(r"Physical size:\s*(\d+)x(\d+)", output) \
+            or re.search(r"(\d+)x(\d+)", output)
         if match:
             self._screen_width = int(match.group(1))
             self._screen_height = int(match.group(2))
@@ -253,22 +282,25 @@ class AndroidPlatform(Platform):
     # --- Actions ---
 
     def _snap_to_clickable(self, x: int, y: int) -> tuple[int, int]:
-        """把 tap 落点吸附到包含 (x,y) 的、面积最小的 clickable 节点中心。
+        """tap 前坐标修正（两条规则见模块顶部 _TAP_SNAP_* 注释）：
 
-        动机：原生 Android app 里 brain 常把坐标估在文字标签上、或无文字
-        ImageView 旁边略偏 —— 这些落点其实落在「可点击父容器 / clickable
-        ImageView」的 bounds 内。吸附到该节点中心可显著提升命中率。
+        ① 落点已在某可交互节点内 → 原样返回，不挪到中心（尊重 brain 的
+           节点内精确落点；Flutter 自绘控件中心常是死区，挪过去反而点不中）。
+        ② 落点在所有可交互节点之外、但紧邻某小节点（间隙 ≤ 屏宽×NEAR）
+           → 回吸到该节点中心，补偿 VLM 对小元素的小幅偏移。
 
-        对 Flutter 等无 UI tree 的 app 天然 no-op：``self._last_raw_tree``
-        里没有 clickable 节点 → 找不到包含节点 → 返回原坐标。
+        「可交互节点」= clickable="true" 或 focusable="true"。后者覆盖输入框 /
+        可编辑文字节点，让 brain 点歪到输入条右侧空白/图标时回吸到左侧可编辑文字
+        节点完成聚焦。对纯 Flutter Canvas（树里无可交互节点）天然 no-op。
         """
         if not _TAP_SNAP_TO_CLICKABLE or not self._last_raw_tree:
             return x, y
         screen_area = max(1, self._screen_width * self._screen_height)
-        best = None  # (area, cx, cy)
+        margin = self._screen_width * _TAP_SNAP_NEAR_MARGIN_RATIO
+        near = None  # (gap, area, cx, cy) —— 落点之外、紧邻的小节点候选
         for m in re.finditer(r'<node\s+([^>]*?)/?>', self._last_raw_tree):
             attrs = m.group(1)
-            if 'clickable="true"' not in attrs:
+            if 'clickable="true"' not in attrs and 'focusable="true"' not in attrs:
                 continue
             b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', attrs)
             if not b:
@@ -276,23 +308,38 @@ class AndroidPlatform(Platform):
             x1, y1, x2, y2 = map(int, b.groups())
             if x2 <= x1 or y2 <= y1:
                 continue
-            if not (x1 <= x <= x2 and y1 <= y <= y2):
-                continue
             area = (x2 - x1) * (y2 - y1)
-            # 跳过全屏/大容器，避免把 tap 拽到无意义的中心
+            # 全屏/大容器不作为吸附目标
             if area > screen_area * _TAP_SNAP_MAX_AREA_RATIO:
                 continue
-            if best is None or area < best[0]:
-                best = (area, (x1 + x2) // 2, (y1 + y2) // 2)
-        if best is None:
+            # 规则①：落点已在该 clickable 内 → 原样点
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                return x, y
+            # 规则②候选：落点在节点外，计算到该节点的间隙（chebyshev）
+            gap = max(x1 - x, 0, x - x2, y1 - y, 0, y - y2)
+            if gap <= margin:
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                if near is None or gap < near[0] or (gap == near[0] and area < near[1]):
+                    near = (gap, area, cx, cy)
+        if near is None:
             return x, y
-        _, cx, cy = best
+        _, _, cx, cy = near
         if (cx, cy) != (x, y):
-            log.info("tap 吸附到 clickable 节点: (%d,%d) → (%d,%d)", x, y, cx, cy)
+            log.info("tap 回吸到邻近可交互节点: (%d,%d) → (%d,%d)", x, y, cx, cy)
         return cx, cy
 
+    def set_snap_enabled(self, enabled: bool) -> None:
+        """由 agent 按 no_effect 重试阶梯控制 tap 吸附开关。
+
+        首次定位用 brain 原始坐标（关）；连续 no_effect 的重试 1-2 次打开吸附，
+        让坐标回吸到最近的可交互节点（补偿小元素偏移 / 点歪到输入条空白区）。
+        """
+        self._snap_enabled = enabled
+
     def tap(self, x: int, y: int) -> None:
-        x, y = self._snap_to_clickable(x, y)
+        # 吸附仅在 agent 打开 _snap_enabled 时跑（重试 1-2 次）；首次定位原样点。
+        if self._snap_enabled:
+            x, y = self._snap_to_clickable(x, y)
         self._adb("shell", "input", "tap", str(x), str(y))
 
     def input_text(self, text: str) -> None:
