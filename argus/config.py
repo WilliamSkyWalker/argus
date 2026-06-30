@@ -50,7 +50,9 @@ DEFAULT_CONFIG = {
     "FIGMA_TOKEN": "",
     "FIGMA_FILE_KEY": "",
     # Agent
-    "AGENT_MAX_STEPS": "20",
+    # AGENT_MAX_STEPS：整个 scenario 的 turn 绝对兜底；<=0 = 禁用（默认），
+    # 由 agent.py 的 per-step MAX_TURNS_WITHOUT_PROGRESS 收敛。>0 则作硬顶。
+    "AGENT_MAX_STEPS": "0",
     "AGENT_STEP_DELAY": "1.0",
     # Skills (comma-separated, or "all" / "none")
     "SKILLS_ENABLED": "loading_detector,keyboard_detector,scroll_map,element_marker,visual_diff,toast_detector",

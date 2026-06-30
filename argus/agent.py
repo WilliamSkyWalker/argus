@@ -48,6 +48,12 @@ PER_STEP_SUB_ACTION_LIMIT = -1
 # fail the step with a clear reason rather than burning all sub-actions.
 MAX_REJECTS_PER_STEP = 3
 
+# 连续多少个 turn「未推进到下一 Gherkin step」就判该 step fail（每推进一步即重置）。
+# 这是禁用 PER_STEP_SUB_ACTION_LIMIT / AGENT_MAX_STEPS 后的主收敛保护：
+# 正常长 step（如多屏滚动，每次都在干活但只在末尾 pass）有足够 turn 余量；
+# 真卡死（不停动作却永不 pass）会在这里被掐断。整 case 上限 ≈ n_steps × 本值。
+MAX_TURNS_WITHOUT_PROGRESS = 15
+
 # 匹配 Gherkin step 行（Given/When/Then/And/But + 后续文本）
 _STEP_LINE_RE = re.compile(r'^\s*(Given|When|Then|And|But)\s+(.+)$')
 
@@ -172,10 +178,24 @@ class Agent:
         prev_raw_image = None
         prev_ime_visible = False  # 上一回合软键盘是否可见（检测 tap 是否唤起键盘=聚焦输入框）
         consec_no_effect = 0      # 连续 no_effect 次数（定位不准的信号）
+        turns_without_progress = 0  # 自上次推进到下一 step 以来累计的 turn（推进即清零）
 
         # turn = LLM 调用次数（含被 reject 的、含成功的 sub-action）。
-        # max_steps 是兜底防失控；正常路径走 PER_STEP_SUB_ACTION_LIMIT 控流。
-        for turn in range(1, self.max_steps + 1):
+        # 主收敛：per-step 的 MAX_TURNS_WITHOUT_PROGRESS（连续无推进即 fail）。
+        # self.max_steps 为可选绝对兜底：AGENT_MAX_STEPS<=0 时禁用（仅靠 per-step 上限收敛）。
+        turn = 0
+        while True:
+            turn += 1
+            # 绝对兜底（默认禁用，AGENT_MAX_STEPS>0 才作硬顶）
+            if self.max_steps > 0 and turn > self.max_steps:
+                log.warning("达到外层 max_steps 限制 (%d)，测试未完成", self.max_steps)
+                for i in step_status:
+                    if step_status[i] == "pending":
+                        step_status[i] = "skip"
+                return self._build_result(
+                    "timeout", f"max_steps {self.max_steps} reached",
+                    turn, start_time, steps_detail, scenario_steps, step_status,
+                )
             turn_start = time.time()
             step_record = {
                 "turn": turn,
@@ -186,7 +206,20 @@ class Agent:
                 "rejected": False, "reject_reason": "",
             }
 
-            # ── 0. Per-step sub-action 上限保护（PER_STEP_SUB_ACTION_LIMIT < 0 时禁用，仅由 max_steps 兜底）──
+            # ── 0. 连续无推进上限（主收敛：到达即 fail；推进到下一 step 会重置计数）──
+            if turns_without_progress >= MAX_TURNS_WITHOUT_PROGRESS:
+                msg = (f"Step {current_step_index} 连续 {MAX_TURNS_WITHOUT_PROGRESS} 个 turn"
+                       f" 未推进到下一步，标 fail 并终止 scenario")
+                log.warning(msg)
+                step_status[current_step_index] = "fail"
+                for i in range(current_step_index + 1, n_steps + 1):
+                    step_status[i] = "skip"
+                return self._build_result(
+                    "fail", f"step {current_step_index} no-progress: {msg}",
+                    turn, start_time, steps_detail, scenario_steps, step_status,
+                )
+
+            # ── 0b. Per-step sub-action 上限保护（PER_STEP_SUB_ACTION_LIMIT < 0 时禁用）──
             if PER_STEP_SUB_ACTION_LIMIT >= 0 and sub_actions_in_step >= PER_STEP_SUB_ACTION_LIMIT:
                 msg = (f"Step {current_step_index} 超过 {PER_STEP_SUB_ACTION_LIMIT} 次 sub-action"
                        f" 仍未推进，标 fail 并终止 scenario")
@@ -209,6 +242,9 @@ class Agent:
                 return self._build_result(
                     "fail", msg, turn, start_time, steps_detail, scenario_steps, step_status,
                 )
+
+            # 本 turn 先计入"未推进"；若稍后 status==pass 推进到下一 step，会在推进分支清零
+            turns_without_progress += 1
 
             # ── 1. Pre-turn — dismiss 已知系统弹窗 ──
             try:
@@ -392,6 +428,7 @@ class Agent:
                 current_step_index = llm_step_idx + 1
                 sub_actions_in_step = 0
                 rejects_in_step = 0
+                turns_without_progress = 0   # 推进了 → 清零无进展计数
                 time.sleep(self.step_delay)
                 continue
 
@@ -430,14 +467,15 @@ class Agent:
             steps_detail.append(step_record)
             time.sleep(self.step_delay)
 
-        # 外层 max_steps 兜底（不应该走到这里 — per-step limit 应先触发）
-        log.warning("达到外层 max_steps 限制 (%d)，测试未完成", self.max_steps)
+        # while True 仅通过上面的各 return 退出（推进完成 / 各上限 fail）。
+        # 防御性兜底：理论不可达，防未来误加 break 时静默漏判。
+        log.warning("主循环异常退出（不应到达）")
         for i in step_status:
             if step_status[i] == "pending":
                 step_status[i] = "skip"
         return self._build_result(
-            "timeout", f"max_steps {self.max_steps} reached (per-step limit 也未触发，可能是 bug)",
-            self.max_steps, start_time, steps_detail, scenario_steps, step_status,
+            "timeout", "loop exited unexpectedly",
+            turn, start_time, steps_detail, scenario_steps, step_status,
         )
 
     @staticmethod
