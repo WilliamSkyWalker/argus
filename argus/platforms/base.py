@@ -122,7 +122,8 @@ class Platform(ABC):
             wait_time = min(action.get("seconds", 2), 5)
             time.sleep(wait_time)
         elif action_type in ("open_app", "open_url"):
-            target = action.get("bundle_id") or action.get("url") or action.get("target", "")
+            target = (action.get("bundle_id") or action.get("package")
+                      or action.get("url") or action.get("target", ""))
             self.open_target(target)
         else:
             self._handle_platform_action(action)
