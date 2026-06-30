@@ -39,8 +39,9 @@ log = get_logger("agent")
 ACTION_MAX_RETRIES = 2
 
 # Max LLM sub-actions per Gherkin step before we force a step timeout.
-# 用户配置：10 per step，全 case 不设总额（实际由 self.max_steps 兜底防失控）。
-PER_STEP_SUB_ACTION_LIMIT = 10
+# -1 = 禁用该上限（不按 sub-action 次数掐断 step）。禁用后由外层 self.max_steps 兜底防失控，
+# 配合 no_effect 重试阶梯 + MAX_REJECTS_PER_STEP 控制无效重试；正数则恢复硬上限。
+PER_STEP_SUB_ACTION_LIMIT = -1
 
 # Max consecutive validator rejects within a single step. If the LLM
 # can't produce a valid step_progress block after this many tries we
@@ -185,8 +186,8 @@ class Agent:
                 "rejected": False, "reject_reason": "",
             }
 
-            # ── 0. Per-step sub-action 上限保护 ──
-            if sub_actions_in_step >= PER_STEP_SUB_ACTION_LIMIT:
+            # ── 0. Per-step sub-action 上限保护（PER_STEP_SUB_ACTION_LIMIT < 0 时禁用，仅由 max_steps 兜底）──
+            if PER_STEP_SUB_ACTION_LIMIT >= 0 and sub_actions_in_step >= PER_STEP_SUB_ACTION_LIMIT:
                 msg = (f"Step {current_step_index} 超过 {PER_STEP_SUB_ACTION_LIMIT} 次 sub-action"
                        f" 仍未推进，标 fail 并终止 scenario")
                 log.warning(msg)
