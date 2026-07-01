@@ -118,7 +118,7 @@ SHARED_SYSTEM_PROMPT = """你是一个专业的 QA 测试工程师 Agent。{plat
    - **后端 API / 接口调用** — `调用 /v1/xxx`、`POST request 发起`、`后端 mock 返回 X`
    - **内部 method / store / route** — `Navigator.push`、`XxxStore.method()`、`XxxRoute` 路由名
    - **HapticFeedback / 震动** — 物理反馈不可视
-   - **系统通知抽屉 / 系统设置页** — Android 通知中心、Settings App（在 NewsBang App 之外）
+   - **系统通知抽屉 / 系统设置页** — Android 通知中心、Settings App（在被测 App 之外）
    - **跨 App / Deeplink 目标 App** — 如「跳转到 Gmail」「打开 Maps」（已离开被测 App）
 
    遇到这类 step：

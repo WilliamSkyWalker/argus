@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Argus — a vision-based AI Agent that replaces human QA testers. Given a BDD `.feature` (Cucumber-Gherkin) or TDD-style markdown case, the agent observes the screen (iOS / Android / Browser), decides what to do, executes actions, and judges pass/fail autonomously. Supports Figma design integration for auto-generating test cases and visual review.
 
-主战场是 Android — `tests/nb_cases/` (NewsBang app, BDD `.feature` 格式)，独立 git 仓库挂在子目录里。
+主战场是 Android — `tests/nb_cases/`（移动端 App，BDD `.feature` 格式），独立 git 仓库挂在子目录里。
 
 ## Architecture
 
@@ -399,16 +399,17 @@ TAP_SNAP_TO_CLICKABLE=1
 - **多设备动态调度**：`--device s1 s2 ...` 共享 case 队列 + 账号池自动绑定 + APK 并行安装 + adb connect 自愈
 - **报告 evidence + logger case 标识**：报告渲染 evidence；logger 每行带 case ID，便于审查 LLM 是否谎报
 
-### VLM 当前限制
+### 坐标定位 & tap 准确性
 
-- **小元素 y 坐标偏差**：贴边缘小按钮（33×25 等）垂直方向有 ~50 px 系统性偏差，patch tokenization 硬伤
+- **tap 点不中的真因是分辨率/缩放没标定对，不是 VLM 的 y 轴系统偏差**。截图像素 → 设备像素的映射算错（尤其 `screencap` 出图尺寸 ≠ `wm size` 物理分辨率的设备，如三星 Override 分辨率）会让落点整体偏移。标定对了，视觉坐标就落中。~~"小元素 ~50px patch tokenization 硬伤"是错误说法，已废弃~~。
 - **应对**：
-  1. **优先用 UI tree bounds 坐标**（brain prompt 里写得很死：UI tree 有匹配 clickable 节点必须用 bounds 中心，不要视觉估算）
-  2. `element_marker` skill 给元素画编号 + bounds 映射表
-  3. 视觉估算只在 Flutter Canvas / 图像区域兜底
+  1. **先标定分辨率**：每台设备读一次 `wm size` + `screencap` 实际尺寸，算 `设备px/截图px` 比例；相等就 1:1，不等按比例换算。这是 tap 准确性的根。
+  2. **Flutter App 纯视觉**：`uiautomator dump` 报 `ERROR: could not get idle state`、拿不到可用节点树 → 照截图看到的点，别去拿树（拿了也是空/白费）。
+  3. **原生控件 App 才用 UI tree bounds 辅助**：dump 得到真实带 bounds 的树时，用 `clickable` 节点 bounds 中心比视觉更精确。下面 3 项都是**针对原生树**的既有机制，对 Flutter 天然 no-op：
+     - `element_marker` skill 给元素画编号 + bounds 映射表
+     - **tap 吸附（snap-to-clickable）**：`android.py` 执行 tap 前，若坐标落在某 `clickable=true` 节点 bounds 内，自动把落点修正到该节点（面积最小者）中心。可用 `TAP_SNAP_TO_CLICKABLE=0` 关闭，>55% 屏幕的大容器不吸附
+     - **UI tree 简化**：`get_ui_tree()` 只返回原始树，LLM-facing 简化统一在 `brain.py:_compact_android_xml`（合并 clickable 父+文字子成一行、剥 resource-id 包名前缀、砍 class 噪音）
   4. Hints 段写方位（"右上角"、"X 按钮左边"）**不写精确像素坐标**
-  5. **tap 吸附（snap-to-clickable）**：`android.py` 执行 tap 前，若坐标落在某 `clickable=true` 节点 bounds 内，自动把落点修正到该节点（面积最小者）中心，再点。专治「brain 点到文字标签 / 无文字 ImageView 旁边略偏」。**对 Flutter 天然 no-op**（树里无 clickable 节点 → 不修正，行为不变）。可用 `TAP_SNAP_TO_CLICKABLE=0` 关闭，>55% 屏幕的大容器不吸附
-  6. **UI tree 简化收拢到一处**：`android.py` 的 `get_ui_tree()` 只返回**原始树**（dialog_dismisser / is_ime_visible 直接吃原始树，更准），LLM-facing 的简化统一在 `brain.py:_compact_android_xml`：①把 clickable 父节点 + 其内部文字子节点**合并成一行**（文字直接进 `text=`，解决「文字在子、点击在父」认不出该点哪的问题，小元素优先认领）②剥掉 resource-id 的包名前缀（`com.x:id/foo`→`id=foo`）③砍 class 噪音。实测能把树压到 1/3 以下、让便宜模型（gemini-2.5-flash）也愿意查树而非瞎估
 
 ### 测试用例书写约定
 
