@@ -455,7 +455,9 @@ def _install_apk_on_devices(apk_path: str, serials: list[str]) -> list[str]:
     def _try_install_once(serial: str) -> tuple[bool, str]:
         try:
             result = subprocess.run(
-                [adb, "-s", serial, "install", "-r", apk_path],
+                # -g：安装时授予全部运行时权限（含 POST_NOTIFICATIONS）→ 默认允许推送、
+                # 消除首启权限弹窗干扰（测试环境默认放行）。
+                [adb, "-s", serial, "install", "-r", "-g", apk_path],
                 capture_output=True, text=True, timeout=300,
             )
             ok = result.returncode == 0 and "Success" in result.stdout
