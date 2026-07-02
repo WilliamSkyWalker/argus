@@ -9,7 +9,8 @@ Step-driven model (修正版档 3 — 「看全局，禁跳跃」):
 
   The LLM always sees the **full** step list (for narrative context) but
   every decision passes through ``step_validator``:
-    - current_step_index must be monotonic (+0 or +1, never jump)
+    - current_step_index must equal the pending step (指针推进由 agent 完成，
+      LLM 自行 +1 会被 reject —— 防止当前 step 未执行就 pass 下一 step)
     - evidence required + must reference concrete screen elements when
       status is pass/fail
     - fail_reason required when status=fail
@@ -140,6 +141,13 @@ class Agent:
 
         # 提取 Scenario 的 step 列表（用于 step 级报告 + LLM narrative）
         scenario_steps = _extract_scenario_steps(test_case)
+        if not scenario_steps:
+            # inline / 无 Steps 段的 case：合成单 step，否则 n_steps=0 会让
+            # validator 拒绝一切 index（合法范围 1..0），case 必 fail
+            summary = next((ln.strip() for ln in test_case.splitlines() if ln.strip()),
+                           test_case.strip())
+            scenario_steps = [summary[:200]]
+            log.info("case 无 Steps 段，合成单 step: %s", scenario_steps[0])
         n_steps = len(scenario_steps)
         step_status: dict[int, str] = {i: "pending" for i in range(1, n_steps + 1)}
         log.info("Scenario steps 提取: %d 步", n_steps)
@@ -272,7 +280,11 @@ class Agent:
                 sub_actions_in_step += 1
                 continue
 
-            ui_tree = self.platform.get_ui_tree()
+            try:
+                ui_tree = self.platform.get_ui_tree()
+            except Exception as e:
+                log.warning("[Turn %d] UI tree 获取失败（继续跑，仅靠截图）: %s", turn, e)
+                ui_tree = "(UI tree unavailable)"
 
             # Race-guard: 延迟弹出的 dialog
             try:
@@ -289,7 +301,11 @@ class Agent:
 
             raw_image = Image.open(io.BytesIO(raw_bytes))
             screen_size = self.platform.screen_size
-            scale = getattr(self.platform, 'scale', 2.0)
+            scale = getattr(self.platform, 'scale', None)
+            if not scale:
+                # 平台未上报 scale 时按实际数据推导：截图像素宽 / 逻辑屏宽
+                # （Android screencap 通常 1:1，不能像旧代码那样写死 2.0 假值）
+                scale = raw_image.width / screen_size[0] if screen_size[0] else 1.0
             try:
                 ime_visible = self.platform.is_ime_visible()
             except Exception:
@@ -307,7 +323,7 @@ class Agent:
             # no-effect 反馈：上一动作的像素变化 < 阈值 → 标记给 LLM 看
             if turn > 1 and self.brain.history:
                 prev_entry = self.brain.history[-1]
-                prev_action_type = prev_entry.get("action", {}).get("type", "")
+                prev_action_type = (prev_entry.get("action") or {}).get("type", "")
                 if prev_action_type in ("tap", "swipe", "swipe_up", "swipe_down",
                                         "scroll_up", "scroll_down", "press_key"):
                     diff_res = ctx.skill_results.get("visual_diff")
@@ -335,10 +351,10 @@ class Agent:
             # 定位不准的重试阶梯（按连续 no_effect 次数升级）：
             #   首次(0)      —— brain 原始坐标，不吸附不网格
             #   重试 1-2 次  —— 打开 tap 吸附，把坐标回吸到最近可交互节点（含输入框）
-            #   重试 3-4 次  —— 发坐标网格红线图，让 LLM 照网格读精确坐标
+            #   重试 ≥3 次   —— 发坐标网格红线图，让 LLM 照网格读精确坐标（保持到命中为止）
             if hasattr(self.platform, "set_snap_enabled"):
                 self.platform.set_snap_enabled(consec_no_effect in (1, 2))
-            use_grid = consec_no_effect in (3, 4)
+            use_grid = consec_no_effect >= 3
             if use_grid:
                 log.info("[Turn %d] 连续 %d 次 no_effect，发坐标网格图帮 LLM 读精确坐标",
                          turn, consec_no_effect)
@@ -388,6 +404,10 @@ class Agent:
                 step_record["duration"] = time.time() - turn_start
                 steps_detail.append(step_record)
                 retry_feedback = reject_reason
+                # 被拒的决策从未执行 —— 从 brain history 里撤掉，否则下一轮
+                # prompt 的「历史操作」会把它当已执行动作，且 no_effect 检测
+                # 会把这个没执行的动作误标 no_effect 升级吸附/网格阶梯
+                self.brain.discard_last()
                 # 不执行 action，不消耗 sub-action 配额，直接下一轮让 LLM 修正
                 continue
 

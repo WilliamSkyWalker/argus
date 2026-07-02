@@ -121,8 +121,20 @@ class IOSPlatform(Platform):
         return self._hands.screenshot_png()
 
     def screenshot_raw(self) -> bytes:
+        from PIL import Image
+
         from ..grid import img_to_png_bytes
-        return img_to_png_bytes(self._hands._take_raw_screenshot())
+        img = self._hands._take_raw_screenshot()
+        w, h = self.screen_size
+        # 旋转检测：截图横竖与缓存的窗口尺寸不一致时交换缓存（否则下面 resize 会拉伸变形）
+        if img.width != img.height and w != h and (img.width > img.height) != (w > h):
+            log.info("检测到屏幕旋转: 窗口尺寸 %dx%d → %dx%d", w, h, h, w)
+            self._hands._window_size = (h, w)
+            w, h = h, w
+        # Retina 截图（如 3x）缩到逻辑点尺寸，让 LLM 看到的图与 tap 坐标同一空间
+        if img.size != (w, h):
+            img = img.resize((w, h), Image.LANCZOS)
+        return img_to_png_bytes(img)
 
     def get_ui_tree(self) -> str:
         return self._hands.get_ui_tree()
@@ -133,7 +145,9 @@ class IOSPlatform(Platform):
 
     @property
     def scale(self) -> float:
-        return self._hands.scale
+        # screenshot_raw 已把 Retina 截图缩放到逻辑点尺寸，
+        # 返回图像 px == tap 坐标空间，比例恒为 1.0（skills 用它换算 bounds）
+        return 1.0
 
     # --- Actions ---
 
@@ -255,12 +269,13 @@ class IOSPlatform(Platform):
         import json as _json
         import time as _t
 
-        def _read_focused_value() -> str | None:
+        def _read_focused() -> tuple[str, str | None]:
+            """返回聚焦输入框的 (role, value)；无聚焦字段时 ("", None)。"""
             try:
                 raw = self._hands.get_ui_tree() or ""
                 nodes = _json.loads(raw)
             except Exception:
-                return None
+                return "", None
             for node in nodes:
                 role = node.get("type", "") or node.get("AXRole", "")
                 if "TextField" not in role and "SecureTextField" not in role:
@@ -276,17 +291,31 @@ class IOSPlatform(Platform):
                         or node.get("value", "")
                         or ""
                     )
-                    return str(value)
-            return None
+                    return role, str(value)
+            return "", None
+
+        def _read_focused_value() -> str | None:
+            return _read_focused()[1]
+
+        # 密码框（SecureTextField）回显掩码（•）/空值，verify 永远「分歧」，
+        # 3 轮重试每轮都 backspace 清空 → 把已正确输入的密码擦掉。
+        # 跳过 verify-and-repair，整串一次性发送即可。
+        role, _ = _read_focused()
+        if "SecureTextField" in role:
+            self._hands._idb("ui", "text", text)
+            return
 
         for _attempt in range(3):
             for ch in text:
                 self._hands._idb("ui", "text", ch)
                 _t.sleep(0.05)
             _t.sleep(0.3)
-            actual = _read_focused_value()
+            role, actual = _read_focused()
             if actual is None:
                 # Field gone (page transitioned, OTP auto-submitted, etc.).
+                return
+            if "SecureTextField" in role:
+                # 焦点中途落到密码框：掩码值无法核对，别 backspace 擦字段
                 return
             if actual == text:
                 return
@@ -329,8 +358,9 @@ class IOSPlatform(Platform):
         action_type = action["type"]
         if action_type == "long_press":
             w, h = self.screen_size
-            x = max(0, min(int(action["x"]), w))
-            y = max(0, min(int(action["y"]), h))
+            # 与 base.execute_action 的 clamp 一致：坐标 == 尺寸已在屏幕外 1px
+            x = max(0, min(int(action["x"]), w - 1))
+            y = max(0, min(int(action["y"]), h - 1))
             self.long_press(x, y, action.get("duration", 1.5))
         else:
             raise ValueError(f"Unknown action type for iOS: {action_type}")

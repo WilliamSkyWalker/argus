@@ -12,7 +12,8 @@ Two layers of validation:
    concrete visible screen element, not just paraphrase the step.
 
 2. ``validate_step_progress(decision, prev_index, total_steps)`` — checks
-   current_step_index monotonicity, current_step_status legality,
+   current_step_index == 当前待执行 step（指针推进由 agent.py 负责，LLM
+   不许自行 +1，否则会漏执行当前 step）、current_step_status legality,
    evidence presence when status=pass/fail, fail_reason presence
    when status=fail.
 """
@@ -94,8 +95,8 @@ def validate_step_progress(decision: dict, prev_index: int, total_steps: int) ->
 
     Args:
         decision: Full decision dict from LLM.
-        prev_index: ``current_step_index`` from the prior accepted decision
-            (or 1 on the first call).
+        prev_index: 当前待执行 step 的序号（agent.py 维护；step pass 后由
+            框架推进指针，LLM 报的 index 必须等于它）。
         total_steps: Number of steps in the Scenario (excluding Background).
 
     Returns ``(ok, reject_reason)``. On rejection, agent.py feeds
@@ -114,17 +115,20 @@ def validate_step_progress(decision: dict, prev_index: int, total_steps: int) ->
         return False, (
             f"current_step_index={cur} 越界。合法范围 1..{total_steps}（Background 不计入）。"
         )
-    # Monotonic: only +0 or +1 vs prev_index
+    # 必须等于当前待执行 step。指针推进由 agent.py 负责（pass 后 +1），
+    # LLM 不许自行 +1 —— 否则 pending step 还没执行就能 pass 下一个 step，
+    # case 会带着未执行的 step 假完成（跳步洞）。
     if cur < prev_index:
         return False, (
             f"current_step_index 倒退了（上一轮 {prev_index} → 这一轮 {cur}）。"
             "step 推进是单向的，已通过的 step 不能回头标 in_progress。"
         )
-    if cur > prev_index + 1:
+    if cur > prev_index:
         return False, (
-            f"current_step_index 跳跃了（上一轮 {prev_index} → 这一轮 {cur}）。"
-            f"每轮最多前进一格，必须是 {prev_index}（继续当前 step）或 {prev_index + 1}（推进到下一 step）。"
-            "**这是硬约束** — 即使屏幕看起来已经到了未来 step 的终态，也必须逐步推进。"
+            f"current_step_index 跳跃了（当前待执行 step 是 {prev_index}，你报了 {cur}）。"
+            f"current_step_index 必须等于当前待执行 step {prev_index} —— "
+            "step 指针的推进由 agent 框架完成，你只负责报告当前 step 的状态。"
+            "**这是硬约束** — 即使屏幕看起来已经到了未来 step 的终态，也必须先把当前 step 验完。"
         )
 
     # current_step_status

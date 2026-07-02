@@ -46,9 +46,25 @@ def _load_results(journal_path: Path) -> list[dict]:
     out: list[dict] = []
     for sc in journal.get("scenarios", []):
         sc_out = dict(sc)
+        # 容错：断点续跑时 journal 里可能有没写完的 scenario / JSON null 字段，
+        # save_html 对缺 result / None 文本会崩，这里统一补齐
+        if not sc_out.get("result"):
+            sc_out["result"] = "fail"
+        for k in ("case", "reason"):
+            if sc_out.get(k) is None:
+                sc_out[k] = ""
+        if sc_out.get("duration") is None:
+            sc_out["duration"] = 0
+        if sc_out.get("scenario_steps") is None:
+            sc_out["scenario_steps"] = []
+        if sc_out.get("step_status") is None:
+            sc_out["step_status"] = {}
         steps_out = []
-        for step in sc.get("steps_detail", []):
+        for step in sc_out.get("steps_detail") or []:
             step_out = dict(step)
+            for k in ("observation", "thinking", "reject_reason"):
+                if step_out.get(k) is None:
+                    step_out[k] = ""
             png_path = step_out.pop("screenshot", None)
             if png_path:
                 p = Path(png_path)

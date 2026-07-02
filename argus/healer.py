@@ -103,7 +103,7 @@ def analyze_failure(
     last_agent_steps = steps_detail[-3:] if steps_detail else []
     last_agent_text_parts = []
     for s in last_agent_steps:
-        n = s.get("step", "?")
+        n = s.get("turn", s.get("step", "?"))  # agent steps_detail 记录用 "turn" 键
         obs = s.get("observation", "")
         think = s.get("thinking", "")
         act = s.get("action") or {}

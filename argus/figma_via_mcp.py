@@ -93,8 +93,7 @@ class MCPFigmaClient:
 
     def __post_init__(self) -> None:
         mapping = dict(DEFAULT_MAPPING)
-        # 允许从 ServerConfig.metadata 之类的扩展字段覆盖（当前 ServerConfig
-        # 数据类不带 mapping 字段，预留接口给后续扩展）。
+        # 允许用 ServerConfig.tool_mapping（配置文件里的 argus_mapping）覆盖默认工具名
         if self.tool_mapping:
             mapping.update(self.tool_mapping)
         self.tool_mapping = mapping
@@ -211,6 +210,23 @@ class MCPFigmaClient:
 # ──────────────────────────────────────────────────────────────────
 
 
+def _probe_figma_mcp(cfg: Any, mapping: dict) -> str | None:
+    """探活 figma MCP server：list_tools 通 + 暴露了 metadata/screenshot 工具。
+
+    返回 None 表示可用；否则返回失败原因字符串（供 fallback 日志）。
+    """
+    from .mcp.client import MCPClientSync
+    try:
+        tool_names = {t["name"] for t in MCPClientSync(cfg).list_tools()}
+    except Exception as e:
+        return f"list_tools 失败: {e}"
+    need = {mapping["metadata"], mapping["screenshot"]}
+    missing = sorted(need - tool_names)
+    if missing:
+        return f"server 未暴露所需工具 {missing}（已有: {sorted(tool_names)[:10]}）"
+    return None
+
+
 def get_figma_client(token: str = "", server_name: str = "figma",
                      prefer_mcp: bool = True) -> Any:
     """返回一个 figma client：优先 MCP，没有时 fallback 到 REST。
@@ -230,8 +246,22 @@ def get_figma_client(token: str = "", server_name: str = "figma",
         try:
             registry = MCPRegistry.from_config()
             if server_name in (registry.servers or {}):
-                log.info("Figma 走 MCP 路径 (server=%s)", server_name)
-                return MCPFigmaClient(registry=registry, server_name=server_name)
+                cfg = registry.servers[server_name]
+                client = MCPFigmaClient(
+                    registry=registry, server_name=server_name,
+                    tool_mapping=cfg.tool_mapping or None,
+                )
+                # 探活：注册了但起不来 / 工具名对不上的 server 不能硬走 MCP —
+                # 有 token 时回落 REST；没 token 无路可落，仍返回 MCP client
+                probe_err = _probe_figma_mcp(cfg, client.tool_mapping)
+                if probe_err is None:
+                    log.info("Figma 走 MCP 路径 (server=%s)", server_name)
+                    return client
+                if not token:
+                    log.warning("Figma MCP 探活失败且无 FIGMA_TOKEN 可回落，仍走 MCP: %s",
+                                probe_err)
+                    return client
+                log.warning("Figma MCP 探活失败 (fallback to REST): %s", probe_err)
         except Exception as e:
             log.warning("Figma MCP 初始化失败 (fallback to REST): %s", e)
 

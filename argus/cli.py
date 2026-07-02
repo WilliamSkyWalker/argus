@@ -533,8 +533,18 @@ def _launch_background(args, android_serial: str | None = None,
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = RUNS_DIR / run_id
-    run_dir.mkdir()
+    # 同秒连续启动（如 MCP run_target/run_case back-to-back）会撞目录名 —
+    # FileExistsError 时加 -1/-2/... 后缀重试
+    n = 0
+    while True:
+        run_dir = RUNS_DIR / (f"{run_id}-{n}" if n else run_id)
+        try:
+            run_dir.mkdir()
+            break
+        except FileExistsError:
+            n += 1
+    if n:
+        run_id = f"{run_id}-{n}"
 
     log_file = run_dir / "output.log"
 
@@ -1082,6 +1092,10 @@ def _resolve_test_target(test: str) -> tuple[list[str], Path | None]:
             if candidate.is_file():
                 cases = _collect_feature_cases(candidate)
                 return cases, _find_target_dir(candidate)
+        # 明确是文件路径但不存在 — 直接报错，不能 fall through 变成 inline
+        # LLM case（手滑打错路径会静默烧一次完整 LLM run）
+        log.error("测试文件不存在: %s", test)
+        raise SystemExit(f"test file not found: {test}")
 
     # 2) 已存在的目录路径（含 .feature 文件，递归）
     dir_candidates = [Path(test), TESTS_DIR / test]
@@ -1119,6 +1133,13 @@ def _resolve_test_target(test: str) -> tuple[list[str], Path | None]:
     # 5) （兼容旧）显式 .md/.txt 文件路径
     if test.endswith((".md", ".txt")):
         test_path = Path(test)
+        if not test_path.is_file() and not test_path.is_absolute() \
+                and (TESTS_DIR / test).is_file():
+            test_path = TESTS_DIR / test
+        if not test_path.is_file():
+            # 同上：路径打错不能裸 FileNotFoundError 也不能变 inline case
+            log.error("测试文件不存在: %s", test)
+            raise SystemExit(f"test file not found: {test}")
         with open(test_path) as f:
             cases = _parse_md_cases(f.read())
         resolved = test_path.resolve()
@@ -1180,7 +1201,9 @@ def cmd_run(test: str, platform: str | None = None, url: str | None = None,
             log.info("Shard %d/%d: 取 case [%d:%d] / %d 共 %d 个",
                      shard_idx, shard_total, start, end, total, len(test_cases))
         except Exception as e:
-            log.error("--shard 解析失败 (%s)，将跑全集: %s", shard_spec, e)
+            # 解析失败静默跑全集 = 整台设备重复跑一遍 suite，比直接终止更糟
+            log.error("--shard 解析失败 (%s): %s", shard_spec, e)
+            raise SystemExit(f"--shard 参数无效: {shard_spec} ({e})")
 
     # 加载 tests/<first-level>/_preconditions.md（如存在）prepend 到每个 case
     # 让 LLM 在 Background fixture 失效时按指南自己恢复，而不是直接 fail
@@ -1206,6 +1229,11 @@ def cmd_run(test: str, platform: str | None = None, url: str | None = None,
         pass  # only auto-generate when --report is explicitly used
     # 当 --report 走 auto 路径时，记录顶层 reports/ 目录，用于 latest.html 软链
     auto_reports_root: Path | None = None
+    # run-log FileHandler / get_logger patch 的清理句柄（跑完后在 finally 里
+    # 统一回收 — 否则每次 cmd_run 都往所有 argus logger 上多挂一个 handler，
+    # get_logger 也被层层 wrap，长进程（如 MCP server）下持续泄漏）
+    run_log_handler: logging.FileHandler | None = None
+    orig_get_logger = None
     if report_path == "__auto__" and target_dir:
         # Auto report 路径：tests 下第一级目录的 reports/<ts>/ 子目录
         # 示例：nb_cases/nb_mobile/01-account/foo.feature → tests/nb_cases/reports/<ts>/foo-<ts>.html
@@ -1254,86 +1282,143 @@ def cmd_run(test: str, platform: str | None = None, url: str | None = None,
                         logger.addHandler(file_handler)
                     return logger
                 _logger_mod.get_logger = _patched_get_logger
+                run_log_handler = file_handler
+                orig_get_logger = _orig_get_logger
                 log.info("Run log → %s", log_path)
             except Exception as e:
                 log.debug("无法附加 file handler: %s", e)
 
-    # Auto-read URL from target README if not specified via CLI
-    if not url and target_dir:
-        url = _read_target_url(target_dir)
-        if url:
-            log.info("从 README.md 读取起始 URL: %s", url)
+    try:
+        # Auto-read URL from target README if not specified via CLI
+        if not url and target_dir:
+            url = _read_target_url(target_dir)
+            if url:
+                log.info("从 README.md 读取起始 URL: %s", url)
 
-    log.info("共 %d 个测试用例", len(test_cases))
+        log.info("共 %d 个测试用例", len(test_cases))
 
-    if devices and len(devices) > 1:
-        # 多 Android 设备：动态调度器，N worker 各持 Agent 抢任务
-        log.info("调度模式: %d 台设备", len(devices))
-        if accounts and len(accounts) < len(devices):
-            log.warning("账号池 %d 个 < 设备 %d 台，最后 %d 台将共用 accounts[0]",
-                        len(accounts), len(devices), len(devices) - len(accounts))
-        results = _run_dispatched_devices(cfg, test_cases, devices, accounts, url)
-    elif concurrency > 1:
-        # Browser + Selenium Grid：thread pool 多 agent 共抢任务
-        results = _run_concurrent(cfg, test_cases, url, concurrency)
-    else:
-        # 单设备（或单 browser）：顺序跑，用账号池第 0 项（无并发，无需分配）
-        single_account = accounts[0] if accounts else None
-        if single_account:
-            log_safe = {k: v for k, v in single_account.items()
-                        if "pass" not in k.lower() and "secret" not in k.lower()}
-            log.info("单设备账号 [1/%d]: %s", len(accounts), log_safe)
-        results = _run_sequential(cfg, test_cases, url, account=single_account)
-
-    # Console summary
-    print(f"\n{'='*60}")
-    print("测试报告")
-    print(f"{'='*60}")
-    passed = sum(1 for r in results if r["result"] == "pass")
-    skipped = sum(1 for r in results if r["result"] == "skipped")
-    total = len(results)
-    failed = total - passed - skipped
-    total_dur = sum(r.get("duration", 0) for r in results)
-    for r in results:
-        if r["result"] == "pass":
-            status = "PASS"
-        elif r["result"] == "skipped":
-            status = "SKIP"
+        if devices and len(devices) > 1:
+            # 多 Android 设备：动态调度器，N worker 各持 Agent 抢任务
+            log.info("调度模式: %d 台设备", len(devices))
+            if accounts and len(accounts) < len(devices):
+                log.warning("账号池 %d 个 < 设备 %d 台，最后 %d 台将共用 accounts[0]",
+                            len(accounts), len(devices), len(devices) - len(accounts))
+            results = _run_dispatched_devices(cfg, test_cases, devices, accounts, url)
+        elif concurrency > 1:
+            # Browser + Selenium Grid：thread pool 多 agent 共抢任务
+            results = _run_concurrent(cfg, test_cases, url, concurrency)
         else:
-            status = "FAIL"
-        dur = f"{r.get('duration', 0):.1f}s"
-        print(f"  [{status}] {r['case'][:60]}  ({dur})")
-        print(f"        {r.get('reason', '')} ({r['steps']} steps)")
-    print(f"\n  总计: {passed}/{total} 通过, {failed} 失败, {skipped} 跳过 | 总耗时: {total_dur:.1f}s")
+            # 单设备（或单 browser）：顺序跑，用账号池第 0 项（无并发，无需分配）
+            single_account = accounts[0] if accounts else None
+            if single_account:
+                log_safe = {k: v for k, v in single_account.items()
+                            if "pass" not in k.lower() and "secret" not in k.lower()}
+                log.info("单设备账号 [1/%d]: %s", len(accounts), log_safe)
+            results = _run_sequential(cfg, test_cases, url, account=single_account)
 
-    # Export report if requested
-    if report_path:
-        from .report import save_html, save_json
-        if report_path.endswith(".json"):
-            save_json(results, report_path)
-        else:
-            if not report_path.endswith(".html"):
-                report_path += ".html"
-            save_html(results, report_path)
-            # 同时落一份伴生 .json：后台 run 的 status/report 工具（CLI &
-            # MCP）靠同名 .json 读 summary 和结构化结果，HTML 无法解析。
-            save_json(results, str(Path(report_path).with_suffix(".json")))
-        print(f"\n  报告已保存: {report_path}")
+        # Console summary
+        print(f"\n{'='*60}")
+        print("测试报告")
+        print(f"{'='*60}")
+        passed = sum(1 for r in results if r["result"] == "pass")
+        skipped = sum(1 for r in results if r["result"] == "skipped")
+        total = len(results)
+        failed = total - passed - skipped
+        total_dur = sum(r.get("duration", 0) for r in results)
+        for r in results:
+            if r["result"] == "pass":
+                status = "PASS"
+            elif r["result"] == "skipped":
+                status = "SKIP"
+            else:
+                status = "FAIL"
+            dur = f"{r.get('duration', 0):.1f}s"
+            print(f"  [{status}] {r['case'][:60]}  ({dur})")
+            print(f"        {r.get('reason', '')} ({r['steps']} steps)")
+        print(f"\n  总计: {passed}/{total} 通过, {failed} 失败, {skipped} 跳过 | 总耗时: {total_dur:.1f}s")
 
-        # Update latest symlink
-        # auto 路径下 report 落在 reports/<ts>/ 里，latest.html 要放到顶层 reports/ 才有意义
-        # 显式 --report PATH 时仍把 latest.html 放在该路径同级目录
-        report_p = Path(report_path)
-        if auto_reports_root is not None:
-            latest = auto_reports_root / "latest.html"
-            target_rel = f"{report_p.parent.name}/{report_p.name}"
-        else:
-            latest = report_p.parent / "latest.html"
-            target_rel = report_p.name
-        if latest.is_symlink() or latest.exists():
-            latest.unlink()
-        latest.symlink_to(target_rel)
-        print(f"  最新报告:   {latest}")
+        # Export report if requested
+        if report_path:
+            from .report import save_html, save_json
+            if report_path.endswith(".json"):
+                save_json(results, report_path)
+            else:
+                if not report_path.endswith(".html"):
+                    report_path += ".html"
+                # 伴生 .json 先落（更便宜的 artifact）：后台 run 的 status/report
+                # 工具（CLI & MCP）靠同名 .json 读 summary 和结构化结果，HTML 无法
+                # 解析；万一 save_html 渲染异常，至少 JSON 报告已保住整轮结果。
+                save_json(results, str(Path(report_path).with_suffix(".json")))
+                save_html(results, report_path)
+            print(f"\n  报告已保存: {report_path}")
+
+            # Update latest symlink
+            # auto 路径下 report 落在 reports/<ts>/ 里，latest.html 要放到顶层 reports/ 才有意义
+            # 显式 --report PATH 时仍把 latest.html 放在该路径同级目录
+            report_p = Path(report_path)
+            if auto_reports_root is not None:
+                latest = auto_reports_root / "latest.html"
+                target_rel = f"{report_p.parent.name}/{report_p.name}"
+            else:
+                latest = report_p.parent / "latest.html"
+                target_rel = report_p.name
+            # 先建唯一命名的临时软链再 os.replace 原子替换 — 并发 run 同时
+            # unlink+symlink 会互相踩（TOCTOU）；报告已落盘，软链失败绝不致命
+            try:
+                tmp_link = latest.parent / f".latest-{os.getpid()}.tmp"
+                if tmp_link.is_symlink() or tmp_link.exists():
+                    tmp_link.unlink()
+                tmp_link.symlink_to(target_rel)
+                os.replace(tmp_link, latest)
+                print(f"  最新报告:   {latest}")
+            except Exception as e:
+                log.warning("latest.html 软链更新失败（报告已保存，不影响结果）: %s", e)
+    finally:
+        # 回收 run-log FileHandler + 还原 get_logger（见上方挂载处注释）
+        if run_log_handler is not None:
+            try:
+                if orig_get_logger is not None:
+                    from . import logger as _logger_mod
+                    _logger_mod.get_logger = orig_get_logger
+                for name, logger_obj in list(logging.Logger.manager.loggerDict.items()):
+                    if (name.startswith("argus")
+                            and isinstance(logger_obj, logging.Logger)
+                            and run_log_handler in logger_obj.handlers):
+                        logger_obj.removeHandler(run_log_handler)
+                run_log_handler.close()
+            except Exception as e:
+                log.debug("run-log handler 清理失败: %s", e)
+
+
+def _maybe_heal(agent, case_text: str, result: dict) -> None:
+    """Case fail/timeout/error 后跑一次 Healer 根因分析，结果挂到
+    result["heal_report"]（report.py 渲染「Healer 根因分析」块用）。
+
+    Healer 是锦上添花：自身 LLM 调用失败绝不能影响跑测主流程，只记 warning。"""
+    if result.get("result") not in ("fail", "timeout", "error"):
+        return
+    try:
+        from .healer import analyze_failure
+        steps_detail = result.get("steps_detail") or []
+        # 取最后一张有截图的 step 截图给 healer 看
+        last_png = None
+        for s in reversed(steps_detail):
+            if s.get("screenshot_png"):
+                last_png = s["screenshot_png"]
+                break
+        heal = analyze_failure(
+            test_case=case_text,
+            scenario_steps=result.get("scenario_steps") or [],
+            step_status=result.get("step_status") or {},
+            steps_detail=steps_detail,
+            last_screenshot_png=last_png,
+            llm_client=agent.brain.client,
+            model=agent.brain.model,
+        )
+        if not heal.is_empty:
+            result["heal_report"] = heal.to_dict()
+    except Exception as e:
+        log.warning("Healer 分析失败（不影响测试结果）: %s", e)
 
 
 def _run_sequential(cfg: dict, test_cases: list[str], url: str | None,
@@ -1396,6 +1481,8 @@ def _run_sequential(cfg: dict, test_cases: list[str], url: str | None,
         log.info("[%d/%d] 开始执行: %s", i + 1, len(test_cases), tc[:60])
         result = agent.run(tc)
         log.info("[%d/%d] 结果: %s", i + 1, len(test_cases), result.get("result", "?"))
+        # fail/timeout/error → Healer 根因分析（失败不影响主流程）
+        _maybe_heal(agent, tc, result)
         results.append({"case": tc, **result})
 
     return results
@@ -1543,6 +1630,11 @@ def _run_dispatched_devices(cfg: dict, test_cases: list[str],
     results_lock = threading.Lock()
     counter = [0]
     counter_lock = threading.Lock()
+    # 「正在处理 case」的 worker 数：离线 worker 会把 case 放回队列（requeue）。
+    # 队列瞬时为空时若其他 worker 直接退出，晚到的 requeue 就成了孤儿 case。
+    # 队列空 + 无人在忙（不可能再 requeue）才允许 worker 退出。
+    busy_workers = [0]
+    busy_lock = threading.Lock()
     current_platform = cfg.get("platform", "")
 
     def worker(worker_idx: int):
@@ -1566,81 +1658,98 @@ def _run_dispatched_devices(cfg: dict, test_cases: list[str],
 
         while True:
             try:
-                idx, raw_case = queue.get_nowait()
+                idx, raw_case = queue.get(timeout=2)
             except Empty:
-                break
-
-            # 进入该 case，更新 logger context — 后续所有 log 行都带 [W{idx}/c{N}]
-            set_case_context(f"W{worker_idx}/c{idx + 1}")
-
-            # 0) Pre-case health check：检查设备 online + 必要时 reconnect
-            #    防止 worker 持有 dead platform handle 后续 case 全 instant fail
-            if not _check_or_reconnect_device(device, agent):
-                consecutive_offline += 1
-                log.warning(
-                    "[Worker %d/%s] case %d pre-check 设备离线 (连续 %d/%d 次)，"
-                    "把 case 放回队列让其他 worker 尝试",
-                    worker_idx, device, idx, consecutive_offline,
-                    MAX_OFFLINE_BEFORE_WORKER_EXIT
-                )
-                queue.put((idx, raw_case))
-                if consecutive_offline >= MAX_OFFLINE_BEFORE_WORKER_EXIT:
-                    log.error(
-                        "[Worker %d/%s] 连续 %d 次设备离线，worker 退出 — "
-                        "剩余 case 由其他 worker 接管",
-                        worker_idx, device, MAX_OFFLINE_BEFORE_WORKER_EXIT
-                    )
-                    return
-                time.sleep(5)
-                continue
-            consecutive_offline = 0
-
-            # 1) 替换账号占位符（per-worker，每台设备用各自账号）
-            tc = _apply_account_placeholders(raw_case, account) if account else raw_case
-
-            # 2) 平台 / automation tag 过滤
-            skip_reason = (_should_skip_by_platform(tc, current_platform)
-                           or _should_skip_by_automation(tc))
-            with counter_lock:
-                counter[0] += 1
-                n_done = counter[0]
-            if skip_reason:
-                log.info("[%d/%d Worker %d] SKIP: %s", n_done, total, worker_idx, skip_reason)
-                with results_lock:
-                    results[idx] = {
-                        "case": tc, "result": "skipped", "reason": skip_reason,
-                        "steps": 0, "duration": 0, "steps_detail": [],
-                        "device": device,
-                    }
+                # 队列空 ≠ 全部干完：还在 case 中的 worker 可能因设备离线把
+                # case 放回队列（requeue）。无人在忙才真正退出，否则继续等。
+                with busy_lock:
+                    no_one_busy = busy_workers[0] == 0
+                if no_one_busy:
+                    break
                 continue
 
-            # 3) Android per-case state reset
-            reset_mode = _extract_reset_mode(tc)
-            if reset_mode and reset_mode != "none":
-                try:
-                    _reset_android_state(agent.platform, reset_mode)
-                except Exception as e:
-                    log.warning("[Worker %d] reset 失败: %s", worker_idx, e)
-
-            tc = _substitute_placeholders(tc)
-
-            log.info("[%d/%d Worker %d/%s] 执行: %s",
-                     n_done, total, worker_idx, device, tc[:60])
+            with busy_lock:
+                busy_workers[0] += 1
             try:
-                result = agent.run(tc)
-                log.info("[%d/%d Worker %d] 结果: %s",
-                         n_done, total, worker_idx, result.get("result", "?"))
-            except Exception as e:
-                # exc_info so a framework crash (vs a test fail) leaves a stack
-                # in the log instead of a bare message — a bare "division by
-                # zero" cost a full debug cycle once.
-                log.error("[%d/%d Worker %d] 用例异常: %s",
-                          n_done, total, worker_idx, e, exc_info=True)
-                result = {"result": "error", "reason": str(e),
-                          "steps": 0, "duration": 0, "steps_detail": []}
+                # 进入该 case，更新 logger context — 后续所有 log 行都带 [W{idx}/c{N}]
+                set_case_context(f"W{worker_idx}/c{idx + 1}")
 
-            with results_lock:
-                results[idx] = {"case": tc, **result, "device": device}
+                # 0) Pre-case health check：检查设备 online + 必要时 reconnect
+                #    防止 worker 持有 dead platform handle 后续 case 全 instant fail
+                if not _check_or_reconnect_device(device, agent):
+                    consecutive_offline += 1
+                    log.warning(
+                        "[Worker %d/%s] case %d pre-check 设备离线 (连续 %d/%d 次)，"
+                        "把 case 放回队列让其他 worker 尝试",
+                        worker_idx, device, idx, consecutive_offline,
+                        MAX_OFFLINE_BEFORE_WORKER_EXIT
+                    )
+                    queue.put((idx, raw_case))
+                    if consecutive_offline >= MAX_OFFLINE_BEFORE_WORKER_EXIT:
+                        log.error(
+                            "[Worker %d/%s] 连续 %d 次设备离线，worker 退出 — "
+                            "剩余 case 由其他 worker 接管",
+                            worker_idx, device, MAX_OFFLINE_BEFORE_WORKER_EXIT
+                        )
+                        return
+                    time.sleep(5)
+                    continue
+                consecutive_offline = 0
+
+                # 1) 替换账号占位符（per-worker，每台设备用各自账号）
+                tc = _apply_account_placeholders(raw_case, account) if account else raw_case
+
+                # 2) 平台 / automation tag 过滤
+                skip_reason = (_should_skip_by_platform(tc, current_platform)
+                               or _should_skip_by_automation(tc))
+                with counter_lock:
+                    counter[0] += 1
+                    n_done = counter[0]
+                if skip_reason:
+                    log.info("[%d/%d Worker %d] SKIP: %s", n_done, total, worker_idx, skip_reason)
+                    with results_lock:
+                        results[idx] = {
+                            "case": tc, "result": "skipped", "reason": skip_reason,
+                            "steps": 0, "duration": 0, "steps_detail": [],
+                            "device": device,
+                        }
+                    continue
+
+                # 3) Android per-case state reset
+                reset_mode = _extract_reset_mode(tc)
+                if reset_mode and reset_mode != "none":
+                    try:
+                        _reset_android_state(agent.platform, reset_mode)
+                    except Exception as e:
+                        log.warning("[Worker %d] reset 失败: %s", worker_idx, e)
+
+                tc = _substitute_placeholders(tc)
+
+                log.info("[%d/%d Worker %d/%s] 执行: %s",
+                         n_done, total, worker_idx, device, tc[:60])
+                try:
+                    result = agent.run(tc)
+                    log.info("[%d/%d Worker %d] 结果: %s",
+                             n_done, total, worker_idx, result.get("result", "?"))
+                except Exception as e:
+                    # exc_info so a framework crash (vs a test fail) leaves a stack
+                    # in the log instead of a bare message — a bare "division by
+                    # zero" cost a full debug cycle once.
+                    log.error("[%d/%d Worker %d] 用例异常: %s",
+                              n_done, total, worker_idx, e, exc_info=True)
+                    result = {"result": "error", "reason": str(e),
+                              "steps": 0, "duration": 0, "steps_detail": []}
+
+                # fail/timeout/error → Healer 根因分析（失败不影响主流程）
+                _maybe_heal(agent, tc, result)
+
+                with results_lock:
+                    results[idx] = {"case": tc, **result, "device": device}
+            finally:
+                # requeue（如有）发生在 try 内、此减一之前，因此任何时刻
+                # 「队列空 且 busy==0」⇒ 不会再有新 case，其他 worker 可安全退出
+                with busy_lock:
+                    busy_workers[0] -= 1
 
         log.info("[Worker %d device=%s] 队列空，退出", worker_idx, device)
 
@@ -1744,6 +1853,8 @@ def _run_concurrent(cfg: dict, test_cases: list[str], url: str | None,
             log.info("[%d/%d] 开始执行: %s", idx, total, tc[:60])
             result = agent.run(tc)
             log.info("[%d/%d] 结果: %s", idx, total, result.get("result", "?"))
+            # fail/timeout/error → Healer 根因分析（失败不影响主流程）
+            _maybe_heal(agent, tc, result)
             return {"case": tc, **result}
         finally:
             # Return agent to pool

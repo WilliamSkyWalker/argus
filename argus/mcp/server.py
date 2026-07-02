@@ -19,6 +19,7 @@ stdio 注意事项:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import io
 import json
@@ -58,6 +59,20 @@ def _silenced_stdout():
     """
     with contextlib.redirect_stdout(sys.stderr):
         yield
+
+
+def _read_meta(meta_file: Path, retries: int = 3, delay: float = 0.05) -> dict | None:
+    """读 meta.json，容忍 cli 并发原地重写导致的瞬时截断。
+
+    连续 retries 次解析失败返回 None，调用方给出明确错误信息。
+    """
+    for i in range(retries):
+        try:
+            return json.loads(meta_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            if i < retries - 1:
+                time.sleep(delay)
+    return None
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -205,9 +220,8 @@ def list_runs(limit: int = 20) -> list[dict]:
         meta_file = run_dir / "meta.json"
         if not meta_file.exists():
             continue
-        try:
-            meta = json.loads(meta_file.read_text())
-        except Exception:
+        meta = _read_meta(meta_file)
+        if meta is None:
             continue
         status = _check_run_status(meta, run_dir)
         out.append({
@@ -235,7 +249,10 @@ def get_run_status(run_id: str, tail_lines: int = 30) -> dict:
     meta_file = run_dir / "meta.json"
     if not meta_file.exists():
         return {"run_id": run_id, "error": "run not found"}
-    meta = json.loads(meta_file.read_text())
+    meta = _read_meta(meta_file)
+    if meta is None:
+        return {"run_id": run_id,
+                "error": "meta.json 解析失败（可能正被并发重写），请稍后重试"}
     status = _check_run_status(meta, run_dir)
 
     log_tail: list[str] = []
@@ -320,7 +337,10 @@ def get_report(run_id: str | None = None,
         meta_file = run_dir / "meta.json"
         if not meta_file.exists():
             return {"error": f"run {run_id} not found"}
-        meta = json.loads(meta_file.read_text())
+        meta = _read_meta(meta_file)
+        if meta is None:
+            return {"error": f"run {run_id} 的 meta.json 解析失败"
+                             "（可能正被并发重写），请稍后重试"}
         # __auto__ 报告路径由子进程在 log 里给出，这里 resolve + 回填 meta
         report_path = _resolve_report_path(meta, run_dir)
 
@@ -383,6 +403,10 @@ def _run_target_impl(target: str,
                      grid: str | None = None,
                      shard: str | None = None) -> dict:
     devices = list(devices or [])
+    # 指定了 apk 却没给 devices 时不能静默跳过安装（跑测前必须重装 APK）
+    if apk and not devices:
+        return {"error": "指定了 apk 但 devices 为空 — 不会静默跳过安装，"
+                         "请显式传 devices 列表（跑测前必须重装 APK）"}
     with _silenced_stdout():
         if devices:
             devices = _ensure_devices_connected(devices)
@@ -424,14 +448,14 @@ def _run_target_impl(target: str,
 
 
 @mcp.tool()
-def run_target(target: str,
-               platform: str | None = None,
-               devices: list[str] | None = None,
-               apk: str | None = None,
-               url: str | None = None,
-               max_steps: int | None = None,
-               grid: str | None = None,
-               shard: str | None = None) -> dict:
+async def run_target(target: str,
+                     platform: str | None = None,
+                     devices: list[str] | None = None,
+                     apk: str | None = None,
+                     url: str | None = None,
+                     max_steps: int | None = None,
+                     grid: str | None = None,
+                     shard: str | None = None) -> dict:
     """后台启动一个测试 run，立即返回 run_id（不阻塞 MCP 调用）。
 
     用 get_run_status(run_id) 轮询；跑完 get_report(run_id) 读结果。
@@ -446,41 +470,42 @@ def run_target(target: str,
       grid: Selenium Grid URL，搭配 -j 并发
       shard: "N/M" 手动切片（取 cases[N*total/M : (N+1)*total/M]）
     """
-    return _run_target_impl(
+    # 设备连接 + APK 安装可阻塞数分钟，丢线程池跑，不冻结 JSON-RPC 事件循环
+    return await asyncio.to_thread(
+        _run_target_impl,
         target=target, platform=platform, devices=devices, apk=apk,
         url=url, max_steps=max_steps, grid=grid, shard=shard,
     )
 
 
 @mcp.tool()
-def run_case(case_path: str,
-             platform: str | None = None,
-             devices: list[str] | None = None,
-             apk: str | None = None,
-             url: str | None = None,
-             max_steps: int | None = None,
-             grid: str | None = None) -> dict:
+async def run_case(case_path: str,
+                   platform: str | None = None,
+                   devices: list[str] | None = None,
+                   apk: str | None = None,
+                   url: str | None = None,
+                   max_steps: int | None = None,
+                   grid: str | None = None) -> dict:
     """run_target 的语义化别名 — 跑单 .feature / 单 case / inline 文本。
 
     与 run_target 等价（实现完全一致），方便客户端意图清晰区分批量 vs 单点。
     """
-    return _run_target_impl(
+    return await asyncio.to_thread(
+        _run_target_impl,
         target=case_path, platform=platform, devices=devices, apk=apk,
         url=url, max_steps=max_steps, grid=grid,
     )
 
 
-@mcp.tool()
-def cancel_run(run_id: str) -> dict:
-    """终止后台 run。
-
-    先给进程组 SIGTERM 留 2s graceful，仍存活则 SIGKILL。
-    """
+def _cancel_run_impl(run_id: str) -> dict:
     run_dir = RUNS_DIR / run_id
     meta_file = run_dir / "meta.json"
     if not meta_file.exists():
         return {"run_id": run_id, "error": "run not found"}
-    meta = json.loads(meta_file.read_text())
+    meta = _read_meta(meta_file)
+    if meta is None:
+        return {"run_id": run_id,
+                "error": "meta.json 解析失败（可能正被并发重写），请稍后重试"}
     pid = meta.get("pid")
     if not pid:
         return {"run_id": run_id, "error": "no pid in meta"}
@@ -507,6 +532,16 @@ def cancel_run(run_id: str) -> dict:
             return {"run_id": run_id, "result": "SIGTERM"}
     except ProcessLookupError:
         return {"run_id": run_id, "result": "SIGTERM"}
+
+
+@mcp.tool()
+async def cancel_run(run_id: str) -> dict:
+    """终止后台 run。
+
+    先给进程组 SIGTERM 留 2s graceful，仍存活则 SIGKILL。
+    """
+    # 内部 sleep(2) 等 graceful 退出，丢线程池跑避免冻结事件循环
+    return await asyncio.to_thread(_cancel_run_impl, run_id)
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -552,7 +587,7 @@ def list_devices() -> dict:
 
 
 @mcp.tool()
-def install_apk(apk_path: str, devices: list[str]) -> dict:
+async def install_apk(apk_path: str, devices: list[str]) -> dict:
     """并行装 APK 到多台 Android 设备，3 次重试。
 
     返回成功装上的设备列表 + 失败列表（全失败时 error 字段非空）。
@@ -561,9 +596,16 @@ def install_apk(apk_path: str, devices: list[str]) -> dict:
         return {"error": f"apk not found: {apk_path}"}
     if not devices:
         return {"error": "devices list empty"}
-    try:
+
+    # 安装最长 300s×3 重试，丢线程池跑；_silenced_stdout 留在线程体内
+    # （redirect_stdout 只换 sys.stdout 对象，stdio transport 持有原始
+    # stdout 引用，JSON-RPC 不受影响）
+    def _do_install() -> list[str]:
         with _silenced_stdout():
-            alive = _install_apk_on_devices(apk_path, devices)
+            return _install_apk_on_devices(apk_path, devices)
+
+    try:
+        alive = await asyncio.to_thread(_do_install)
     except RuntimeError as e:
         return {"error": str(e), "total": len(devices)}
     return {
@@ -574,7 +616,7 @@ def install_apk(apk_path: str, devices: list[str]) -> dict:
 
 
 @mcp.tool()
-def adb_reconnect(serials: list[str], timeout_s: int = 20) -> dict:
+async def adb_reconnect(serials: list[str], timeout_s: int = 20) -> dict:
     """主动 ``adb connect`` 每个 serial + 轮询等设备上线，最多 timeout_s 秒。
 
     USB serial / mDNS 服务名不会被 adb connect（mDNS 名 adb host 不接受）。
@@ -582,9 +624,14 @@ def adb_reconnect(serials: list[str], timeout_s: int = 20) -> dict:
     """
     if not serials:
         return {"error": "serials list empty"}
-    try:
+
+    # 最长 timeout_s 秒的 time.sleep 轮询，丢线程池跑避免冻结事件循环
+    def _do_reconnect() -> list[str]:
         with _silenced_stdout():
-            alive = _ensure_devices_connected(serials, timeout_s=timeout_s)
+            return _ensure_devices_connected(serials, timeout_s=timeout_s)
+
+    try:
+        alive = await asyncio.to_thread(_do_reconnect)
     except RuntimeError as e:
         return {"error": str(e), "total": len(serials)}
     return {

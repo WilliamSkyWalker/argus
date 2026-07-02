@@ -48,6 +48,7 @@ class BrowserPlatform(Platform):
         self._viewport_width = 1280
         self._viewport_height = 720
         self._is_remote = False
+        self._scale: float | None = None
 
     def setup(self, config: dict) -> None:
         try:
@@ -82,9 +83,14 @@ class BrowserPlatform(Platform):
 
         self._driver.set_window_size(self._viewport_width, self._viewport_height)
 
+        if start_url:
+            self._driver.get(start_url)
+
         # Chrome's chrome (address bar etc) eats some viewport pixels — detect
         # the actual usable viewport so coordinates we hand to the LLM match
         # what's really rendered.
+        # 注意：放在首个页面加载之后测量 — 经典滚动条要等真实内容加载后才出现，
+        # 空白页测得的 innerWidth 会偏大，导致坐标校正失效。
         try:
             actual = self._driver.execute_script(
                 "return [window.innerWidth, window.innerHeight];"
@@ -98,9 +104,6 @@ class BrowserPlatform(Platform):
                 self._viewport_height = actual[1]
         except Exception as e:
             log.warning("无法检测实际视口: %s", e)
-
-        if start_url:
-            self._driver.get(start_url)
 
     def _cleanup_grid_sessions(self, grid_url: str) -> None:
         """Kill all existing sessions on the Grid before starting a new one."""
@@ -170,7 +173,14 @@ class BrowserPlatform(Platform):
         return img_to_png_bytes(img)
 
     def screenshot_raw(self) -> bytes:
-        return self._driver.get_screenshot_as_png()
+        png_bytes = self._driver.get_screenshot_as_png()
+        img = Image.open(io.BytesIO(png_bytes))
+        w, h = self._viewport_width, self._viewport_height
+        # Retina/DPR 截图缩到 CSS 像素尺寸，让 LLM 看到的图与 tap 坐标同一空间
+        if img.size != (w, h):
+            img = img.resize((w, h), Image.LANCZOS)
+            return img_to_png_bytes(img)
+        return png_bytes
 
     def get_ui_tree(self) -> str:
         return "(纯视觉模式，无 DOM 树)"
@@ -181,9 +191,12 @@ class BrowserPlatform(Platform):
 
     @property
     def scale(self) -> float:
-        png_bytes = self._driver.get_screenshot_as_png()
-        img = Image.open(io.BytesIO(png_bytes))
-        return img.width / self._viewport_width
+        # 返回图像 px / 视口 px 比例（screenshot_raw 已缩放到视口尺寸，正常恒为 1.0）。
+        # 缓存：固定视口无需失效，且此前每次访问都要拍一张全量截图，agent 每 turn 都读。
+        if self._scale is None:
+            img = Image.open(io.BytesIO(self.screenshot_raw()))
+            self._scale = img.width / self._viewport_width
+        return self._scale
 
     # --- Actions ---
 
@@ -281,8 +294,9 @@ class BrowserPlatform(Platform):
             self.go_forward()
         elif action_type == "hover":
             w, h = self.screen_size
-            x = max(0, min(int(action["x"]), w))
-            y = max(0, min(int(action["y"]), h))
+            # 与 base.execute_action 的 clamp 一致：坐标 == 尺寸已在视口外 1px
+            x = max(0, min(int(action["x"]), w - 1))
+            y = max(0, min(int(action["y"]), h - 1))
             self.hover(x, y)
         else:
             raise ValueError(f"Unknown action type for browser: {action_type}")

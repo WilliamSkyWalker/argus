@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 import subprocess
 import tempfile
 import time
@@ -40,11 +41,14 @@ class Hands:
         self._window_size: tuple[int, int] | None = None
         self._scale: float | None = None
 
-    def _idb(self, *args: str) -> str:
+    def _idb(self, *args: str, timeout: int = 30) -> str:
+        # timeout 防 idb_companion 卡死拖挂整个 run；截图类调用传更长的 timeout=60
         result = subprocess.run(
             ["idb", *args, "--udid", self.udid],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, timeout=timeout,
         )
+        if result.returncode != 0:
+            raise RuntimeError(f"idb {' '.join(args)} failed: {result.stderr.strip()}")
         return result.stdout
 
     @property
@@ -67,10 +71,17 @@ class Hands:
         if self._scale is None:
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
                 path = f.name
-            self._idb("screenshot", path)
-            img = Image.open(path)
-            w, _ = self.window_size
-            self._scale = img.width / w
+            try:
+                self._idb("screenshot", path, timeout=60)
+                img = Image.open(path)
+                img.load()  # 立即读入像素，之后可安全删除底层文件
+                w, _ = self.window_size
+                self._scale = img.width / w
+            finally:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
         return self._scale
 
     # ------------------------------------------------------------------
@@ -97,11 +108,13 @@ class Hands:
         cx = w // 2
         self.swipe(cx, h // 4, cx, h * 3 // 4)
 
-    def _simctl(self, *args: str) -> str:
+    def _simctl(self, *args: str, timeout: int = 30) -> str:
         result = subprocess.run(
             ["xcrun", "simctl", *args, self.udid],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, timeout=timeout,
         )
+        if result.returncode != 0:
+            raise RuntimeError(f"simctl {' '.join(args)} failed: {result.stderr.strip()}")
         return result.stdout
 
     # ------------------------------------------------------------------
@@ -198,8 +211,16 @@ class Hands:
         """Take a raw screenshot and return as PIL Image (no grid)."""
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             path = f.name
-        self._idb("screenshot", path)
-        return Image.open(path)
+        try:
+            self._idb("screenshot", path, timeout=60)
+            img = Image.open(path)
+            img.load()  # 立即读入像素，之后可安全删除底层文件（不删会每 turn 泄漏一个 PNG）
+            return img
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
     def screenshot_png(self) -> bytes:
         """Take a high-res screenshot with coordinate grid overlay."""

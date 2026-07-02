@@ -1,6 +1,7 @@
 """Configuration management — loads from project .env file"""
 
 import os
+import re
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -95,13 +96,30 @@ def load_config() -> dict:
                 continue
             if "=" in line:
                 key, _, val = line.partition("=")
-                values[key.strip()] = val.strip()
+                val = val.strip()
+                if val[:1] in ('"', "'") and val.find(val[0], 1) != -1:
+                    # 引号包裹的值：取引号内原文（内含 # 保留），引号后的注释丢弃
+                    val = val[1:val.find(val[0], 1)]
+                else:
+                    # 未加引号：剥掉行内注释（仅「空白 + #」之后的部分，
+                    # 不误伤 URL 锚点等值内紧邻的 #）
+                    val = re.sub(r"\s+#.*$", "", val).strip()
+                values[key.strip()] = val
 
     # Environment variables override .env (used by --bg mode)
     for key in DEFAULT_CONFIG:
         env_val = os.environ.get(key)
         if env_val is not None:
             values[key] = env_val
+
+    # LLM_API_BASE 不在 DEFAULT_CONFIG 里，上面的循环覆盖不到 — 单独读环境变量
+    # （保持 env > .env 优先级）。env 只设了 LLM_BASE_URL 时，不该被 .env 的
+    # LLM_API_BASE 经由下方 `or` fallback 压过 — 丢弃 .env 值。
+    env_api_base = os.environ.get("LLM_API_BASE")
+    if env_api_base is not None:
+        values["LLM_API_BASE"] = env_api_base
+    elif os.environ.get("LLM_BASE_URL") is not None:
+        values.pop("LLM_API_BASE", None)
 
     # Support both LLM_BASE_URL and LLM_API_BASE (.env may use either).
     base_url = values.get("LLM_API_BASE") or values.get("LLM_BASE_URL", "")

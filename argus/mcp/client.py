@@ -39,9 +39,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -61,6 +63,9 @@ class ServerConfig:
     command: str
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
+    # argus 扩展字段（非 MCP 协议）：逻辑工具名 → server 实际工具名的映射，
+    # 来自配置里的 ``argus_mapping``，供 figma_via_mcp 等调用方覆盖默认工具名
+    tool_mapping: dict[str, str] = field(default_factory=dict)
 
     def to_stdio_params(self) -> StdioServerParameters:
         # ${VAR} 展开（仅简单形式，复杂逻辑让用户在配置外做）
@@ -96,6 +101,7 @@ def load_clients_config(path: str | Path | None = None) -> dict[str, ServerConfi
             command=raw["command"],
             args=raw.get("args", []),
             env=raw.get("env", {}),
+            tool_mapping=raw.get("argus_mapping", {}) or {},
         )
     return out
 
@@ -124,9 +130,23 @@ class MCPClient:
         params = self.config.to_stdio_params()
         self._stdio_cm = stdio_client(params)
         read, write = await self._stdio_cm.__aenter__()
-        self._session_cm = ClientSession(read, write)
-        self._session = await self._session_cm.__aenter__()
-        await self._session.initialize()
+        try:
+            self._session_cm = ClientSession(read, write)
+            self._session = await self._session_cm.__aenter__()
+            await self._session.initialize()
+        except BaseException:
+            # __aenter__ 半路失败时外层 async with 不会调 __aexit__ —
+            # 这里手动收尾已进入的 cm，否则 stdio spawn 的 server 子进程泄漏
+            exc_info = sys.exc_info()
+            if self._session is not None:
+                with contextlib.suppress(Exception):
+                    await self._session_cm.__aexit__(*exc_info)
+            with contextlib.suppress(Exception):
+                await self._stdio_cm.__aexit__(*exc_info)
+            self._session = None
+            self._session_cm = None
+            self._stdio_cm = None
+            raise
         return self
 
     async def __aexit__(self, exc_type, exc, tb):

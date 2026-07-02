@@ -149,13 +149,15 @@ def _android_bounds_for_label(xml: str, label: str,
         # Substring：attribute 含 label 即可
         attr_pat = r'(?:content-desc|text)="[^"]*' + esc + r'[^"]*"'
     # Pattern 1: attribute then bounds within same tag
-    p1 = re.compile(attr_pat + r'[^/>]*?bounds="(\[\d+,\d+\]\[\d+,\d+\])"')
+    # 注：中间跨越段用 [^>] 而非 [^/>] —— resource-id 的值含 '/'（com.x:id/foo），
+    # 排除 '/' 会让带 resource-id 的按钮查不到 bounds，静默 fallback 到 BACK
+    p1 = re.compile(attr_pat + r'[^>]*?bounds="(\[\d+,\d+\]\[\d+,\d+\])"')
     m = p1.search(xml)
     if m:
         return m.group(1)
     # Pattern 2: bounds then attribute (uiautomator XMLs vary in attribute order)
     p2 = re.compile(
-        r'bounds="(\[\d+,\d+\]\[\d+,\d+\])"[^/>]*?' + attr_pat
+        r'bounds="(\[\d+,\d+\]\[\d+,\d+\])"[^>]*?' + attr_pat
     )
     m = p2.search(xml)
     return m.group(1) if m else None

@@ -52,7 +52,7 @@ SHARED_SYSTEM_PROMPT = """你是一个专业的 QA 测试工程师 Agent。{plat
     "observation": "对当前屏幕的观察描述",
     "thinking": "你的思考过程",
     "step_progress": {{
-        "current_step_index": <int, 你**这一轮正在推进**的 step 序号 (1-based, Background 不计)。必须 = 上一轮的 current_step_index，或 = 上一轮的 current_step_index + 1。**任何跳跃都会被 reject 强制重做**>,
+        "current_step_index": <int, 你**这一轮正在推进**的 step 序号 (1-based, Background 不计)。必须 = 提示里标 📍 的「当前 step」序号。step 指针的推进由 agent 框架完成（当前 step pass 后自动 +1），你只负责报告当前 step 的状态。**报其他序号都会被 reject 强制重做**>,
         "current_step_status": "<in_progress | pass | fail>",
         "evidence": "<当 current_step_status = pass 或 fail 时**必填**：当前截图里能验证该 step 结论的具体证据。必须提到屏幕上能看到的具体元素（按钮名、文字、页面名、颜色、位置、弹窗、图标等），且至少 15 字符。例：「页面顶部出现「设置」标题，列表第一项「账号与安全」可见」。光说「已完成 / 不通过」会被 reject。**禁止使用「假设通过 / 后台逻辑 / 视觉无法验证但符合预期 / 是 mock 设定 / 推断成立」这类话术蒙混 PASS** — 看不见的断言直接 status=fail，详见下方第 5 条>",
         "fail_reason": "<当 current_step_status = fail 时必填：为什么这一步未达预期，引用 step 文本里的具体断言点>"
@@ -83,10 +83,10 @@ SHARED_SYSTEM_PROMPT = """你是一个专业的 QA 测试工程师 Agent。{plat
 
 **你会看到整个 Scenario 的全部 step 列表，这是为了让你理解测试上下文 / 终极目标 / 业务逻辑。但你的输出空间被严格限制：**
 
-1. **`current_step_index` 单调推进，禁止跳跃**
-   - 只能 = 上一轮 + 0（当前 step 还没完成，继续执行 sub-action） 或 + 1（当前 step 刚 pass，进入下一 step）
-   - 例：上一轮 current_step_index=2，这一轮只能 2 或 3，**不能** 4/5/6
-   - 你不许「偷瞄未来 step 的终态」然后宣布提前完成。即使屏幕看起来已经到了终局状态，也必须**逐步**推进 current_step_index 一次一格
+1. **`current_step_index` 必须 = 当前待执行 step 序号，禁止自行推进**
+   - 只能报提示里标 📍 的「当前 step」序号；当前 step pass 后由 agent 框架把指针 +1，下一轮你会看到新的 📍
+   - 例：当前 step 是 2，这一轮只能报 2，**不能** 3/4/5
+   - 你不许「偷瞄未来 step 的终态」然后宣布提前完成。即使屏幕看起来已经到了终局状态，也必须把当前 step 验完，推进交给框架
 
 2. **`evidence` 必须基于「当前截图」直接可见的元素**
    - 不许引用「我记得之前看到」、「应该是」、「按推测」这类间接说法
@@ -453,8 +453,8 @@ class Brain:
             lines = ["## Step 推进状态（你的完整任务图谱）",
                      "",
                      "下面列出整个 Scenario 的所有 step。**全部都给你看是为了让你理解上下文和终极目标**，"
-                     "但你这一轮**只能推进当前 step**（current_step_index 单调 +0 或 +1）。"
-                     "禁止跳跃推进 — 即使屏幕看起来已经到了未来 step 的终态。",
+                     "但你这一轮**只能推进当前 step**（current_step_index 必须 = 📍 当前 step 的序号，"
+                     "指针推进由框架完成）。禁止跳跃推进 — 即使屏幕看起来已经到了未来 step 的终态。",
                      "",
                      "Step 列表："]
             completed_evidence = completed_evidence or []
@@ -506,7 +506,7 @@ class Brain:
                 f"## UI/DOM 元素树 (精简)\n{_simplify_ui_tree(ui_tree)}\n\n"
                 f"{skills_text}\n\n"
                 f"## 历史操作 (完整)\n{self._format_history()}\n\n"
-                f"请基于**当前截图**决定下一步操作。记住：current_step_index 只能 +0 或 +1。"
+                f"请基于**当前截图**决定下一步操作。记住：current_step_index 必须 = 📍 当前 step 的序号。"
             ),
         })
 
@@ -540,7 +540,9 @@ class Brain:
 
                 self.history.append({
                     "observation": decision.get("observation", ""),
-                    "action": decision["action"],
+                    # action 可缺省（pass 时合法）—— 用 get 防 KeyError 被通用
+                    # except 吞成「LLM 调用失败」白烧 retry
+                    "action": decision.get("action"),
                 })
 
                 # Push current screenshot into history for next turn's context.
@@ -662,6 +664,21 @@ class Brain:
                 line += "  ⚠️ 该动作未产生任何可见变化（点击可能落空/被遮挡/坐标偏差，请勿重复同一坐标）"
             lines.append(line)
         return "\n".join(lines)
+
+    def discard_last(self):
+        """丢弃最近一次 decide() 写入的 history 记录 + 对应截图。
+
+        validator reject 时由 agent.py 调用 —— 被拒的决策从未执行，留在
+        history 会污染下一轮 prompt 的「历史操作」叙述，还会被 no_effect
+        检测误标（动作没执行当然无像素变化）导致吸附/网格阶梯误升级。
+
+        decide() 成功路径里 history 与 history_images 总是成对追加（超长
+        trim 只裁掉旧图，刚追加的一张必然存活在末尾），所以这里成对 pop。
+        """
+        if self.history:
+            self.history.pop()
+        if self.history_images:
+            self.history_images.pop()
 
     def reset(self):
         self.history.clear()

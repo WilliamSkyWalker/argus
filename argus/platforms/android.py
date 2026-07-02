@@ -78,6 +78,8 @@ class AndroidPlatform(Platform):
         self._screen_height = 0
         self._density = 1.0
         self._u2: u2.Device | None = None
+        # 最近一次截图的像素尺寸（供 scale 属性换算截图px/屏幕px，兼旋转检测）
+        self._last_shot_size: tuple[int, int] | None = None
         # 最近一次 dump 的原始 UI tree XML，供 tap 吸附复用（不额外 dump）
         self._last_raw_tree: str = ""
         # tap 吸附开关：首次定位关、重试 1-2 次时由 agent 打开（见 set_snap_enabled）
@@ -222,10 +224,23 @@ class AndroidPlatform(Platform):
 
     # --- Observation ---
 
+    def _note_screenshot_size(self, width: int, height: int) -> None:
+        """记录截图尺寸（供 scale 属性用），并检测横竖屏切换。
+
+        旋转后 screencap 的宽高互换，而缓存的 ``wm size`` 仍是竖屏值 —
+        clamp/scroll/grid 都会算错。截图横竖与缓存尺寸不一致时交换缓存。
+        """
+        self._last_shot_size = (width, height)
+        w, h = self._screen_width, self._screen_height
+        if w and h and w != h and width != height and (width > height) != (w > h):
+            log.info("检测到屏幕旋转: 缓存屏幕尺寸 %dx%d → %dx%d", w, h, h, w)
+            self._screen_width, self._screen_height = h, w
+
     def screenshot_png(self) -> bytes:
         """Screenshot WITH coordinate grid overlay (legacy callers)."""
         raw_bytes = self._adb_bytes("exec-out", "screencap", "-p")
         img = Image.open(io.BytesIO(raw_bytes))
+        self._note_screenshot_size(img.width, img.height)
         scale = img.width / self._screen_width
         img = draw_coordinate_grid(img, scale, self._screen_width, self._screen_height)
         return img_to_png_bytes(img)
@@ -237,7 +252,14 @@ class AndroidPlatform(Platform):
         — keeping the LLM-seen image identical to what we render in the HTML
         report, so debugging matches what the model actually saw.
         """
-        return self._adb_bytes("exec-out", "screencap", "-p")
+        raw_bytes = self._adb_bytes("exec-out", "screencap", "-p")
+        try:
+            # Image.open 只读 PNG header 拿尺寸，不解码像素，开销可忽略
+            img = Image.open(io.BytesIO(raw_bytes))
+            self._note_screenshot_size(img.width, img.height)
+        except Exception as e:
+            log.debug("截图尺寸读取失败: %s", e)
+        return raw_bytes
 
     def get_ui_tree(self) -> str:
         """Dump UI hierarchy. Three-tier fallback:
@@ -279,6 +301,17 @@ class AndroidPlatform(Platform):
     def screen_size(self) -> tuple[int, int]:
         return (self._screen_width, self._screen_height)
 
+    @property
+    def scale(self) -> float:
+        """截图 px / 屏幕 px 比例（skills 用它把 UI tree bounds 映射到图像坐标）。
+
+        screencap 通常等于 ``wm size``（Override），比例为 1.0；不相等的设备
+        （截图被系统缩放）按最近一次截图实际宽度换算。未截过图时按 1.0。
+        """
+        if self._last_shot_size and self._screen_width:
+            return self._last_shot_size[0] / self._screen_width
+        return 1.0
+
     # --- Actions ---
 
     def _snap_to_clickable(self, x: int, y: int) -> tuple[int, int]:
@@ -302,7 +335,8 @@ class AndroidPlatform(Platform):
             attrs = m.group(1)
             if 'clickable="true"' not in attrs and 'focusable="true"' not in attrs:
                 continue
-            b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', attrs)
+            # 负坐标合法（元素部分在屏幕外 / 动画中），不能用 \d+ 把节点整个丢掉
+            b = re.search(r'bounds="\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]"', attrs)
             if not b:
                 continue
             x1, y1, x2, y2 = map(int, b.groups())
@@ -318,7 +352,9 @@ class AndroidPlatform(Platform):
             # 规则②候选：落点在节点外，计算到该节点的间隙（chebyshev）
             gap = max(x1 - x, 0, x - x2, y1 - y, 0, y - y2)
             if gap <= margin:
-                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                # 中心可能因负 bounds 算出负值，钳到屏幕内
+                cx = max(0, (x1 + x2) // 2)
+                cy = max(0, (y1 + y2) // 2)
                 if near is None or gap < near[0] or (gap == near[0] and area < near[1]):
                     near = (gap, area, cx, cy)
         if near is None:
@@ -411,7 +447,16 @@ class AndroidPlatform(Platform):
             "home": "3",       # KEYCODE_HOME
             "recent": "187",   # KEYCODE_APP_SWITCH
         }
-        code = key_map.get(key, key)
+        code = key_map.get(key)
+        if code is None:
+            # LLM 输出直通设备 shell，白名单校验：只放行纯数字 keycode 或
+            # KEYCODE_XXX 形式，其余记 warning 后 no-op
+            candidate = str(key).strip()
+            if candidate.isdigit() or re.fullmatch(r"KEYCODE_[A-Z0-9_]+", candidate):
+                code = candidate
+            else:
+                log.warning("press_key 不识别的按键，忽略: %r", key)
+                return
         self._adb("shell", "input", "keyevent", code)
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int) -> None:
@@ -430,6 +475,10 @@ class AndroidPlatform(Platform):
 
     def open_target(self, target: str) -> None:
         """Open an app by package name."""
+        # LLM 输出直通设备 shell，校验包名形态（字母数字下划线加点），其余跳过
+        if not re.fullmatch(r"[\w.]+", target or ""):
+            log.warning("open_target 非法包名，忽略: %r", target)
+            return
         # Use monkey to launch the app's main activity
         self._adb("shell", "monkey", "-p", target,
                    "-c", "android.intent.category.LAUNCHER", "1")
@@ -467,8 +516,9 @@ class AndroidPlatform(Platform):
         action_type = action["type"]
         if action_type == "long_press":
             w, h = self.screen_size
-            x = max(0, min(int(action["x"]), w))
-            y = max(0, min(int(action["y"]), h))
+            # 与 base.execute_action 的 clamp 一致：坐标 == 尺寸已在屏幕外 1px
+            x = max(0, min(int(action["x"]), w - 1))
+            y = max(0, min(int(action["y"]), h - 1))
             self.long_press(x, y, action.get("duration", 1.5))
         elif action_type in ("back", "home", "recent"):
             self.press_key(action_type)

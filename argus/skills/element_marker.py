@@ -101,7 +101,8 @@ def _parse_android_ui_tree(xml_str: str, scale: float) -> list[dict]:
     except ET.ParseError:
         return elements
 
-    bound_re = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
+    # bounds 可能带负数（滑入/半屏外的元素），(-?\d+) 兼容
+    bound_re = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
     # 先求屏幕尺寸（用于过滤整屏背景容器）
     screen_w = screen_h = 0
     for elem in root.iter():
@@ -132,7 +133,8 @@ def _parse_android_ui_tree(xml_str: str, scale: float) -> list[dict]:
         label = (elem.get("content-desc") or elem.get("text") or "").strip()
         cls = (elem.get("class") or "").rsplit(".", 1)[-1]
         idx += 1
-        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+        # 负 bounds（半屏外）算出的中心 clamp 到 >= 0，避免 tap 负坐标
+        cx, cy = max(0, (x1 + x2) // 2), max(0, (y1 + y2) // 2)
         elements.append({
             "index": idx,
             "label": label,
@@ -267,7 +269,8 @@ class ElementMarkerSkill(Skill):
         annotated = _draw_markers(ctx.image.copy(), elements)
 
         # Build text index for the LLM
-        lines = ["## 可交互元素列表（截图上已标注编号）",
+        # 注意：纯视觉路线后 brain 发的是原始截图（无标注），文案不能说"已标注"
+        lines = ["## 可交互元素列表（编号与中心坐标；截图上无标注，编号仅用于本列表引用）",
                  "使用 tap 时可直接引用编号对应的坐标。\n"]
         for e in elements:
             cx, cy = e["center"]

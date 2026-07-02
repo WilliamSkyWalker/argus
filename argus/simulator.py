@@ -15,11 +15,14 @@ class Device:
     runtime: str
 
 
-def _simctl(*args: str) -> str:
+def _simctl(*args: str, timeout: int = 30) -> str:
+    # timeout 防 simctl 卡死拖挂整个 run；慢操作（boot/截图）传更长的 timeout
     result = subprocess.run(
         ["xcrun", "simctl", *args],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, timeout=timeout,
     )
+    if result.returncode != 0:
+        raise RuntimeError(f"simctl {' '.join(args)} failed: {result.stderr.strip()}")
     return result.stdout
 
 
@@ -55,7 +58,7 @@ def create_device(name: str = "Argus", device_type: str = "iPhone 16 Pro", runti
 
 def boot(udid: str = "booted") -> None:
     """Boot a simulator and open the Simulator app window."""
-    _simctl("boot", udid)
+    _simctl("boot", udid, timeout=120)  # 冷启动可能超过 30s
     subprocess.run(["open", "-a", "Simulator"], check=True)
 
 
@@ -74,6 +77,8 @@ def launch_app(bundle_id: str, udid: str = "booted") -> None:
 def screenshot(output_path: str | None = None, udid: str = "booted") -> Path:
     """Take a screenshot. Returns path to the PNG file."""
     if output_path is None:
-        output_path = tempfile.mktemp(suffix=".png")
-    _simctl("io", udid, "screenshot", output_path)
+        # mktemp 已废弃（有竞态）；delete=False 拿路径，文件归调用方消费/清理
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            output_path = f.name
+    _simctl("io", udid, "screenshot", output_path, timeout=60)
     return Path(output_path)

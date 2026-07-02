@@ -100,7 +100,9 @@ class Platform(ABC):
         w, h = self.screen_size
 
         def clamp(val: int, limit: int) -> int:
-            return max(0, min(int(val), limit))
+            # 上限取 limit-1：val == limit 已在屏幕外 1px（browser 会抛
+            # MoveTargetOutOfBounds，部分 Android 设备直接吞掉这次 tap）
+            return max(0, min(int(val), limit - 1 if limit > 0 else 0))
 
         if action_type == "tap":
             self.tap(clamp(action["x"], w), clamp(action["y"], h))
@@ -119,8 +121,12 @@ class Platform(ABC):
             self.press_key(action["key"])
         elif action_type == "wait":
             import time
-            wait_time = min(action.get("seconds", 2), 5)
-            time.sleep(wait_time)
+            # LLM 可能给出负数 / 非数字的 seconds，兜底为 2，并钳到 [0, 5]
+            try:
+                wait_time = float(action.get("seconds", 2))
+            except (TypeError, ValueError):
+                wait_time = 2.0
+            time.sleep(max(0.0, min(wait_time, 5.0)))
         elif action_type in ("open_app", "open_url"):
             target = (action.get("bundle_id") or action.get("package")
                       or action.get("url") or action.get("target", ""))

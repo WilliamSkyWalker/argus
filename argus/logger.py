@@ -45,6 +45,12 @@ class _CaseContextFilter(logging.Filter):
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(case_ctx)s%(message)s"
 DATE_FORMAT = "%H:%M:%S"
 
+# Level 统一挂在 "argus" 父 logger 上：子 logger 留 NOTSET 继承父级 level，
+# set_level 改父级即对已存在 + 之后新建的所有 argus.* logger 生效。
+# （handler 仍挂在各子 logger 上且 propagate=False，避免重复输出 — propagate
+# 只影响 record 分发，不影响 effective level 的向上查找。）
+logging.getLogger("argus").setLevel(logging.INFO)
+
 
 def get_logger(name: str) -> logging.Logger:
     """Get a named logger under the 'argus' namespace."""
@@ -55,7 +61,8 @@ def get_logger(name: str) -> logging.Logger:
         handler.addFilter(_CaseContextFilter())
         handler.flush = lambda: sys.stderr.flush()  # force flush after each log
         logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
+        # level 不在子 logger 上设（保持 NOTSET 继承 "argus" 父级），
+        # 否则 set_level("DEBUG") 永远压不过子级的 INFO，debug 日志全部不可达
         logger.propagate = False
     return logger
 

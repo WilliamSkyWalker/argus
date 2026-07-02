@@ -19,6 +19,10 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .logger import get_logger
+
+log = get_logger("gherkin")
+
 
 # ── 正则：Gherkin 关键字（含中文 BDD 关键字以备后用）──
 KEYWORD_FEATURE = re.compile(r'^\s*(Feature|功能):\s*(.*)$')
@@ -178,11 +182,24 @@ def parse_feature(text: str, source_file: str = '') -> Feature:
         if m:
             if current is not None:
                 _flush_scenario(feature, current, outline_examples)
-            current = Scenario(name=m.group(2).strip(), tags=pending_tags, line_no=i + 1)
+            # feature 级 tag 继承（Cucumber 语义）：scenario tag 排前面 — property
+            # getter 取首个匹配，同族 tag（如 @manual vs @auto）scenario 级覆盖 feature 级
+            current = Scenario(name=m.group(2).strip(),
+                               tags=pending_tags + feature.tags, line_no=i + 1)
             pending_tags = []
             outline_examples = []
             state = 'scenario'
             i += 1
+            continue
+
+        # Examples:（仅在 Scenario Outline 下文有意义）
+        # 必须在 Scenario 分支之前检查 — 中文「例子:/场景:」同时命中两个关键字，
+        # 否则 Outline 后的 `例子:` 被当成新 Scenario，Outline 以空 Examples flush
+        # （case 静默丢失）+ 表格行被挂到一个空名 Scenario 上。
+        # 后跟表格行才按 Examples 解析，避免吞掉 Outline 之后真正的 `场景: xxx`。
+        m = KEYWORD_EXAMPLES.match(line)
+        if m and outline_examples is not None and _lookahead_is_table(lines, i + 1):
+            i = _consume_examples_table(lines, i + 1, outline_examples)
             continue
 
         # Scenario:
@@ -190,17 +207,13 @@ def parse_feature(text: str, source_file: str = '') -> Feature:
         if m:
             if current is not None:
                 _flush_scenario(feature, current, outline_examples)
-            current = Scenario(name=m.group(2).strip(), tags=pending_tags, line_no=i + 1)
+            # feature 级 tag 继承同上（scenario tag 在前，同族覆盖）
+            current = Scenario(name=m.group(2).strip(),
+                               tags=pending_tags + feature.tags, line_no=i + 1)
             pending_tags = []
             outline_examples = None
             state = 'scenario'
             i += 1
-            continue
-
-        # Examples:（仅在 Scenario Outline 下文有意义）
-        m = KEYWORD_EXAMPLES.match(line)
-        if m and outline_examples is not None:
-            i = _consume_examples_table(lines, i + 1, outline_examples)
             continue
 
         # Step 行
@@ -252,6 +265,18 @@ def parse_feature(text: str, source_file: str = '') -> Feature:
     return feature
 
 
+def _lookahead_is_table(lines: list[str], start: int) -> bool:
+    """向前看：跳过空行/注释后，下一有效行是否是表格行（| ... |）。
+
+    用于消歧中文「例子:/场景:」— 后面紧跟表格才当 Examples 头处理。"""
+    for j in range(start, len(lines)):
+        s = lines[j].strip()
+        if not s or s.startswith('#'):
+            continue
+        return bool(TABLE_ROW.match(s))
+    return False
+
+
 def _consume_examples_table(lines: list[str], start: int, into: list[dict[str, str]]) -> int:
     """从 start 开始消费 Examples 表格，把每行（除 header）作为 dict 加入 into。
 
@@ -265,7 +290,12 @@ def _consume_examples_table(lines: list[str], start: int, into: list[dict[str, s
             if header is None:
                 header = cells
             else:
-                # 长度对齐（容错）
+                # 长度对齐（容错）；列数不齐时 zip 静默截断，缺列的 <占位符> 会
+                # 原样留在 case 文本里 — 记 warning 提醒修表
+                if len(cells) != len(header):
+                    log.warning(
+                        "Examples 表第 %d 行有 %d 列，表头 %d 列 — 缺失列的 <占位符> "
+                        "将原样保留: %s", i + 1, len(cells), len(header), s)
                 row = {}
                 for k, v in zip(header, cells):
                     row[k] = v

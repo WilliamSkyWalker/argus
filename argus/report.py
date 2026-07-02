@@ -53,7 +53,8 @@ def _render_heal_report(report: dict | None) -> str:
         return ""
     verdict = report.get("verdict", "unknown")
     meta = _HEAL_VERDICT_META.get(verdict, _HEAL_VERDICT_META["unknown"])
-    confidence = report.get("confidence", "low")
+    # confidence 来自 LLM JSON，插入 HTML 前必须转义
+    confidence = _esc(report.get("confidence", "low"))
     summary = _esc(report.get("summary", ""))
     suggestion = _esc(report.get("suggestion", ""))
     case_fix = report.get("suggested_case_fix", "")
@@ -222,7 +223,8 @@ def save_html(results: list[dict], output_path: str) -> str:
             sp_html = ""
             if sp:
                 sp_status = _esc(str(sp.get("current_step_status", "?")))
-                sp_idx = sp.get("current_step_index", "?")
+                # sp_idx 来自 LLM JSON，插入 HTML 前必须转义
+                sp_idx = _esc(sp.get("current_step_index", "?"))
                 sp_evidence = _esc(sp.get("evidence", "") or "")
                 sp_fail = _esc(sp.get("fail_reason", "") or "")
                 # status 上色
@@ -292,7 +294,9 @@ def save_html(results: list[dict], output_path: str) -> str:
           </details>
         </div>""")
 
-    html = f"""<!DOCTYPE html>
+    # 头/尾模板分开，case rows 逐块流式写入文件 — 避免把所有 base64 截图
+    # 拼成一个巨型字符串再落盘（大 run 内存翻倍）
+    html_head = f"""<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
@@ -414,12 +418,17 @@ def save_html(results: list[dict], output_path: str) -> str:
     <div class="card skipped"><div class="num">{summary['skipped']}</div><div class="label">跳过</div></div>
     <div class="card duration"><div class="num">{_fmt_duration(summary['duration'])}</div><div class="label">总耗时</div></div>
   </div>
-  {''.join(rows_html)}
+"""
+    html_tail = f"""
   <div class="footer">Generated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} by Argus</div>
 </body>
 </html>"""
 
-    path.write_text(html)
+    with path.open("w", encoding="utf-8") as f:
+        f.write(html_head)
+        for row in rows_html:
+            f.write(row)
+        f.write(html_tail)
     log.info("HTML 报告已保存: %s", path)
     return str(path)
 
@@ -447,8 +456,16 @@ def _fmt_duration(seconds: float) -> str:
     return f"{h}h {m}m"
 
 
-def _esc(text: str) -> str:
-    """Escape HTML special characters."""
+def _esc(text) -> str:
+    """Escape HTML special characters.
+
+    None 安全：LLM 返回的 JSON 字段可能是 null（如 "observation": null），
+    跑完一整轮后在 save_html 里崩掉会毁掉整份报告 — 这里兜底成空串。
+    非字符串一律 str() 转换。"""
+    if text is None:
+        text = ""
+    else:
+        text = str(text)
     return (text
             .replace("&", "&amp;")
             .replace("<", "&lt;")
