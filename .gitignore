@@ -172,8 +172,9 @@ __marimo__/
 # Argus project-specific
 # ─────────────────────────────────────────────────────
 
-# Claude Code local config (Bash 权限白名单等)
-.claude/
+# Claude Code local config (Bash 权限白名单等)；skills 是项目能力的一部分，入库
+.claude/*
+!.claude/skills/
 
 # Test cases (各项目独立 repo 或本地数据，不进 argus repo)
 # 注意：用 `tests/*` 而不是 `tests/` —— 后者会让 git 不再递归进入该目录，
