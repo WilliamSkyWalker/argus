@@ -12,7 +12,7 @@ description: 把当前 Claude Code 会话当 argus 的另一种 driver — 你(C
 - `/argus-drive <dir>` — 目录批量：递归收 `*.feature`，跑全部 `@auto`+`@partial`，跳 `@manual`
 - 启动检测到 `/tmp/argus-drive/state.json` → 问 resume / restart
 
-## 平台层：用 argus MCP device_* tools（backed by AppiumPlatform，别手搓 adb）
+## 平台层：用 argus MCP device_* tools（backed by AppiumPlatform，别手搓底层脚本）
 | tool | 作用 | 关键点 |
 |---|---|---|
 | `device_screenshot(serial,out_path?)` | 截屏落盘 | 返回 `path`+`screen_size`+**`scale`**(≠1 说明截图被缩放，坐标要 ×(1/scale) 换算——点不中先看这里) |
@@ -23,7 +23,7 @@ description: 把当前 Claude Code 会话当 argus 的另一种 driver — 你(C
 | `device_key(key,serial)` | 按键 | enter/back/home/…；⚠️ 部分 Flutter App back 会退出 App，关浮层用界面关闭控件 |
 | `device_launch(pkg,activity?,serial,force_stop?)` | 拉起/relaunch | |
 
-用法：`device_screenshot` → Read 图 → 视觉定位 → `device_tap/input/swipe` → 回截图。多设备每 call 传 `serial`。MCP 不可用才降级裸 adb(需 `export PATH=$PATH:$HOME/Library/Android/sdk/platform-tools`)。
+用法：`device_screenshot` → Read 图 → 视觉定位 → `device_tap/input/swipe` → 回截图。多设备每 call 传 `serial`。全程走 MCP，不碰 adb。
 
 ## 0. 启动检查 + resume
 ```bash
@@ -54,8 +54,8 @@ ls /tmp/argus-drive/journals/ 2>/dev/null; cat /tmp/argus-drive/state.json 2>/de
 默认上个 scenario 的结束态作下个起点。仅三类触发 reset：
 | 触发 | 动作 |
 |---|---|
-| `@reset:pm_clear` | `pm clear <pkg>` + relaunch |
-| `@reset:relaunch` | `am force-stop <pkg>` + relaunch |
+| `@reset:relaunch` | `device_launch(pkg, force_stop=True)` |
+| `@reset:pm_clear` | 数据级重置：`install_apk` 重装，或走 `_preconditions.md` 恢复到未登录态(无纯 driver 清数据原语) |
 | 当前态与 scenario Given 不符 | 按 `tests/<target>/_preconditions.md` 恢复 |
 
 跨 feature 切换：新 feature 首个 scenario 按 file `# argus-reset-default:` 执行一次。Given 匹配靠截图大致判断(不必精准)，不符就按 `_preconditions.md` 的恢复流程走。
@@ -63,7 +63,7 @@ ls /tmp/argus-drive/journals/ 2>/dev/null; cat /tmp/argus-drive/state.json 2>/de
 ## 5. journal + 断点续跑 + 报告
 - **每 feature 一个 journal**：`/tmp/argus-drive/journals/<basename>.json`，每跑完一个 scenario 立刻覆盖写全文件(不缓存)，同步 update state.json。
 - journal 结构对接 `argus.drive.render`：`{started_at, feature, batch_id, scenarios:[{case, tags, result(pass|fail|skipped|timeout), reason, duration, scenario_steps, step_status{n:pass|fail|skip|pending}, steps_detail:[{step, screenshot(路径,渲染器自动嵌base64), action, observation, thinking}]}]}`
-  - action 形如 `{"type":"tap","x":..,"y":..}` / `observe` / `back` / `{"type":"input","text":..}` / `swipe` / `{"type":"adb","cmd":..}`
+  - action 形如 `{"type":"tap","x":..,"y":..}` / `observe` / `back` / `{"type":"input","text":..}` / `swipe` / `{"type":"launch","pkg":..}`
 - **每跑完一个 feature 立即出报告**(中途崩也有产物)：
   ```bash
   # tests/<first-level>/cc_reports/<batch_id>/<basename>-claude-<batch_id>.html
@@ -81,7 +81,7 @@ ls /tmp/argus-drive/journals/ 2>/dev/null; cat /tmp/argus-drive/state.json 2>/de
 |---|---|---|
 | 主循环 | agent.py Python | Claude 会话 turn |
 | 决策 | LLM API | 当前 Claude |
-| 平台 | argus.platforms(进程内 Appium) | MCP `device_*`(同 AppiumPlatform)，降级裸 adb |
+| 平台 | argus.platforms(进程内 Appium) | MCP `device_*`(同 AppiumPlatform) |
 | 并发 | -j N | 单线程 |
 | 状态 | 每 case reset | 跨 case 默认不 reset |
 | 续跑 | 不支持 | 支持(state.json+per-feature journal) |
