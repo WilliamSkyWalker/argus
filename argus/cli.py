@@ -141,10 +141,17 @@ def _reset_android_state(platform, mode: str, package: str | None = None) -> Non
 
     No-op for non-Android platforms or unrecognized mode.
     """
-    if not hasattr(platform, "_adb"):
-        return
     # 包名取不到即报错（在 try 之外，确保不被下方 except 吞成 warning）
     package = package or _require_android_package()
+
+    # Appium 路径（当前唯一在用的驱动）：走进程内 Appium 原语拉起/清数据，不碰 adb。
+    # 这是 case 启动时把被测 App 切到前台的唯一可靠入口——不重置就会误操作前台残留的
+    # 其它 App（如设备上开着的另一个被测包）。
+    if hasattr(platform, "reset_app") and not hasattr(platform, "_adb"):
+        platform.reset_app(package, mode)
+        return
+    if not hasattr(platform, "_adb"):
+        return
     try:
         # 先发 HOME 收回所有 system overlay（通知栏 / 快速设置 / 多任务视图等）。
         # force-stop 只杀 App，不动 SystemUI 渲染的 overlay；不先收 overlay 会导致
@@ -1477,6 +1484,10 @@ def _run_sequential(cfg: dict, test_cases: list[str], url: str | None,
         if reset_mode and reset_mode != "none":
             log.info("[%d/%d] Android reset: %s", i + 1, len(test_cases), reset_mode)
             _reset_android_state(agent.platform, reset_mode)
+        elif getattr(agent.platform, "platform_name", "") == "android":
+            # 即便 @reset:none，android 也必须把被测包切到前台：autoLaunch=False 只
+            # 附着当前前台，不主动拉起目标 App，否则会误操作设备上残留的其它 App。
+            _reset_android_state(agent.platform, "none")
 
         tc = _substitute_placeholders(tc)
 
@@ -1720,11 +1731,14 @@ def _run_dispatched_devices(cfg: dict, test_cases: list[str],
 
                 # 3) Android per-case state reset
                 reset_mode = _extract_reset_mode(tc)
-                if reset_mode and reset_mode != "none":
-                    try:
+                try:
+                    if reset_mode and reset_mode != "none":
                         _reset_android_state(agent.platform, reset_mode)
-                    except Exception as e:
-                        log.warning("[Worker %d] reset 失败: %s", worker_idx, e)
+                    elif getattr(agent.platform, "platform_name", "") == "android":
+                        # @reset:none 也要把被测包切前台，否则会误操作设备上残留的其它 App
+                        _reset_android_state(agent.platform, "none")
+                except Exception as e:
+                    log.warning("[Worker %d] reset 失败: %s", worker_idx, e)
 
                 tc = _substitute_placeholders(tc)
 

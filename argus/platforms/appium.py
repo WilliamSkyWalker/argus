@@ -331,6 +331,51 @@ class AppiumPlatform(Platform):
         except Exception as e:
             log.warning("open_target(%s) 失败: %s", target, e)
 
+    def reset_app(self, target: str, mode: str) -> None:
+        """通过 Appium 原语（不碰 adb）把被测 App 重置到起点，是 case 启动/换 App
+        的唯一可靠入口——autoLaunch=False + noReset 只会附着当前前台 App，必须由此
+        主动拉起目标 App，否则会误操作前台残留的其它 App。
+
+        mode:
+          relaunch — terminate + activate（杀进程重启，保数据）
+          pm_clear — clearApp + activate（清数据后重启；uiautomator2 driver 支持，
+                     底层是 server 端 adb pm clear，argus 侧不碰 adb）
+        其它值 / 空 target — 尽力 activate 到目标 App（至少保证前台是它）。
+        """
+        if not target:
+            return
+        if self._os == "android" and not re.fullmatch(r"[\w.]+", target):
+            log.warning("非法包名，忽略 reset: %r", target)
+            return
+        try:
+            # 先收系统 overlay（通知栏/多任务），避免下个 case 首屏被遮
+            self.press_key("home")
+            time.sleep(0.3)
+        except Exception:
+            pass
+        try:
+            if mode == "pm_clear" and self._os == "android":
+                self._driver.execute_script("mobile: clearApp", {"appId": target})
+                time.sleep(1)
+                self._driver.activate_app(target)
+                log.info("状态重置: clearApp + 重启 %s", target)
+                time.sleep(5)
+            elif mode == "relaunch":
+                try:
+                    self._driver.terminate_app(target)
+                except Exception as e:
+                    log.debug("terminate_app(%s): %s", target, e)
+                time.sleep(0.5)
+                self._driver.activate_app(target)
+                log.info("状态重置: 重启 %s", target)
+                time.sleep(4)
+            else:
+                # none / 未知：至少把目标 App 切到前台（防止误操作其它 App）
+                self._driver.activate_app(target)
+                time.sleep(2)
+        except Exception as e:
+            log.warning("reset_app(%s, %s) 失败: %s", target, mode, e)
+
     def is_ime_visible(self) -> bool:
         if self._os != "android":
             return False
