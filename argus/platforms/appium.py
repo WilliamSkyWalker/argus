@@ -124,8 +124,9 @@ class AppiumPlatform(Platform):
             # 附着当前前台，不启动/不重置
             opts.set_capability("noReset", True)
             opts.set_capability("autoLaunch", False)
-            opts.set_capability("skipDeviceInitialization", True)
-            opts.set_capability("skipServerInstallation", False)
+            # ⚠️ 不设 skipDeviceInitialization —— 它会跳过 Appium 装 io.appium.settings，
+            # 导致 unicodeKeyboard(下方)起不了 UnicodeIME、session 失败。让 Appium 自己
+            # 做 device init(用 server 端 adb 装 helper，云农场同理)，argus 不碰 adb。
             # Flutter 文字输入：Flutter 的输入框不是原生 EditText，ACTION_SET_TEXT
             # 无效；必须走真 IME 提交。开 UnicodeIME（io.appium.settings 提供，
             # 云农场预装）才能把文字打进 Flutter 字段，且支持 CJK。
