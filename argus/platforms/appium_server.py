@@ -39,15 +39,28 @@ def _parse_node_version(path: str) -> tuple:
     return tuple(int(g) for g in m.groups()) if m else (0,)
 
 
+def _sandbox() -> dict:
+    """argus mcp init 装的沙盒工具链路径（未装则空 dict）。"""
+    try:
+        from ..toolchain import sandbox_paths
+        return sandbox_paths()
+    except Exception:
+        return {}
+
+
 def find_appium_binary(explicit: str | None = None) -> str | None:
     """定位 appium 可执行文件。
 
-    顺序：显式配置 → APPIUM_BIN 环境变量 → PATH（which）→ 扫 nvm 各 node 版本，
-    挑版本号最高、且真装了 appium 的那个（多 node 共存时 which 常命中没装 appium 的默认 node）。
+    顺序：显式配置 → APPIUM_BIN 环境变量 → argus 沙盒（mcp init 装的）→ PATH（which）
+    → 扫 nvm 各 node 版本，挑版本号最高、且真装了 appium 的那个（多 node 共存时 which
+    常命中没装 appium 的默认 node）。
     """
     for cand in (explicit, os.environ.get("APPIUM_BIN")):
         if cand and os.path.isfile(cand):
             return cand
+    sb = _sandbox().get("appium_bin")
+    if sb and os.path.isfile(sb):
+        return sb
     which = shutil.which("appium")
     if which:
         return which
@@ -112,6 +125,16 @@ class AppiumServerManager:
         # 关键：把 appium 所在 node 的 bin 放 PATH 最前，令 shebang 命中对的 node
         node_bin_dir = os.path.dirname(appium_bin)
         env["PATH"] = node_bin_dir + os.pathsep + env.get("PATH", "")
+        # 沙盒 appium（mcp init 本地装）的 bin 在 node_modules/.bin，那里没有 node：
+        # 补上沙盒 node bin + APPIUM_HOME + 沙盒 adb，令 shebang/driver/adb 都命中沙盒。
+        sb = _sandbox()
+        if sb.get("appium_bin") and os.path.realpath(appium_bin) == os.path.realpath(sb["appium_bin"]):
+            if sb.get("node_bin"):
+                env["PATH"] = os.path.dirname(sb["node_bin"]) + os.pathsep + env["PATH"]
+            if sb.get("appium_home"):
+                env["APPIUM_HOME"] = sb["appium_home"]
+            if sb.get("platform_tools"):
+                env["PATH"] = sb["platform_tools"] + os.pathsep + env["PATH"]
         # uiautomator2 driver 必需 ANDROID_HOME
         android_home = self._cfg.get("android_home") or _default_android_home()
         if android_home:

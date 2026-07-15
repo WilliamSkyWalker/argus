@@ -273,6 +273,22 @@ def main():
     run_p.add_argument("--bg", action="store_true",
                        help="Run in background (headless, silent)")
 
+    # argus mcp <init|doctor>
+    mcp_p = sub.add_parser("mcp", help="Toolchain setup (Appium/node/drivers/iOS WDA)")
+    mcp_sub = mcp_p.add_subparsers(dest="mcp_command")
+    mcp_init_p = mcp_sub.add_parser(
+        "init", help="One-shot install of the Appium toolchain into ~/.argus/runtime "
+                     "(never touches system node/npm)")
+    mcp_init_p.add_argument("--ios-team-id", default=None, metavar="TEAM",
+                            help="Apple team id for iOS WDA signing (else .env IOS_TEAM_ID)")
+    mcp_init_p.add_argument("--device", default=None, metavar="UDID",
+                            help="iOS device udid to pre-build WebDriverAgent for")
+    mcp_init_p.add_argument("--force-node", action="store_true",
+                            help="Install sandboxed node even if a system node exists")
+    mcp_init_p.add_argument("--skip-ios", action="store_true",
+                            help="Android only: skip iOS driver + WDA setup")
+    mcp_sub.add_parser("doctor", help="Show detected/installed toolchain paths")
+
     # argus list
     sub.add_parser("list", help="List available test targets")
 
@@ -322,6 +338,15 @@ def main():
         name = args.name or cfg["device_name"]
         device_type = args.device_type or cfg["device_type"]
         cmd_setup(name, device_type)
+    elif args.command == "mcp":
+        from . import toolchain
+        if args.mcp_command == "init":
+            toolchain.mcp_init(ios_team_id=args.ios_team_id, device=args.device,
+                               force_node=args.force_node, skip_ios=args.skip_ios)
+        elif args.mcp_command == "doctor":
+            toolchain.doctor()
+        else:
+            parser.parse_args(["mcp", "--help"])
     elif args.command == "list":
         cmd_list_targets()
     elif args.command == "run":
