@@ -69,6 +69,7 @@ class AppiumPlatform(Platform):
     def __init__(self):
         self._driver = None
         self._server = None           # AppiumServerManager（自动起/复用 server）
+        self._server_url = ""         # 实际连上的 server url（供跨进程 session 重连）
         self._os = "android"          # android | ios
         self._screen_width = 0
         self._screen_height = 0
@@ -141,6 +142,7 @@ class AppiumPlatform(Platform):
 
         log.info("连接 Appium server %s (os=%s, device=%s)...", server_url, self._os, device or "auto")
         self._driver = webdriver.Remote(server_url, options=opts)
+        self._server_url = server_url
         self._detect_screen_size()
         log.info("Appium session 就绪: %s %dx%d", self._os, self._screen_width, self._screen_height)
 

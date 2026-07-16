@@ -33,8 +33,13 @@ Argus = 视觉驱动 AI QA agent，替代人工测试。喂 `.feature`(Gherkin) 
 ## Skills（`argus/skills/`，截图→LLM 间预处理，默认开的都不碰树）
 `loading_detector`/`keyboard_detector`(靠 platform.is_ime_visible)/`scroll_map`/`visual_diff`(也供 agent 判 no_effect)/`toast_detector`；按需：`ocr`/`color_validator`/`layout_checker`/`smart_crop`。
 
-## MCP（`argus/mcp/`）
-`server.py` FastMCP stdio，暴露 argus 能力为 tool(list/run/device 原语；device_* 走 AppiumPlatform 供 argus-drive)。根目录 `.mcp.json` 让 Claude Code 自动挂载。`client.py` 让 brain 调外部 server(如 Figma MCP)，配置 `.argus/mcp_clients.json`(gitignored)。`/argus-drive` skill = Claude 当 brain、Appium 当 platform 跑用例出 HTML 报告。
+## 对其他 agent 开放：CLI 是通用接口
+**任何能跑 shell 的 agent 都用 `argus` CLI 驱动**（不限 Claude Code）。两类能力：
+- **编排**：`argus run/list/status/report`；`list`/`devices` 带 `--json`、`run --report` 出 JSON，供机读。
+- **设备驱动**：`argus device <start|screenshot|tap|swipe|input|type-send|key|launch|stop>`，每条输出 JSON。跨进程复用同一常驻 Appium session（`platforms/device_session.py` 按 session_id 重连；server 由 AppiumServerManager 常驻），故 turn-by-turn 驱动不必每次重建 session。全程 Appium 原语，**不碰 adb**。
+
+## MCP（`argus/mcp/`，给 MCP-native agent 的可选适配器）
+`server.py` FastMCP stdio，把上面同一套能力也暴露为 MCP tool(list/run/device_*；device_* 与 `argus device` CLI **共享同一 session 状态文件**，可互相接管)。根目录 `.mcp.json` 让 Claude Code 自动挂载。`client.py` 让 brain 调外部 server(如 Figma MCP)，配置 `.argus/mcp_clients.json`(gitignored)。`/argus-drive` skill = Claude 当 brain、`argus device` CLI 当 platform 跑用例出 HTML 报告。
 
 ## 用例格式
 **`.feature`(Gherkin，推荐)**：Feature/Background/Scenario(Outline)+Examples 全解析。Tag：
@@ -63,7 +68,14 @@ argus run <target> --shard 0/3           # 手动分片
 argus run <target> --bg ; argus status [run_id]            # 后台+查
 argus run "打开X验证Y" --platform ios    # inline
 argus new <t> --platform android --package com.x.y         # 脚手架
-argus list / devices / setup
+argus list --json / devices --json / setup                 # 发现(机读)
+# 设备驱动原语(任何 agent 可调，输出 JSON，跨进程复用 Appium session)
+argus device start --serial s1                              # 建/复用 session
+argus device screenshot --serial s1 --out shot.png         # → {path,screen_size,scale}
+argus device tap 540 1260 --serial s1                      # 设备像素坐标
+argus device type-send "hi" --input-x 540 --input-y 2400 --send-x 1000 --send-y 2400
+argus device launch com.example.app --force-stop --serial s1   # Appium activate(无 adb)
+argus device stop --serial s1
 argus figma frames|gen-tests|review <url>
 ```
 

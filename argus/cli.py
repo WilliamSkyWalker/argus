@@ -235,7 +235,8 @@ def main():
                        help="Overwrite if tests/<name>/ already exists")
 
     # argus devices
-    sub.add_parser("devices", help="List available simulators")
+    devices_p = sub.add_parser("devices", help="List available simulators")
+    devices_p.add_argument("--json", action="store_true", help="Emit JSON to stdout (machine-readable)")
 
     # argus setup
     setup_p = sub.add_parser("setup", help="Create and boot a simulator")
@@ -289,8 +290,46 @@ def main():
                             help="Android only: skip iOS driver + WDA setup")
     mcp_sub.add_parser("doctor", help="Show detected/installed toolchain paths")
 
+    # argus device <...> — 通用设备驱动原语（常驻 Appium session + 跨进程重连）
+    # 任何能跑 shell 的 agent 都能调；每条命令默认输出 JSON 到 stdout。
+    dev_p = sub.add_parser("device",
+                           help="Drive a device via persistent Appium session (agent-callable; JSON out)")
+    dev_sub = dev_p.add_subparsers(dest="device_command")
+    d_start = dev_sub.add_parser("start", help="Create/reuse a device session")
+    d_start.add_argument("--serial", default=None)
+    d_start.add_argument("--os", default="android", choices=["android", "ios"])
+    d_shot = dev_sub.add_parser("screenshot", help="Screenshot → {path,screen_size,scale}")
+    d_shot.add_argument("--serial", default=None)
+    d_shot.add_argument("--out", default=None)
+    d_tap = dev_sub.add_parser("tap", help="Tap at device pixel (x, y)")
+    d_tap.add_argument("x", type=int); d_tap.add_argument("y", type=int)
+    d_tap.add_argument("--serial", default=None)
+    d_swipe = dev_sub.add_parser("swipe", help="Swipe (x1,y1)→(x2,y2)")
+    for a in ("x1", "y1", "x2", "y2"): d_swipe.add_argument(a, type=int)
+    d_swipe.add_argument("--duration-ms", type=int, default=300)
+    d_swipe.add_argument("--serial", default=None)
+    d_input = dev_sub.add_parser("input", help="Type text into focused field (no submit)")
+    d_input.add_argument("text")
+    d_input.add_argument("--serial", default=None)
+    d_ts = dev_sub.add_parser("type-send", help="Focus→type→submit→wait→screenshot in one call")
+    d_ts.add_argument("text")
+    d_ts.add_argument("--input-x", type=int, required=True); d_ts.add_argument("--input-y", type=int, required=True)
+    d_ts.add_argument("--send-x", type=int, required=True); d_ts.add_argument("--send-y", type=int, required=True)
+    d_ts.add_argument("--wait-s", type=float, default=12.0)
+    d_ts.add_argument("--serial", default=None); d_ts.add_argument("--out", default=None)
+    d_key = dev_sub.add_parser("key", help="Press key: enter/delete/back/home/recent/…")
+    d_key.add_argument("key")
+    d_key.add_argument("--serial", default=None)
+    d_launch = dev_sub.add_parser("launch", help="Foreground/relaunch a package (Appium activate, no adb)")
+    d_launch.add_argument("package")
+    d_launch.add_argument("--serial", default=None)
+    d_launch.add_argument("--force-stop", action="store_true", help="terminate then activate (relaunch)")
+    d_stop = dev_sub.add_parser("stop", help="Quit the device session")
+    d_stop.add_argument("--serial", default=None)
+
     # argus list
-    sub.add_parser("list", help="List available test targets")
+    list_p = sub.add_parser("list", help="List available test targets")
+    list_p.add_argument("--json", action="store_true", help="Emit JSON to stdout (machine-readable)")
 
     # argus status
     status_p = sub.add_parser("status", help="Check background run status")
@@ -332,7 +371,7 @@ def main():
         cmd_new(args.name, args.platform, package=args.package, url=args.url,
                 force=args.force)
     elif args.command == "devices":
-        cmd_devices()
+        cmd_devices(getattr(args, "json", False))
     elif args.command == "setup":
         cfg = load_config()["simulator"]
         name = args.name or cfg["device_name"]
@@ -347,8 +386,13 @@ def main():
             toolchain.doctor()
         else:
             parser.parse_args(["mcp", "--help"])
+    elif args.command == "device":
+        if not getattr(args, "device_command", None):
+            parser.parse_args(["device", "--help"])
+        else:
+            cmd_device(args)
     elif args.command == "list":
-        cmd_list_targets()
+        cmd_list_targets(getattr(args, "json", False))
     elif args.command == "run":
         devices = args.device or []
         # 先确保设备 online。TLS/WiFi adb 是会自动断的，每次跑前主动
@@ -885,27 +929,21 @@ def cmd_new(name: str, platform: str, package: str | None = None,
     print(f"  跑：argus run {name}")
 
 
-def cmd_list_targets():
+def cmd_list_targets(as_json: bool = False):
     """List available test targets under tests/."""
     if not TESTS_DIR.exists():
-        print("没有测试目录。请创建 tests/ 目录。")
+        print(json.dumps([]) if as_json else "没有测试目录。请创建 tests/ 目录。")
         return
 
     targets = sorted(
         d for d in TESTS_DIR.iterdir()
         if d.is_dir() and not d.name.startswith("_") and (d / "cases").is_dir()
     )
-    if not targets:
-        print("没有可用的测试目标。")
-        return
-
-    print(f"{'目标':<20s} {'用例数':<8s} {'报告数':<8s} 说明")
-    print("-" * 65)
+    rows = []
     for t in targets:
         cases = list((t / "cases").rglob("*.feature")) + list((t / "cases").rglob("*.md"))
         reports_dir = t / "reports"
         reports = list(reports_dir.glob("*.html")) if reports_dir.exists() else []
-        # Read first line of README for description
         readme = t / "README.md"
         desc = ""
         if readme.exists():
@@ -914,16 +952,97 @@ def cmd_list_targets():
                 if line and not line.startswith("#") and not line.startswith("["):
                     desc = line[:30]
                     break
-        print(f"  {t.name:<18s} {len(cases):<8d} {len(reports):<8d} {desc}")
+        rows.append({"target": t.name, "cases": len(cases),
+                     "reports": len(reports), "desc": desc})
+
+    if as_json:
+        print(json.dumps(rows, ensure_ascii=False))
+        return
+    if not rows:
+        print("没有可用的测试目标。")
+        return
+    print(f"{'目标':<20s} {'用例数':<8s} {'报告数':<8s} 说明")
+    print("-" * 65)
+    for r in rows:
+        print(f"  {r['target']:<18s} {r['cases']:<8d} {r['reports']:<8d} {r['desc']}")
 
 
-def cmd_devices():
+def cmd_devices(as_json: bool = False):
     devices = list_devices()
+    if as_json:
+        print(json.dumps([{"name": d.name, "state": d.state, "udid": d.udid}
+                          for d in devices], ensure_ascii=False))
+        return
     if not devices:
         print("No simulators found. Run: argus setup")
         return
     for d in devices:
         print(f"  {d.name:25s} {d.state:10s} {d.udid}")
+
+
+def cmd_device(args):
+    """通用设备驱动 CLI —— 走常驻 Appium session（跨进程按 session_id 重连），
+    每条命令输出 JSON 到 stdout，供任何能跑 shell 的 agent 机读驱动设备。"""
+    import io as _io
+    from .platforms import device_session as ds
+
+    cmd = args.device_command
+    serial = getattr(args, "serial", None)
+
+    def _out(d):
+        print(json.dumps(d, ensure_ascii=False))
+
+    def _shot(plat, out_path):
+        png = plat.screenshot_raw()
+        if not out_path:
+            shots = Path(_tempfile.gettempdir()) / "argus-device-shots"
+            shots.mkdir(parents=True, exist_ok=True)
+            out_path = str(shots / f"{(serial or 'dev')}-{int(time.time() * 1000)}.png")
+        Path(out_path).write_bytes(png)
+        from PIL import Image
+        with Image.open(_io.BytesIO(png)) as im:
+            w, h = im.size
+        sw, sh = plat.screen_size
+        return {"path": out_path, "width": w, "height": h,
+                "screen_size": [sw, sh], "scale": plat.scale}
+
+    if cmd == "start":
+        plat = ds.start(serial, getattr(args, "os", "android"))
+        sw, sh = plat.screen_size
+        _out({"ok": True, "serial": serial or "default", "os": plat._os,
+              "session_id": plat._driver.session_id, "screen_size": [sw, sh]})
+        return
+    if cmd == "stop":
+        ds.stop(serial)
+        _out({"ok": True, "stopped": serial or "default"})
+        return
+
+    # 其余动作：重连已有 session；无则自动 start（android 默认）
+    plat = ds.attach(serial) or ds.start(serial, "android")
+
+    if cmd == "screenshot":
+        _out(_shot(plat, args.out))
+    elif cmd == "tap":
+        plat.tap(args.x, args.y)
+        _out({"ok": True, "tapped": [args.x, args.y]})
+    elif cmd == "swipe":
+        plat.swipe(args.x1, args.y1, args.x2, args.y2)
+        _out({"ok": True, "from": [args.x1, args.y1], "to": [args.x2, args.y2]})
+    elif cmd == "input":
+        plat.input_text(args.text)
+        _out({"ok": True, "len": len(args.text)})
+    elif cmd == "type-send":
+        plat.tap(args.input_x, args.input_y); time.sleep(0.7)
+        plat.input_text(args.text); time.sleep(0.4)
+        plat.tap(args.send_x, args.send_y); time.sleep(max(0.0, args.wait_s))
+        res = _shot(plat, args.out); res["sent"] = args.text
+        _out(res)
+    elif cmd == "key":
+        plat.press_key(args.key)
+        _out({"ok": True, "key": args.key})
+    elif cmd == "launch":
+        plat.reset_app(args.package, "relaunch" if args.force_stop else "none")
+        _out({"ok": True, "package": args.package, "force_stop": args.force_stop})
 
 
 def cmd_setup(name: str, device_type: str):

@@ -699,6 +699,16 @@ def _get_android(serial: str | None):
         plat = AppiumPlatform()
         plat.setup({"appium": {"os": "android", "device": serial or ""}})
         _ANDROID_PLATFORMS[key] = plat
+        # 落状态文件，让 `argus device` CLI（及其它 agent）能重连同一 session
+        try:
+            from ..platforms import device_session as _ds
+            _ds.save_state(serial, {
+                "server_url": plat._server_url, "session_id": plat._driver.session_id,
+                "os": plat._os, "screen_width": plat._screen_width,
+                "screen_height": plat._screen_height, "serial": serial or "",
+            })
+        except Exception:
+            pass
     return plat
 
 
@@ -816,21 +826,14 @@ def device_key(key: str, serial: str | None = None) -> dict:
 @mcp.tool()
 def device_launch(package: str, activity: str | None = None,
                   serial: str | None = None, force_stop: bool = False) -> dict:
-    """拉起 App。activity 缺省用 <package>/.MainActivity；force_stop 先杀再起（relaunch）。"""
-    adb = shutil.which("adb") or os.path.expanduser(
-        "~/Library/Android/sdk/platform-tools/adb"
-    )
-    base = [adb] + (["-s", serial] if serial else [])
-    if force_stop:
-        subprocess.run(base + ["shell", "am", "force-stop", package],
-                       capture_output=True, timeout=10)
-    comp = activity if activity and "/" in activity else \
-        f"{package}/{activity or '.MainActivity'}"
-    r = subprocess.run(base + ["shell", "am", "start", "-n", comp],
-                       capture_output=True, text=True, timeout=15)
-    ok = r.returncode == 0 and "Error" not in (r.stderr + r.stdout)
-    return {"ok": ok, "component": comp,
-            "stdout": r.stdout.strip(), "stderr": r.stderr.strip()}
+    """把被测包切到前台。force_stop=True 先杀再起（relaunch）。
+
+    走 Appium 原语（activate_app / terminate_app），**不碰 adb**（云真机无 adb）。
+    activity 参数保留兼容，Appium 按包名激活，无需显式 activity。
+    """
+    plat = _get_android(serial)
+    plat.reset_app(package, "relaunch" if force_stop else "none")
+    return {"ok": True, "package": package, "force_stop": force_stop}
 
 
 # ──────────────────────────────────────────────────────────────────
