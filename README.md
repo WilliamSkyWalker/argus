@@ -216,6 +216,29 @@ What the skill implements (full protocol in [`.claude/skills/argus-drive/SKILL.m
 
 > ⚠️ **Upgrade note (breaking, Android only):** `ANDROID_PACKAGE` no longer has a hard-coded default — **set it in `.env`** (`ANDROID_PACKAGE=com.your.app`) or override per-run via the env var (`ANDROID_PACKAGE=com.your.app python3 -m argus.cli run …`). If unset, Android state-reset raises a clear error instead of silently testing the wrong app. `_accounts.json` is unchanged — `git pull` upgrade needs no data migration; browser/iOS unaffected.
 
+### Model tiering & split execution
+
+Argus routes sub-tasks to different models, and can split "acting" from "checking" so the expensive reasoning model is spent only where it matters. Every tiering var defaults to `LLM_MODEL`, so nothing changes until you opt in.
+
+| Var | Used for | Notes |
+|-----|----------|-------|
+| `LLM_MODEL` | fallback for every role | main multimodal model |
+| `LLM_MODEL_BRAIN` | per-step decision + visual verification | the "brain" — keep a strong reasoning VLM |
+| `LLM_MODEL_PLANNER` | one-shot scenario planning | can be a cheaper/faster model |
+| `LLM_MODEL_GROUNDING` | pixel-precise element location | a dedicated grounding VLM (e.g. `qwen/qwen3-vl-32b-instruct`, UI-TARS, or a Claude/Gemini tier). **Empty = grounding off.** |
+| `LLM_GROUNDING_BASE_URL` / `LLM_GROUNDING_API_KEY` | grounding endpoint | optional; falls back to the main LLM |
+
+Grounding serves two roles: a **fallback** (when the brain's tap produces no visible effect, re-locate the target with the grounding model instead of blindly retrying), and the executor for **split execution** below.
+
+**Split execution** — `AGENT_SPLIT_ACT_CHECK=true` (default off), routed by Gherkin step type:
+
+- **Action steps** (When/Given) run *without* the big LLM: the planner pre-plans a structured action → the grounding model locates the target → Argus executes and confirms the effect via visual-diff; on repeated failure it **escapes** back to the brain.
+- **Check steps** (Then/But) still go through the big LLM for deep visual verification (the anti-false-pass validator applies only here).
+
+Effect: the reasoning model is spent on *"is the page correct?"* instead of *"how do I tap this"* — a large cost/latency cut on action-heavy flows, with verdict quality preserved. Requires `LLM_MODEL_GROUNDING`.
+
+Related knobs: `AGENT_GROUNDING_RETRY` (consecutive no-effect taps before grounding fallback), `AGENT_ASSERT_BURST_FRAMES` (frames captured on assertion steps for transient-UI checks), `APPIUM_MJPEG_ENABLED` (frame-stream screenshots). See **[`.env.example`](./.env.example)** for the full annotated list.
+
 ## Project layout
 
 ```
@@ -327,6 +350,29 @@ python3 -m argus.cli run my-app --report
 ```
 
 打开生成的 `tests/<target>/reports/latest.html`，可看截图、LLM 思考、逐步 evidence 和 healer verdict。
+
+## 模型分层与分层执行
+
+Argus 把不同子任务路由到不同模型，并可选地把"操作"与"检查"分开，让贵的推理模型只花在刀刃上。所有分层变量留空即回落 `LLM_MODEL`，不配就零行为变化。
+
+| 变量 | 用途 | 说明 |
+|------|------|------|
+| `LLM_MODEL` | 所有角色缺省 | 主多模态模型 |
+| `LLM_MODEL_BRAIN` | 每步决策 + 视觉验证 | "大脑"，保持强推理 VLM |
+| `LLM_MODEL_PLANNER` | 开跑前一次性拆剧本 | 可用更便宜/快的模型 |
+| `LLM_MODEL_GROUNDING` | 像素级元素定位 | 专用视觉定位 VLM（如 `qwen/qwen3-vl-32b-instruct`、UI-TARS，或 Claude/Gemini 某档）。**留空 = 关闭 grounding。** |
+| `LLM_GROUNDING_BASE_URL` / `LLM_GROUNDING_API_KEY` | grounding 独立端点 | 可选，留空复用主 LLM |
+
+grounding 有两个用途：**兜底**（brain 的 tap 点空时用它重定位，而非盲目重试）＋ 下面**分层执行**的执行器。
+
+**分层执行** —— `AGENT_SPLIT_ACT_CHECK=true`（默认关），按 Gherkin step 类型路由：
+
+- **操作步**（When/Given）**不调大 LLM**：planner 预规划结构化动作 → grounding 定位目标 → 执行并用 visual-diff 确认生效；反复失败则**逃生**回大 LLM。
+- **检查步**（Then/But）仍走大 LLM 做深度视觉验证（反谎报硬校验只作用于此）。
+
+效果：把推理模型花在**"页面对不对"**而非**"怎么点中"**，在操作密集流程上大幅降本提速，同时保住判定质量。依赖 `LLM_MODEL_GROUNDING`。
+
+相关可调项：`AGENT_GROUNDING_RETRY`（连续点空几次触发 grounding 兜底）、`AGENT_ASSERT_BURST_FRAMES`（断言步抓几帧做瞬态 UI 检查）、`APPIUM_MJPEG_ENABLED`（帧流截图）。完整带注释清单见 **[`.env.example`](./.env.example)**。
 
 ## 用例格式（BDD Gherkin）
 

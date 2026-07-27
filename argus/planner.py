@@ -35,12 +35,19 @@ _PLANNER_PROMPT = """你是一个测试 Planner Agent。下面给你一个 BDD S
    - intent: 用户/测试系统在这一步**意图**是什么（不是 UI 实现细节）
    - expected_state: 执行/验证后屏幕应处于什么状态（用户视角，1 句话）
    - action_hint: 若 kind 是 when/and 类的 action step，告诉 executor 具体怎么在屏幕上触发（如"在 Tab Bar 找 Latest 单击"）；若是 then 类的 assertion step，告诉 executor 怎么从当前截图判断（如"观察列表前几条标题是否与刷新前不同"）
+   - act: **仅 when/given/and 这类"动作步"输出**，把这一步要执行的操作拆成一个结构化动作，供框架直接执行（框架会用视觉定位模型按 target 描述找坐标，不必临场决策）：
+       {"type": "tap|input|swipe|scroll_up|scroll_down|press_key|open_app|back",
+        "target": "要点击/要输入的元素的简短视觉描述（tap/input 必填，如'右上角设置齿轮图标'、'底部搜索输入框'）",
+        "value": "要输入的文本（仅 type=input）",
+        "key": "按键名 enter/back/home 等（仅 type=press_key）"}
+     规则：**then/but 断言步不要输出 act**（设为 null）；若该动作步一步含多个操作、或需要看屏临场判断才能决定点哪，就**省略 act（设 null）**，框架会回退到大模型逐步决策——宁可留空也不要瞎猜。
 
 返回严格 JSON（不要 markdown 代码块包裹），结构：
 {
   "summary": "...",
   "steps": [
-    {"index": 1, "kind": "given", "text": "...", "intent": "...", "expected_state": "...", "action_hint": "..."},
+    {"index": 1, "kind": "when", "text": "...", "intent": "...", "expected_state": "...", "action_hint": "...", "act": {"type": "tap", "target": "..."}},
+    {"index": 2, "kind": "then", "text": "...", "intent": "...", "expected_state": "...", "action_hint": "...", "act": null},
     ...
   ]
 }
@@ -57,12 +64,15 @@ class PlanStep:
     intent: str = ""
     expected_state: str = ""
     action_hint: str = ""
+    # 结构化可执行动作（仅动作步 when/given/and-as-when 有）。分层执行（#分层MVP）时，
+    # 框架直接按 act 用 grounding 定位并执行，不必让大 LLM 临场决策。None = 回退大 LLM。
+    act: dict | None = None
 
     def to_dict(self) -> dict:
         return {
             "index": self.index, "kind": self.kind, "text": self.text,
             "intent": self.intent, "expected_state": self.expected_state,
-            "action_hint": self.action_hint,
+            "action_hint": self.action_hint, "act": self.act,
         }
 
 
@@ -164,5 +174,31 @@ def _parse_plan_response(raw: str) -> ScenarioPlan:
             intent=str(item.get("intent", "")),
             expected_state=str(item.get("expected_state", "")),
             action_hint=str(item.get("action_hint", "")),
+            act=_sanitize_act(item.get("act")),
         ))
     return ScenarioPlan(summary=summary, steps=steps)
+
+
+# 分层执行支持的动作类型（planner 的 act.type 必须在此集合内，否则丢弃回退大 LLM）
+_VALID_ACT_TYPES = {
+    "tap", "input", "swipe", "scroll_up", "scroll_down",
+    "press_key", "open_app", "back", "long_press",
+}
+
+
+def _sanitize_act(raw) -> dict | None:
+    """清洗 planner 给的结构化动作。非法/缺 type/未知 type → None（回退大 LLM 决策）。"""
+    if not isinstance(raw, dict):
+        return None
+    t = str(raw.get("type", "")).strip().lower()
+    if t not in _VALID_ACT_TYPES:
+        return None
+    act: dict = {"type": t}
+    for k in ("target", "value", "key"):
+        v = raw.get(k)
+        if v is not None and str(v).strip():
+            act[k] = str(v).strip()
+    # 需要视觉定位的动作(tap/input/long_press)但没给 target → 回退大 LLM
+    if t in ("tap", "input", "long_press") and not act.get("target"):
+        return None
+    return act

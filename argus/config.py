@@ -23,9 +23,8 @@ DEFAULT_CONFIG = {
     #   LLM_MODEL_BRAIN     —— step 决策/视觉验证（空=用 LLM_MODEL）
     #   LLM_MODEL_PLANNER   —— 开跑前拆剧本（可用更便宜/更快的模型）
     #   LLM_MODEL_GROUNDING —— 专用视觉定位模型；**空=关闭 grounding 兜底**（见 #2）。
-    #     推荐 anthropic/claude-sonnet-5（computer-use 血统，非国产模型无内容审查，
-    #     且与 Gemini brain 不同家族→真加信号）；省钱可用 google/gemini-3.5-flash。
-    #     注：最强的专用 grounding 模型(Qwen-VL/UI-TARS)是国产，因内容审查不用。
+    #     可选专用 grounding VLM：qwen/qwen3-vl-32b-instruct、UI-TARS 系，或 Claude/Gemini
+    #     某档（如 anthropic/claude-sonnet-5，computer-use 血统、与 brain 不同家族更能加信号）。
     "LLM_MODEL_BRAIN": "",
     "LLM_MODEL_PLANNER": "",
     "LLM_MODEL_GROUNDING": "",
@@ -93,6 +92,12 @@ DEFAULT_CONFIG = {
     # 连续多少次 no_effect 触发 grounding 定位兜底（见 #2）；仅当配了
     # LLM_MODEL_GROUNDING 才生效。到网格兜底(3 次)之前先试 grounding 精定位。
     "AGENT_GROUNDING_RETRY": "2",
+    # 分层执行（借鉴 midscene planning+grounding 双模型）：开启后**操作步**(When/Given)
+    # 不调大 LLM，改用 planner 预规划的结构化动作 + grounding 定位直接执行；**检查步**
+    # (Then/But) 仍走大 LLM 深度视觉验证（反谎报硬墙不变）。操作步连续失败会逃生回大 LLM。
+    # 目的：把大 LLM 从"走流程"里省出来，只用在"判断页面对不对"。默认关（不动现有路径）。
+    # 依赖 grounding（LLM_MODEL_GROUNDING）来定位 tap/input 目标。
+    "AGENT_SPLIT_ACT_CHECK": "false",
     # Skills (comma-separated, or "all" / "none")
     "SKILLS_ENABLED": "loading_detector,keyboard_detector,scroll_map,visual_diff,toast_detector",
     "SKILLS_OCR_LANGS": "ch_sim,en",
@@ -244,6 +249,7 @@ def load_config() -> dict:
             "step_delay": float(values["AGENT_STEP_DELAY"]),
             "assert_burst_frames": int(values.get("AGENT_ASSERT_BURST_FRAMES") or 1),
             "grounding_retry": int(values.get("AGENT_GROUNDING_RETRY") or 2),
+            "split_act_check": values.get("AGENT_SPLIT_ACT_CHECK", "false").lower() == "true",
         },
         "skills": _parse_skills_config(values),
     }

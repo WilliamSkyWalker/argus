@@ -25,7 +25,7 @@ import io
 import re
 import time
 
-from PIL import Image
+from PIL import Image, ImageChops
 
 from .brain import Brain
 from .grounding import GroundingLocator
@@ -57,6 +57,11 @@ MAX_TURNS_WITHOUT_PROGRESS = 15
 
 # 单个 step 内最多用 grounding 兜底重定位几次（超过则回落到网格兜底，防死循环）。
 MAX_GROUNDING_PER_STEP = 2
+
+# 分层执行（split_act_check）：操作步连续失败几次就逃生回大 LLM 接管该步。
+ESCAPE_ACTION_FAILS = 2
+# 判"动作生效"的像素变化比例阈值（before/after 差异 > 此比例 = 界面变了 = 生效）。
+_ACTION_CHANGE_RATIO = 0.01
 
 # 断言型 step 关键字（触发多帧时间窗断言，见 #4）。And/But 的实际类别继承前一 primary。
 _ASSERT_KEYWORDS = ("Then", "But", "那么", "但是")
@@ -159,6 +164,14 @@ class Agent:
         self.step_delay = cfg["agent"]["step_delay"]
         self.grounding_retry = int(cfg["agent"].get("grounding_retry", 2))
         self.assert_burst_frames = int(cfg["agent"].get("assert_burst_frames", 1))
+        # 分层执行：操作步走 grounding、检查步走 LLM（依赖 grounding 定位 tap/input 目标）
+        self.split_act_check = bool(cfg["agent"].get("split_act_check", False))
+        if self.split_act_check:
+            if self.grounding.enabled:
+                log.info("分层执行已启用: 操作步走 grounding 直接执行, 检查步走 LLM")
+            else:
+                log.warning("分层执行已开但 grounding 未启用(LLM_MODEL_GROUNDING 空): "
+                            "tap/input 操作步将无法定位、直接逃生回大 LLM")
         log.info("max_steps=%d, step_delay=%.1f", self.max_steps, self.step_delay)
 
         log.info("创建 skills pipeline...")
@@ -194,6 +207,7 @@ class Agent:
         # ── Planner: 跑一次 LLM 把 case 拆成执行剧本，作为 hint 注入 brain ──
         # graceful: plan 失败为空，不阻塞 executor。
         plan_hints_by_idx: dict[int, str] = {}
+        plan_acts_by_idx: dict[int, dict] = {}   # 分层执行:操作步的结构化动作
         if n_steps > 0:
             try:
                 t_plan = time.time()
@@ -210,6 +224,8 @@ class Agent:
                         hint_parts.append(f"action_hint: {s.action_hint}")
                     if hint_parts and 1 <= s.index <= n_steps:
                         plan_hints_by_idx[s.index] = "\n".join(hint_parts)
+                    if s.act and 1 <= s.index <= n_steps:
+                        plan_acts_by_idx[s.index] = s.act
             except Exception as e:
                 log.warning("Planner 异常 (graceful skip): %s", e)
 
@@ -227,6 +243,7 @@ class Agent:
         consec_no_effect = 0      # 连续 no_effect 次数（定位不准的信号）
         turns_without_progress = 0  # 自上次推进到下一 step 以来累计的 turn（推进即清零）
         grounding_attempts_in_step = 0  # 本 step 已用 grounding 兜底几次（cap 见 MAX_GROUNDING_PER_STEP）
+        act_fails = 0  # 分层执行:本操作步连续失败次数（达 ESCAPE_ACTION_FAILS 逃生回大 LLM）
 
         # turn = LLM 调用次数（含被 reject 的、含成功的 sub-action）。
         # 主收敛：per-step 的 MAX_TURNS_WITHOUT_PROGRESS（连续无推进即 fail）。
@@ -331,6 +348,55 @@ class Agent:
             )
             ctx = run_pipeline(self.skills_pipeline, ctx)
             prev_raw_image = raw_image
+
+            # ── 分层执行（split_act_check）：操作步(When/Given)用 planner 预规划的
+            #    结构化动作 + grounding 定位直接执行，**不调大 LLM**；检查步(Then/But)
+            #    仍走下方的 brain 路径。操作步连续失败 → 逃生回大 LLM 接管该步。──
+            idx = current_step_index
+            is_action_step = (self.split_act_check
+                              and 1 <= idx <= len(assertion_flags)
+                              and not assertion_flags[idx - 1])
+            planned_act = plan_acts_by_idx.get(idx)
+            if is_action_step and planned_act and act_fails < ESCAPE_ACTION_FAILS:
+                result, after_bytes, note = self._run_action_step(
+                    planned_act, raw_bytes, screen_size)
+                step_record.update(action=planned_act,
+                                   observation=f"[分层操作] {note}",
+                                   duration=time.time() - turn_start)
+                # 记进 brain history，让后续检查步的 LLM 知道操作已发生
+                self.brain.note_external_action(f"[分层操作] {note}", planned_act, after_bytes)
+                try:
+                    prev_raw_image = Image.open(io.BytesIO(after_bytes))
+                except Exception:
+                    pass
+                if result == "advanced":
+                    step_status[idx] = "pass"
+                    while len(completed_evidence) < idx:
+                        completed_evidence.append("")
+                    completed_evidence[idx - 1] = f"[分层操作步] 已执行 {note}，界面产生预期变化"
+                    log.info("[Turn %d] ✅ 操作步 %d 分层执行推进: %s", turn, idx, note)
+                    steps_detail.append(step_record)
+                    if idx >= n_steps:
+                        return self._build_result(
+                            "pass", "all steps passed (split-act)",
+                            turn, start_time, steps_detail, scenario_steps, step_status)
+                    current_step_index = idx + 1
+                    sub_actions_in_step = 0
+                    rejects_in_step = 0
+                    turns_without_progress = 0
+                    grounding_attempts_in_step = 0
+                    act_fails = 0
+                    time.sleep(self.step_delay)
+                    continue
+                # 未生效/定位失败 → 计数，达阈值下一轮逃生回大 LLM
+                act_fails += 1
+                step_record["error"] = f"split-act {result}: {note}"
+                log.warning("[Turn %d] 操作步 %d 分层执行未生效(%s): %s (fails=%d/%d)%s",
+                            turn, idx, result, note, act_fails, ESCAPE_ACTION_FAILS,
+                            "，下一轮逃生回大 LLM" if act_fails >= ESCAPE_ACTION_FAILS else "")
+                steps_detail.append(step_record)
+                time.sleep(self.step_delay)
+                continue
 
             # no-effect 反馈：上一动作的像素变化 < 阈值 → 标记给 LLM 看
             if turn > 1 and self.brain.history:
@@ -518,6 +584,7 @@ class Agent:
                 rejects_in_step = 0
                 turns_without_progress = 0   # 推进了 → 清零无进展计数
                 grounding_attempts_in_step = 0  # 新 step 重置 grounding 兜底次数
+                act_fails = 0  # 新 step 重置分层操作失败计数
                 time.sleep(self.step_delay)
                 continue
 
@@ -566,6 +633,83 @@ class Agent:
             "timeout", "loop exited unexpectedly",
             turn, start_time, steps_detail, scenario_steps, step_status,
         )
+
+    def _run_action_step(self, act: dict, before_bytes: bytes,
+                         screen_size: tuple[int, int]) -> tuple[str, bytes, str]:
+        """分层执行:按 planner 的结构化动作直接操作(不调大 LLM)。
+
+        tap/input/long_press 用 grounding 按 target 定位坐标;swipe 类/按键/滚动直接调
+        platform 原语。执行后回看一张截图,visual-diff 判"界面是否产生变化"作为生效信号。
+
+        返回 (result, after_bytes, note):
+          result ∈ 'advanced'(生效,推进) | 'no_effect'(执行了但无变化) |
+                   'locate_fail'(grounding 没定位到) | 'exec_fail'(执行异常/不支持)
+        """
+        atype = act.get("type", "")
+        target = act.get("target", "")
+        label = target or act.get("key") or act.get("value") or ""
+        note = f"{atype} {label}".strip()
+
+        # 1. 需要视觉定位的动作:grounding 按 target 找坐标
+        px = None
+        if atype in ("tap", "input", "long_press"):
+            if not self.grounding.enabled:
+                return ("locate_fail", before_bytes, f"{note}(grounding 未启用无法定位)")
+            px = self.grounding.locate(before_bytes, target, screen_size)
+            if px is None:
+                return ("locate_fail", before_bytes, f"{note}(grounding 未定位到「{target}」)")
+
+        # 2. 执行动作
+        try:
+            if atype == "tap":
+                self.platform.tap(*px)
+            elif atype == "long_press":
+                self.platform.execute_action(
+                    {"type": "long_press", "x": px[0], "y": px[1],
+                     "duration": float(act.get("duration", 1.5))})
+            elif atype == "input":
+                self.platform.tap(*px)
+                time.sleep(0.5)
+                self.platform.input_text(act.get("value", ""))
+            elif atype == "scroll_up":
+                self.platform.scroll_up()
+            elif atype == "scroll_down":
+                self.platform.scroll_down()
+            elif atype == "press_key":
+                self.platform.press_key(act.get("key", "enter"))
+            elif atype == "back":
+                self.platform.press_key("back")
+            else:
+                # swipe(需自定义坐标)/open_app 等 MVP 不在分层内直接处理 → 逃生大 LLM
+                return ("exec_fail", before_bytes, f"{note}(分层暂不支持 {atype},交大 LLM)")
+        except Exception as e:
+            return ("exec_fail", before_bytes, f"{note}(执行异常: {e})")
+
+        # 3. 回看截图,判生效(界面是否变化)
+        time.sleep(self.step_delay)
+        try:
+            after_bytes = self.platform.screenshot_raw()
+        except Exception as e:
+            return ("no_effect", before_bytes, f"{note}(生效判定截图失败: {e})")
+        changed = self._images_changed(before_bytes, after_bytes)
+        return ("advanced" if changed else "no_effect", after_bytes, note)
+
+    @staticmethod
+    def _images_changed(before_bytes: bytes, after_bytes: bytes,
+                        ratio: float = _ACTION_CHANGE_RATIO) -> bool:
+        """两张截图差异像素占比 > ratio 即判"界面已变化"(动作生效信号)。"""
+        try:
+            b = Image.open(io.BytesIO(before_bytes)).convert("RGB")
+            a = Image.open(io.BytesIO(after_bytes)).convert("RGB")
+            if b.size != a.size:
+                a = a.resize(b.size)
+            diff = ImageChops.difference(a, b).convert("L")
+            hist = diff.histogram()
+            changed_px = sum(hist[26:])          # 灰度差 >25 记为变化像素
+            total = max(1, a.size[0] * a.size[1])
+            return (changed_px / total) > ratio
+        except Exception:
+            return True  # 判定失败时保守认为变化了(避免误判卡死)
 
     # 匹配 case body 里的参考图声明行：`- **Ref**: <path>[ | <path> ...]`
     _REF_LINE_RE = re.compile(r'^\s*-\s*\*\*Ref\*\*:\s*(.+?)\s*$')
