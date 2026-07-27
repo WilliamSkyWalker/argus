@@ -32,15 +32,18 @@ log = get_logger("appium")
 _ANDROID_PROMPT_SEGMENT = """你正在操作一个 Android 设备来执行测试用例。
 
 可用操作类型：
-- tap: {"x_pct": 0-100, "y_pct": 0-100}  — 点击(百分比坐标,相对截图宽/高)
+- tap: {"x_pct": 0-100, "y_pct": 0-100, "target": "被点元素的简短描述"}  — 点击(百分比坐标,相对截图宽/高)
 - swipe: {"x1_pct": .., "y1_pct": .., "x2_pct": .., "y2_pct": ..}  — 滑动(百分比)
 - swipe_up / swipe_down  — 上/下滚动
 - input: {"text": "string"}  — 输入文字
 - press_key: {"key": "enter|delete|tab|space|escape|back|home|recent"}
 - open_app: {"package": "string"}  — 打开 App（包名）
-- long_press: {"x_pct": .., "y_pct": .., "duration": float}
+- long_press: {"x_pct": .., "y_pct": .., "duration": float, "target": "被长按元素的简短描述"}
 - wait: {"seconds": int}
 - done: {"result": "pass|fail", "reason": "string"}
+
+tap/long_press 的 `target` 字段：一句话描述你要点的元素（如「右上角设置齿轮图标」
+「登录按钮」「第二条列表项的心形图标」）。点空(无变化)时框架据此换专用定位模型重定位。
 
 注意：
 - 原生 UI 元素优先用 UI 树里的 bounds 坐标点中心；网页/自绘内容按视觉估算坐标
@@ -49,7 +52,7 @@ _ANDROID_PROMPT_SEGMENT = """你正在操作一个 Android 设备来执行测试
 _IOS_PROMPT_SEGMENT = """你正在操作一个 iOS 设备来执行测试用例。
 
 可用操作类型：
-- tap: {"x_pct": 0-100, "y_pct": 0-100}  — 点击(百分比坐标,相对截图宽/高)
+- tap: {"x_pct": 0-100, "y_pct": 0-100, "target": "被点元素的简短描述"}  — 点击(百分比坐标,相对截图宽/高)
 - swipe: {"x1_pct": .., "y1_pct": .., "x2_pct": .., "y2_pct": ..}  — 滑动(百分比)
 - swipe_up / swipe_down  — 上/下滚动
 - input: {"text": "string"}  — 输入文字（需先点中输入框聚焦）
@@ -57,6 +60,9 @@ _IOS_PROMPT_SEGMENT = """你正在操作一个 iOS 设备来执行测试用例�
 - open_app: {"bundle_id": "string"}  — 打开 App
 - wait: {"seconds": int}
 - done: {"result": "pass|fail", "reason": "string"}
+
+tap 的 `target` 字段：一句话描述你要点的元素（如「左上角返回箭头」「Sign In 按钮」）。
+点空(无变化)时框架据此换专用定位模型重定位。
 
 注意：
 - 坐标用百分比（x_pct/y_pct 相对截图宽/高，0-100），分辨率/Retina 无关，框架自动换算
@@ -66,6 +72,8 @@ _IOS_PROMPT_SEGMENT = """你正在操作一个 iOS 设备来执行测试用例�
 class AppiumPlatform(Platform):
     """Unified Appium driver for Android + iOS."""
 
+    _DEFAULT_MJPEG_PORT = 9100
+
     def __init__(self):
         self._driver = None
         self._server = None           # AppiumServerManager（自动起/复用 server）
@@ -74,6 +82,7 @@ class AppiumPlatform(Platform):
         self._screen_width = 0
         self._screen_height = 0
         self._last_shot_size: tuple[int, int] | None = None
+        self._mjpeg = None            # MjpegFrameReader（常驻帧流，None=未启用/未就绪）
 
     # --- Lifecycle ---
 
@@ -136,6 +145,16 @@ class AppiumPlatform(Platform):
 
         # 通用：命令超时给足，避免长决策间隔掉 session
         opts.set_capability("newCommandTimeout", 600)
+
+        # mjpeg 帧流：起 driver 内建 mjpegServer，后续截图从流里取最新帧（省 HTTP 往返）。
+        # ⚠️ mjpegServerPort 是**主机侧**端口（driver 做 adb forward 到它）——多设备并行
+        # 必须每台不同，否则第二台起 forward 撞 "Address already in use" 致 session 失败。
+        mjpeg_cfg = cfg.get("mjpeg") or {}
+        mjpeg_port = 0
+        if mjpeg_cfg.get("enabled", False):
+            mjpeg_port = self._pick_mjpeg_port(int(mjpeg_cfg.get("port") or 0), device)
+            opts.set_capability("mjpegServerPort", mjpeg_port)
+
         # 逃生舱：透传/覆盖任意 caps
         for k, v in (cfg.get("caps") or {}).items():
             opts.set_capability(k, v)
@@ -146,7 +165,78 @@ class AppiumPlatform(Platform):
         self._detect_screen_size()
         log.info("Appium session 就绪: %s %dx%d", self._os, self._screen_width, self._screen_height)
 
+        if mjpeg_port:
+            self._start_mjpeg(server_url, mjpeg_port, int(mjpeg_cfg.get("quality") or 90))
+
+    def _pick_mjpeg_port(self, want: int, device: str) -> int:
+        """选一个 mjpegServerPort（主机侧端口）。
+
+        want>0（用户显式指定）→ 直接用（单设备场景，多设备请勿指定同一个）。
+        否则按 serial 派生 base（同设备稳定、不同设备错开），再从 base 起找第一个
+        能 bind 的端口——既避免多设备并行撞车，也自动跳过上次残留的 adb forward。
+        """
+        import hashlib
+        import socket
+
+        if want:
+            return want
+
+        def can_bind(p: int) -> bool:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                s.bind(("127.0.0.1", p))
+                return True
+            except OSError:
+                return False
+            finally:
+                s.close()
+
+        base = self._DEFAULT_MJPEG_PORT
+        if device:
+            base += int(hashlib.md5(device.encode()).hexdigest(), 16) % 400
+        for off in range(200):
+            p = base + off
+            if p > 65535:
+                break
+            if can_bind(p):
+                return p
+        return base
+
+    def _start_mjpeg(self, server_url: str, port: int, quality: int) -> None:
+        """连上 driver 的 mjpegServer 并起后台读帧线程。失败静默降级（截图走原路径）。"""
+        from urllib.parse import urlparse
+
+        from .mjpeg import MjpegFrameReader
+
+        # 尽量提高帧质量 / 关闭缩放，让 mjpeg 帧与设备截图同分辨率（坐标标定一致）
+        try:
+            self._driver.update_settings({
+                "mjpegServerScreenshotQuality": int(quality),
+                "mjpegScalingFactor": 100,
+            })
+        except Exception as e:
+            log.debug("mjpeg update_settings 失败（不影响取帧）: %s", e)
+
+        host = urlparse(server_url).hostname or "127.0.0.1"
+        mjpeg_url = f"http://{host}:{port}"
+        try:
+            reader = MjpegFrameReader(mjpeg_url)
+            if reader.start(wait_first_frame=3.0):
+                self._mjpeg = reader
+            else:
+                # 首帧没等到：留着 reader（后台仍重连），latest() 暂时 None → 截图走 fallback
+                self._mjpeg = reader
+        except Exception as e:
+            log.warning("mjpeg 启动失败，截图走 get_screenshot_as_png: %s", e)
+            self._mjpeg = None
+
     def teardown(self) -> None:
+        if self._mjpeg is not None:
+            try:
+                self._mjpeg.stop()
+            except Exception as e:
+                log.debug("mjpeg stop 失败: %s", e)
+            self._mjpeg = None
         if self._driver is not None:
             try:
                 self._driver.quit()
@@ -178,7 +268,24 @@ class AppiumPlatform(Platform):
             self._screen_width, self._screen_height = h, w
 
     def screenshot_raw(self) -> bytes:
-        """无 grid 截图（LLM 输入 + 报告都用这个）。"""
+        """无 grid 截图（LLM 输入 + 报告都用这个）。
+
+        优先取 mjpeg 常驻流的最新帧（省 HTTP 往返 + 设备端截图编码）；取不到帧
+        （未启用 / 尚未就绪 / 断流）则无条件 fallback 到 driver.get_screenshot_as_png，
+        故 mjpeg 只快不错。mjpeg 帧是 JPEG，转 PNG 让下游 mime 与原路径一致。
+        """
+        if self._mjpeg is not None:
+            frame = self._mjpeg.latest()
+            if frame:
+                try:
+                    img = Image.open(io.BytesIO(frame))
+                    img.load()
+                    self._note_screenshot_size(img.width, img.height)
+                    return img_to_png_bytes(img if img.mode in ("RGB", "RGBA")
+                                            else img.convert("RGB"))
+                except Exception as e:
+                    log.debug("mjpeg 帧解码失败，fallback 普通截图: %s", e)
+
         raw = self._driver.get_screenshot_as_png()
         try:
             img = Image.open(io.BytesIO(raw))

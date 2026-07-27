@@ -28,6 +28,7 @@ import time
 from PIL import Image
 
 from .brain import Brain
+from .grounding import GroundingLocator
 from .logger import get_logger
 from .planner import plan_scenario
 from .platforms import create_platform
@@ -53,6 +54,13 @@ MAX_REJECTS_PER_STEP = 3
 # 正常长 step（如多屏滚动，每次都在干活但只在末尾 pass）有足够 turn 余量；
 # 真卡死（不停动作却永不 pass）会在这里被掐断。整 case 上限 ≈ n_steps × 本值。
 MAX_TURNS_WITHOUT_PROGRESS = 15
+
+# 单个 step 内最多用 grounding 兜底重定位几次（超过则回落到网格兜底，防死循环）。
+MAX_GROUNDING_PER_STEP = 2
+
+# 断言型 step 关键字（触发多帧时间窗断言，见 #4）。And/But 的实际类别继承前一 primary。
+_ASSERT_KEYWORDS = ("Then", "But", "那么", "但是")
+_ACTION_KEYWORDS = ("When", "Given", "当", "假如", "如果", "前提")
 
 # 匹配 Gherkin step 行（Given/When/Then/And/But + 后续文本）
 _STEP_LINE_RE = re.compile(r'^\s*(Given|When|Then|And|But)\s+(.+)$')
@@ -84,6 +92,25 @@ def _extract_scenario_steps(case_text: str) -> list[str]:
             if _STEP_LINE_RE.match(line):
                 steps.append(stripped)
     return steps
+
+
+def _classify_assertion_steps(scenario_steps: list[str]) -> list[bool]:
+    """判定每个 step 是否为断言型（Then/But，And/But 继承上一个 primary 关键字）。
+
+    断言型 step 触发多帧时间窗断言（#4）——瞬态 UI（toast/banner）可能在动作后
+    出现又消失，单帧会漏。返回与 scenario_steps 等长的 bool 列表。
+    """
+    flags: list[bool] = []
+    prev_is_assert = False
+    for step in scenario_steps:
+        head = step.split(None, 1)[0] if step.split() else ""
+        if head in _ASSERT_KEYWORDS:
+            prev_is_assert = True
+        elif head in _ACTION_KEYWORDS:
+            prev_is_assert = False
+        # And / 而且 / 并且 / 同时：延续上一 primary 类别（prev_is_assert 不变）
+        flags.append(prev_is_assert)
+    return flags
 
 
 class Agent:
@@ -121,8 +148,17 @@ class Agent:
                            mcp_registry=mcp_registry)
         log.info("Brain 创建完成, model=%s", cfg["llm"].get("model", "?"))
 
+        # 分级模型：planner 用自己的 model（缺省回落 brain model）
+        self.planner_model = cfg["llm"].get("planner_model") or self.brain.model
+        # grounding 定位兜底（LLM_MODEL_GROUNDING 为空则 disabled）
+        self.grounding = GroundingLocator(cfg["llm"].get("grounding"))
+        if self.grounding.enabled:
+            log.info("grounding 定位兜底已启用: model=%s", self.grounding.model)
+
         self.max_steps = cfg["agent"]["max_steps"]
         self.step_delay = cfg["agent"]["step_delay"]
+        self.grounding_retry = int(cfg["agent"].get("grounding_retry", 2))
+        self.assert_burst_frames = int(cfg["agent"].get("assert_burst_frames", 1))
         log.info("max_steps=%d, step_delay=%.1f", self.max_steps, self.step_delay)
 
         log.info("创建 skills pipeline...")
@@ -149,7 +185,11 @@ class Agent:
             log.info("case 无 Steps 段，合成单 step: %s", scenario_steps[0])
         n_steps = len(scenario_steps)
         step_status: dict[int, str] = {i: "pending" for i in range(1, n_steps + 1)}
+        assertion_flags = _classify_assertion_steps(scenario_steps)
         log.info("Scenario steps 提取: %d 步", n_steps)
+
+        # 参考图（#5）：case 里声明的 `- **Ref**:` 设计稿，供断言型 step 视觉走查对比
+        reference_images = self._load_reference_images(test_case)
 
         # ── Planner: 跑一次 LLM 把 case 拆成执行剧本，作为 hint 注入 brain ──
         # graceful: plan 失败为空，不阻塞 executor。
@@ -157,7 +197,7 @@ class Agent:
         if n_steps > 0:
             try:
                 t_plan = time.time()
-                plan = plan_scenario(test_case, self.brain.client, self.brain.model,
+                plan = plan_scenario(test_case, self.brain.client, self.planner_model,
                                      max_tokens=self.brain.max_tokens)
                 log.info("Planner 完成 (%.2fs): %s", time.time() - t_plan, plan.summary)
                 for s in plan.steps:
@@ -186,6 +226,7 @@ class Agent:
         prev_ime_visible = False  # 上一回合软键盘是否可见（检测 tap 是否唤起键盘=聚焦输入框）
         consec_no_effect = 0      # 连续 no_effect 次数（定位不准的信号）
         turns_without_progress = 0  # 自上次推进到下一 step 以来累计的 turn（推进即清零）
+        grounding_attempts_in_step = 0  # 本 step 已用 grounding 兜底几次（cap 见 MAX_GROUNDING_PER_STEP）
 
         # turn = LLM 调用次数（含被 reject 的、含成功的 sub-action）。
         # 主收敛：per-step 的 MAX_TURNS_WITHOUT_PROGRESS（连续无推进即 fail）。
@@ -319,13 +360,70 @@ class Agent:
 
             prev_ime_visible = ime_visible  # 记录本回合键盘态，供下一回合检测 tap 是否唤起键盘
 
+            # ── grounding 兜底：连续点空 → 代码层换专用定位模型重定位并直接重 tap ──
+            # 不再把控制权交回 brain 让它盲猜同一坐标（见记忆 no-blind-retry）。
+            # 仅在 grounding 启用 + 达阈值 + 未超本 step 上限 + 上次是带 target 的 tap 时触发。
+            if (self.grounding.enabled
+                    and consec_no_effect >= self.grounding_retry
+                    and grounding_attempts_in_step < MAX_GROUNDING_PER_STEP
+                    and self.brain.history):
+                last_action = (self.brain.history[-1].get("action") or {})
+                target_desc = (last_action.get("target")
+                               if last_action.get("type") in ("tap", "long_press") else None)
+                if target_desc:
+                    coord = self.grounding.locate(raw_bytes, target_desc, screen_size)
+                    if coord is not None:
+                        gx, gy = coord
+                        grounding_attempts_in_step += 1
+                        ground_action = {"type": last_action.get("type", "tap"),
+                                         "x": gx, "y": gy, "target": target_desc}
+                        if last_action.get("type") == "long_press":
+                            ground_action["duration"] = last_action.get("duration", 1.5)
+                        log.info("[Turn %d] grounding 重定位「%s」→ (%d,%d)，代码层重点击",
+                                 turn, target_desc, gx, gy)
+                        try:
+                            self.platform.execute_action(ground_action)
+                        except Exception as e:
+                            log.warning("[Turn %d] grounding 重点击执行失败: %s", turn, e)
+                        # 记为一次外部动作（保持 brain history 不变式 + 让下轮 LLM 知道已重定位）
+                        self.brain.note_external_action(
+                            f"[grounding] 按目标「{target_desc}」重定位并重新点击 ({gx},{gy})",
+                            ground_action, screenshot_png)
+                        consec_no_effect = 0  # 给这次 grounding 点击一个干净的效果判定窗口
+                        step_record.update(
+                            action=ground_action,
+                            observation=f"[grounding] 重定位重点击「{target_desc}」",
+                            duration=time.time() - turn_start,
+                        )
+                        steps_detail.append(step_record)
+                        time.sleep(self.step_delay)
+                        continue
+
             # 定位不准的重试阶梯（按连续 no_effect 次数升级）：
             #   首次(0)      —— brain 原始坐标
+            #   grounding 启用时先由上面的 grounding 兜底重定位（≥grounding_retry 次）
             #   重试 ≥3 次   —— 发坐标网格红线图，让 LLM 照网格读精确坐标（保持到命中为止）
             use_grid = consec_no_effect >= 3
             if use_grid:
                 log.info("[Turn %d] 连续 %d 次 no_effect，发坐标网格图帮 LLM 读精确坐标",
                          turn, consec_no_effect)
+
+            # ── 多帧时间窗断言（#4）：断言型 step 抓一小段连续帧，让 toast/banner 等
+            #    「出现过又消失」的瞬态 UI 可被判断。网格兜底轮不抓（那轮在纠偏定位）。──
+            burst_frames: list[bytes] = []
+            is_assert = (1 <= current_step_index <= len(assertion_flags)
+                         and assertion_flags[current_step_index - 1])
+            if is_assert and self.assert_burst_frames > 1 and not use_grid:
+                try:
+                    burst_frames = self.platform.screenshot_burst(
+                        count=self.assert_burst_frames, interval=0.25)
+                    if burst_frames:
+                        # 末帧即最新态，作为本轮权威当前截图
+                        screenshot_png = burst_frames[-1]
+                        step_record["screenshot_png"] = screenshot_png
+                except Exception as e:
+                    log.debug("[Turn %d] 断言多帧抓取失败，退回单帧: %s", turn, e)
+                    burst_frames = []
 
             # ── 3. Think — LLM 决策（带 step 上下文 + planner hint + retry_feedback）──
             t_llm = time.time()
@@ -338,6 +436,8 @@ class Agent:
                 plan_hint=plan_hints_by_idx.get(current_step_index, ""),
                 retry_feedback=retry_feedback,
                 use_grid=use_grid,
+                burst_frames=burst_frames,
+                reference_images=reference_images,
             )
             log.info("[Turn %d] LLM 决策完成 (%.2fs)", turn, time.time() - t_llm)
 
@@ -417,6 +517,7 @@ class Agent:
                 sub_actions_in_step = 0
                 rejects_in_step = 0
                 turns_without_progress = 0   # 推进了 → 清零无进展计数
+                grounding_attempts_in_step = 0  # 新 step 重置 grounding 兜底次数
                 time.sleep(self.step_delay)
                 continue
 
@@ -465,6 +566,41 @@ class Agent:
             "timeout", "loop exited unexpectedly",
             turn, start_time, steps_detail, scenario_steps, step_status,
         )
+
+    # 匹配 case body 里的参考图声明行：`- **Ref**: <path>[ | <path> ...]`
+    _REF_LINE_RE = re.compile(r'^\s*-\s*\*\*Ref\*\*:\s*(.+?)\s*$')
+
+    def _load_reference_images(self, case_text: str) -> list[tuple[str, bytes]]:
+        """加载 case 声明的参考设计图（#5，供断言型 step 视觉走查对比）。
+
+        gherkin.render_case 把 `@ref:<path>` / `# argus-ref:` 解析成绝对路径写进
+        `- **Ref**:` 行（多张用 ` | ` 分隔）。这里读文件字节；缺失/读失败静默跳过
+        （不阻塞跑测）。返回 [(文件名, png_bytes), ...]。
+        """
+        from pathlib import Path
+
+        refs: list[tuple[str, bytes]] = []
+        seen: set[str] = set()
+        for line in case_text.splitlines():
+            m = self._REF_LINE_RE.match(line)
+            if not m:
+                continue
+            for raw in m.group(1).split("|"):
+                path = raw.strip()
+                if not path or path in seen:
+                    continue
+                seen.add(path)
+                try:
+                    p = Path(path)
+                    if p.is_file():
+                        refs.append((p.name, p.read_bytes()))
+                    else:
+                        log.warning("参考图不存在，跳过: %s", path)
+                except Exception as e:
+                    log.warning("参考图读取失败 %s: %s", path, e)
+        if refs:
+            log.info("加载 %d 张参考图: %s", len(refs), [n for n, _ in refs])
+        return refs
 
     @staticmethod
     def _build_result(result: str, reason: str, turns: int, start_time: float,

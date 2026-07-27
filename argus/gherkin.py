@@ -115,6 +115,12 @@ class Scenario:
     def skip(self) -> bool:
         return 'skip' in self.tags or 'wip' in self.tags
 
+    @property
+    def ref_paths(self) -> list[str]:
+        """从 @ref:<path> tag 提取参考设计图路径（可多个）。相对路径由 render_case
+        按 .feature 文件所在目录解析成绝对路径。供 #5 视觉走查对比。"""
+        return [t[len('ref:'):] for t in self.tags if t.startswith('ref:') and len(t) > 4]
+
 
 @dataclass
 class Feature:
@@ -406,6 +412,28 @@ def render_case(feature: Feature, scenario: Scenario) -> str:
         lines.append("- **Background**:")
         for step in feature.background_steps:
             lines.append(f"  {step}")
+
+    # 参考设计图（#5）：scenario @ref:<path> + feature # argus-ref（空白/逗号分隔多张）。
+    # 相对路径按 .feature 文件所在目录解析成绝对路径，写进 case body 供 agent 加载。
+    ref_raw = list(scenario.ref_paths)
+    feat_ref = feature.meta.get('ref', '')
+    if feat_ref:
+        ref_raw.extend(re.split(r'[\s,]+', feat_ref.strip()))
+    if ref_raw:
+        base_dir = Path(feature.source_file).parent if feature.source_file else Path.cwd()
+        resolved: list[str] = []
+        seen: set[str] = set()
+        for r in ref_raw:
+            r = r.strip()
+            if not r:
+                continue
+            p = Path(r)
+            abs_p = str(p if p.is_absolute() else (base_dir / p).resolve())
+            if abs_p not in seen:
+                seen.add(abs_p)
+                resolved.append(abs_p)
+        if resolved:
+            lines.append(f"- **Ref**: {' | '.join(resolved)}")
 
     lines.append("- **Steps**:")
     for step in scenario.steps:

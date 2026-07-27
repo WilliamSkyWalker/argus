@@ -297,7 +297,9 @@ def main():
     dev_sub = dev_p.add_subparsers(dest="device_command")
     d_start = dev_sub.add_parser("start", help="Create/reuse a device session")
     d_start.add_argument("--serial", default=None)
-    d_start.add_argument("--os", default="android", choices=["android", "ios"])
+    d_start.add_argument("--os", "--platform", dest="os", default="android",
+                         choices=["android", "ios", "browser"],
+                         help="android/ios = Appium; browser = persistent Chrome (Selenium)")
     d_shot = dev_sub.add_parser("screenshot", help="Screenshot → {path,screen_size,scale}")
     d_shot.add_argument("--serial", default=None)
     d_shot.add_argument("--out", default=None)
@@ -324,6 +326,10 @@ def main():
     d_launch.add_argument("package")
     d_launch.add_argument("--serial", default=None)
     d_launch.add_argument("--force-stop", action="store_true", help="terminate then activate (relaunch)")
+    d_nav = dev_sub.add_parser("navigate", help="(browser) Open a URL, then screenshot")
+    d_nav.add_argument("url")
+    d_nav.add_argument("--wait-s", type=float, default=6.0)
+    d_nav.add_argument("--serial", default=None); d_nav.add_argument("--out", default=None)
     d_stop = dev_sub.add_parser("stop", help="Quit the device session")
     d_stop.add_argument("--serial", default=None)
 
@@ -1007,9 +1013,11 @@ def cmd_device(args):
                 "screen_size": [sw, sh], "scale": plat.scale}
 
     if cmd == "start":
-        plat = ds.start(serial, getattr(args, "os", "android"))
+        os_name = getattr(args, "os", "android")
+        plat = ds.start(serial, os_name)
         sw, sh = plat.screen_size
-        _out({"ok": True, "serial": serial or "default", "os": plat._os,
+        _out({"ok": True, "serial": serial or "default",
+              "os": getattr(plat, "_os", os_name),
               "session_id": plat._driver.session_id, "screen_size": [sw, sh]})
         return
     if cmd == "stop":
@@ -1017,10 +1025,14 @@ def cmd_device(args):
         _out({"ok": True, "stopped": serial or "default"})
         return
 
-    # 其余动作：重连已有 session；无则自动 start（android 默认）
-    plat = ds.attach(serial) or ds.start(serial, "android")
+    # 其余动作：重连已有 session；无则自动 start（navigate 默认 browser，其余 android）
+    plat = ds.attach(serial) or ds.start(serial, "browser" if cmd == "navigate" else "android")
 
-    if cmd == "screenshot":
+    if cmd == "navigate":
+        plat.open_target(args.url)
+        time.sleep(max(0.0, args.wait_s))
+        _out(_shot(plat, args.out))
+    elif cmd == "screenshot":
         _out(_shot(plat, args.out))
     elif cmd == "tap":
         plat.tap(args.x, args.y)

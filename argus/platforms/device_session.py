@@ -99,7 +99,12 @@ def _platform_from_driver(drv, os_name: str, state: dict):
 
 
 def start(serial: str | None, os_name: str = "android") -> "object":
-    """新建一个 device session 并落状态文件，返回 AppiumPlatform。已有存活 session 则复用。"""
+    """新建一个 device session 并落状态文件，返回平台对象。已有存活 session 则复用。
+
+    os_name="browser" → 常驻 Chrome（remote-debugging-port，跨进程按 debuggerAddress
+    重连，与 Appium 那套对称）；否则走 Appium（android/ios）。"""
+    if os_name == "browser":
+        return _browser_start(serial)
     # 已有状态且能连通 → 直接复用，不重复建
     existing = attach(serial, quiet=True)
     if existing is not None:
@@ -129,6 +134,8 @@ def attach(serial: str | None, quiet: bool = False) -> "object | None":
         if not quiet:
             log.warning("无 device session 状态文件（先跑 argus device start）: %s", _key(serial))
         return None
+    if state.get("kind") == "browser":
+        return _browser_attach(serial, state, quiet=quiet)
     try:
         drv = _attach_driver(state["server_url"], state["session_id"], state.get("os", "android"))
         # 探活：读一下 window size，失败说明 session 已过期
@@ -143,11 +150,144 @@ def attach(serial: str | None, quiet: bool = False) -> "object | None":
 
 def stop(serial: str | None) -> bool:
     """退出 session 并清状态文件。"""
+    state = load_state(serial)
+    if state and state.get("kind") == "browser":
+        return _browser_stop(serial, state)
     plat = attach(serial, quiet=True)
     if plat is not None:
         try:
             plat._driver.quit()
         except Exception as e:
             log.debug("quit 失败: %s", e)
+    clear_state(serial)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Browser（Selenium）session —— 与上面的 Appium session 对称：
+# Chrome 由独立子进程常驻（--remote-debugging-port + 独立 user-data-dir），
+# 各 `argus device` 命令用 debuggerAddress 重连该 Chrome，做完即退（只杀本次
+# 的 chromedriver，Chrome 存活供下次复用）。`stop` 才真正杀 Chrome 进程。
+# ---------------------------------------------------------------------------
+
+def _browser_port(serial: str | None) -> int:
+    """按 serial 派生稳定端口（跨进程一致，故用 md5 而非内建 hash）。"""
+    import hashlib
+    h = int(hashlib.md5(_key(serial).encode()).hexdigest(), 16)
+    return 9222 + (h % 300)
+
+
+def _chrome_binary() -> str:
+    import shutil
+    env = os.environ.get("ARGUS_CHROME_BIN")
+    if env and Path(env).exists():
+        return env
+    candidates = [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        shutil.which("google-chrome"),
+        shutil.which("google-chrome-stable"),
+        shutil.which("chromium"),
+        shutil.which("chromium-browser"),
+        shutil.which("chrome"),
+    ]
+    for c in candidates:
+        if c and Path(c).exists():
+            return c
+    raise RuntimeError("找不到 Chrome 可执行文件；设 ARGUS_CHROME_BIN 指向 Chrome/Chromium")
+
+
+def _devtools_ready(port: int, timeout: float = 15.0) -> bool:
+    import time as _time
+    import urllib.request
+    end = _time.time() + timeout
+    url = f"http://127.0.0.1:{port}/json/version"
+    while _time.time() < end:
+        try:
+            with urllib.request.urlopen(url, timeout=1) as r:
+                if r.status == 200:
+                    return True
+        except Exception:
+            _time.sleep(0.3)
+    return False
+
+
+def _browser_attach(serial: str | None, state: dict, quiet: bool = False) -> "object | None":
+    try:
+        from selenium import webdriver
+        opts = webdriver.ChromeOptions()
+        opts.debugger_address = state["debugger_address"]
+        drv = webdriver.Chrome(options=opts)
+    except Exception as e:
+        if not quiet:
+            log.warning("连接 browser session 失败（先跑 argus device start --platform browser）: %s", e)
+        return None
+    from .browser import BrowserPlatform
+    plat = BrowserPlatform()
+    plat._driver = drv
+    plat._viewport_width = int(state.get("viewport_width") or 414)
+    plat._viewport_height = int(state.get("viewport_height") or 896)
+    plat._is_remote = False
+    plat._scale = None
+    return plat
+
+
+def _browser_start(serial: str | None) -> "object":
+    import subprocess
+    port = _browser_port(serial)
+    udd = str(STATE_DIR / f"{_key(serial)}-chrome")
+    w = int(os.environ.get("ARGUS_BROWSER_W", 414))
+    h = int(os.environ.get("ARGUS_BROWSER_H", 896))
+    headless = os.environ.get("ARGUS_BROWSER_HEADLESS", "") not in ("", "0", "false", "False")
+
+    # 已有存活 Chrome → 复用
+    if _devtools_ready(port, timeout=1):
+        st = load_state(serial)
+        if st and st.get("kind") == "browser":
+            plat = _browser_attach(serial, st, quiet=True)
+            if plat is not None:
+                log.info("复用已运行的 browser session: port=%s", port)
+                return plat
+
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    chrome = _chrome_binary()
+    argv = [chrome, f"--remote-debugging-port={port}", f"--user-data-dir={udd}",
+            f"--window-size={w},{h}", "--no-first-run", "--no-default-browser-check"]
+    if headless:
+        argv.insert(1, "--headless=new")
+    argv.append("about:blank")
+    proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            start_new_session=True)
+    if not _devtools_ready(port, timeout=20):
+        raise RuntimeError(f"Chrome devtools 未就绪 (port {port})")
+
+    state = {"kind": "browser", "port": port, "pid": proc.pid,
+             "debugger_address": f"127.0.0.1:{port}", "user_data_dir": udd,
+             "viewport_width": w, "viewport_height": h, "headless": headless,
+             "serial": serial or ""}
+    plat = _browser_attach(serial, state, quiet=True)
+    if plat is None:
+        raise RuntimeError("Chrome 起了但 Selenium 连不上")
+    try:  # 回写真实视口（滚动条会吃掉几像素），让坐标与截图同一空间
+        actual = plat._driver.execute_script("return [window.innerWidth, window.innerHeight];")
+        if actual and actual[0] and actual[1]:
+            plat._viewport_width, plat._viewport_height = int(actual[0]), int(actual[1])
+            state["viewport_width"] = plat._viewport_width
+            state["viewport_height"] = plat._viewport_height
+    except Exception:
+        pass
+    save_state(serial, state)
+    log.info("browser session 就绪: serial=%s port=%s pid=%s", _key(serial), port, proc.pid)
+    return plat
+
+
+def _browser_stop(serial: str | None, state: dict) -> bool:
+    import signal
+    pid = state.get("pid")
+    if pid:
+        try:
+            os.kill(int(pid), signal.SIGTERM)
+        except Exception as e:
+            log.debug("kill chrome 失败: %s", e)
     clear_state(serial)
     return True

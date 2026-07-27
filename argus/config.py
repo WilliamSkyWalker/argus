@@ -17,6 +17,22 @@ DEFAULT_CONFIG = {
     "LLM_MODEL": "google/gemini-2.5-flash",
     "LLM_API_KEY": "",
     "LLM_BASE_URL": "https://openrouter.ai/api/v1",
+    # 分级模型路由（借鉴 midscene 按 intent 选模型）：不同用途可挂不同模型，
+    # 都为空则统一回落到 LLM_MODEL（默认行为不变）。共用 LLM_BASE_URL / LLM_API_KEY，
+    # 除非 grounding 单独指定端点（见下）。
+    #   LLM_MODEL_BRAIN     —— step 决策/视觉验证（空=用 LLM_MODEL）
+    #   LLM_MODEL_PLANNER   —— 开跑前拆剧本（可用更便宜/更快的模型）
+    #   LLM_MODEL_GROUNDING —— 专用视觉定位模型；**空=关闭 grounding 兜底**（见 #2）。
+    #     推荐 anthropic/claude-sonnet-5（computer-use 血统，非国产模型无内容审查，
+    #     且与 Gemini brain 不同家族→真加信号）；省钱可用 google/gemini-3.5-flash。
+    #     注：最强的专用 grounding 模型(Qwen-VL/UI-TARS)是国产，因内容审查不用。
+    "LLM_MODEL_BRAIN": "",
+    "LLM_MODEL_PLANNER": "",
+    "LLM_MODEL_GROUNDING": "",
+    # grounding 模型的独立端点（留空则复用 LLM_BASE_URL / LLM_API_KEY）。
+    # 想把 grounding 指到另一家供应商（如自部署 UI-TARS）时才需要。
+    "LLM_GROUNDING_BASE_URL": "",
+    "LLM_GROUNDING_API_KEY": "",
     # ── 旧默认（DashScope / Qwen）保留参考；需要切回时反注释下面四行替换上面 ──
     # "LLM_PROVIDER": "qwen",
     # "LLM_MODEL": "qwen-vl-max",
@@ -43,6 +59,13 @@ DEFAULT_CONFIG = {
     # Appium（iOS + Android 统一后端）
     "APPIUM_SERVER_URL": "",          # 空 → 默认 http://127.0.0.1:4723（server 由 argus 自动起）
     "APPIUM_DEVICE": "",              # udid / adb serial；空 → android 用 ANDROID_SERIAL，ios 用 SIMULATOR_UDID
+    # mjpeg 帧流截图（借鉴 midscene 的常驻视频流）：起 session 时开 Appium driver 的
+    # mjpegServerPort，截图从常驻流里取最新帧，省掉每次 get_screenshot_as_png 的
+    # HTTP 往返 + 设备端现场编码（agent 循环每 step 都截图，累计提速明显）。
+    # 取不到帧时无条件 fallback 到 get_screenshot_as_png，故开着是安全的。
+    "APPIUM_MJPEG_ENABLED": "true",
+    "APPIUM_MJPEG_PORT": "",          # 空 → 默认 9100；多设备并行需各给不同端口
+    "APPIUM_MJPEG_QUALITY": "90",     # JPEG 质量（1-100）；高些减少 visual_diff 噪声
     # iOS 真机 WDA 签名（`argus run --platform ios` 必填 team_id）：
     "IOS_TEAM_ID": "",               # Apple 开发者 team id（xcodeOrgId，10 位，在开发者后台查）
     "IOS_SIGNING_ID": "Apple Development",
@@ -63,6 +86,13 @@ DEFAULT_CONFIG = {
     # 由 agent.py 的 per-step MAX_TURNS_WITHOUT_PROGRESS 收敛。>0 则作硬顶。
     "AGENT_MAX_STEPS": "0",
     "AGENT_STEP_DELAY": "1.0",
+    # 断言型 step（Then/But）抓多少张连续帧喂给 brain（借鉴 midscene 时间窗断言）：
+    # 让「出现过又消失」的 toast/banner 等瞬态 UI 可被判断。<=1 = 关闭（只发单帧）。
+    # 配合 mjpeg 时几乎零成本；无 mjpeg 时断言 step 会多截几张图。
+    "AGENT_ASSERT_BURST_FRAMES": "3",
+    # 连续多少次 no_effect 触发 grounding 定位兜底（见 #2）；仅当配了
+    # LLM_MODEL_GROUNDING 才生效。到网格兜底(3 次)之前先试 grounding 精定位。
+    "AGENT_GROUNDING_RETRY": "2",
     # Skills (comma-separated, or "all" / "none")
     "SKILLS_ENABLED": "loading_detector,keyboard_detector,scroll_map,visual_diff,toast_detector",
     "SKILLS_OCR_LANGS": "ch_sim,en",
@@ -141,11 +171,27 @@ def load_config() -> dict:
     if values.get("LLM_X_TITLE"):
         extra_headers["X-Title"] = values["LLM_X_TITLE"]
 
+    # 分级模型：brain/planner/grounding 各自可覆盖，空则回落 LLM_MODEL。
+    brain_model = values.get("LLM_MODEL_BRAIN") or values["LLM_MODEL"]
+    planner_model = values.get("LLM_MODEL_PLANNER") or values["LLM_MODEL"]
+    grounding_model = values.get("LLM_MODEL_GROUNDING") or ""  # 空 = 关闭 grounding
+    grounding = {
+        "model": grounding_model,
+        # grounding 独立端点，留空复用主 LLM 的 base_url / api_key
+        "base_url": values.get("LLM_GROUNDING_BASE_URL") or base_url,
+        "api_key": values.get("LLM_GROUNDING_API_KEY") or values["LLM_API_KEY"],
+        "extra_headers": extra_headers,
+        "max_tokens": int(values.get("LLM_MAX_TOKENS") or 8192),
+    }
+
     return {
         "platform": values["PLATFORM"],
         "llm": {
             "provider": values["LLM_PROVIDER"],
-            "model": values["LLM_MODEL"],
+            # brain 读 llm.model —— 用 brain 覆盖（默认 = LLM_MODEL，行为不变）
+            "model": brain_model,
+            "planner_model": planner_model,
+            "grounding": grounding,
             "api_key": values["LLM_API_KEY"],
             "base_url": base_url,
             "extra_headers": extra_headers,
@@ -175,6 +221,11 @@ def load_config() -> dict:
             "wda_bundle_id": values["IOS_WDA_BUNDLE_ID"],
             "bundle_id": values["IOS_BUNDLE_ID"],
             "package": values["ANDROID_PACKAGE"],
+            "mjpeg": {
+                "enabled": values.get("APPIUM_MJPEG_ENABLED", "true").lower() == "true",
+                "port": int(values["APPIUM_MJPEG_PORT"]) if values.get("APPIUM_MJPEG_PORT") else 0,
+                "quality": int(values.get("APPIUM_MJPEG_QUALITY") or 90),
+            },
         },
         "browser": {
             "type": values["BROWSER_TYPE"],
@@ -191,6 +242,8 @@ def load_config() -> dict:
         "agent": {
             "max_steps": int(values["AGENT_MAX_STEPS"]),
             "step_delay": float(values["AGENT_STEP_DELAY"]),
+            "assert_burst_frames": int(values.get("AGENT_ASSERT_BURST_FRAMES") or 1),
+            "grounding_retry": int(values.get("AGENT_GROUNDING_RETRY") or 2),
         },
         "skills": _parse_skills_config(values),
     }

@@ -389,7 +389,9 @@ class Brain:
                completed_evidence: list[str] | None = None,
                plan_hint: str = "",
                retry_feedback: str = "",
-               use_grid: bool = False) -> dict | None:
+               use_grid: bool = False,
+               burst_frames: list[bytes] | None = None,
+               reference_images: list[tuple[str, bytes]] | None = None) -> dict | None:
         """Given a test case and screenshot, decide the next action (纯视觉).
 
         Args:
@@ -404,6 +406,13 @@ class Brain:
                 step (highlighted in prompt). Empty string when planner unavailable.
             retry_feedback: If the previous decision was rejected by validator,
                 the reject reason is fed back here so LLM corrects course.
+            burst_frames: Optional list of consecutive screenshots (PNG) captured over
+                a short time window on assertion steps (#4). When len>1, they are shown
+                as an ordered Frame 1..N sequence so transient UI (toast/banner that
+                appeared then vanished) can be judged. The LAST frame is authoritative
+                for current state.
+            reference_images: Optional [(label, png_bytes)] design references (#5) for
+                visual review — assertions comparing实拍 against设计稿 use these.
 
         Returns the decision dict, or None if all retries failed.
         """
@@ -449,13 +458,47 @@ class Brain:
                 })
                 user_content.append(_image_block(past_png))
 
+        # 参考设计图（#5）—— 供断言型 step 做视觉走查对比；明确它们不是当前屏幕状态。
+        if reference_images:
+            user_content.append({
+                "type": "text",
+                "text": ("下面是本用例的**参考设计图**（Figma/设计稿），仅用于视觉走查对比"
+                         "（判断实拍界面是否与设计一致：布局/文案/配色/间距），"
+                         "**不是当前屏幕状态**，不要据此判断已执行到哪一步："),
+            })
+            for label, ref_png in reference_images:
+                user_content.append({"type": "text", "text": f"### 参考设计图：{label}"})
+                user_content.append(_image_block(ref_png))
+
         # Current screenshot — the authoritative one for this decision.
         current_step = len(self.history) + 1
-        user_content.append({
-            "type": "text",
-            "text": f"### 当前截图 Step {current_step}（**请以此为准做决策**）",
-        })
-        user_content.append(_image_block(current_png))
+        if burst_frames and len(burst_frames) > 1:
+            # 多帧时间窗断言（#4）：按帧序给出，末帧=当前权威态。让「出现过又消失」的
+            # 瞬态 UI（toast/banner/过场动画）可被判断。
+            user_content.append({
+                "type": "text",
+                "text": (
+                    f"### 当前 Step {current_step}：以下 {len(burst_frames)} 张是一小段时间窗内的"
+                    f"**连续截图**（Frame 1 最早 → Frame {len(burst_frames)} 最新）。\n"
+                    "有些 UI 元素（如 toast/snackbar/横幅/过场提示）只在中间某几帧出现、之后消失。\n"
+                    "判断断言时按其时间语义解读：问「是否出现过 X」→ 查看全部帧；"
+                    "问「当前是否处于 X 态」→ 以最后一帧为准；问「X 是否发生变化」→ 按序对比帧。\n"
+                    "**最后一帧是当前权威状态，动作坐标一律以最后一帧为准。**"
+                ),
+            })
+            for offset, frame_png in enumerate(burst_frames, start=1):
+                user_content.append({
+                    "type": "text",
+                    "text": f"#### Frame {offset}/{len(burst_frames)}"
+                            + ("（最新，当前态）" if offset == len(burst_frames) else ""),
+                })
+                user_content.append(_image_block(frame_png))
+        else:
+            user_content.append({
+                "type": "text",
+                "text": f"### 当前截图 Step {current_step}（**请以此为准做决策**）",
+            })
+            user_content.append(_image_block(current_png))
 
         # Additional images emitted by skills (visual_diff highlight, toast crops, ...)
         if skill_context is not None:
@@ -688,6 +731,20 @@ class Brain:
                 line += "  ⚠️ 该动作未产生任何可见变化（点击可能落空/被遮挡/坐标偏差，请勿重复同一坐标）"
             lines.append(line)
         return "\n".join(lines)
+
+    def note_external_action(self, observation: str, action: dict,
+                             screenshot_png: bytes) -> None:
+        """记录一次**非 brain 决策**的动作（如 agent 层的 grounding 重定位重 tap）。
+
+        保持 history 与 history_images 成对追加的不变式（discard_last 依赖它），
+        且让下一轮 prompt 的「历史操作」叙述包含这次代码层动作，避免 LLM 以为
+        自己上次没动过而重复原坐标。
+        """
+        self.history.append({"observation": observation, "action": action})
+        self.history_images.append(screenshot_png)
+        cap = self.max_history_images + 5
+        if len(self.history_images) > cap:
+            self.history_images = self.history_images[-self.max_history_images:]
 
     def discard_last(self):
         """丢弃最近一次 decide() 写入的 history 记录 + 对应截图。

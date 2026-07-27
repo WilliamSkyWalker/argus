@@ -29,6 +29,25 @@ class Platform(ABC):
         """
         return self.screenshot_png()
 
+    def screenshot_burst(self, count: int = 3, interval: float = 0.25) -> list[bytes]:
+        """抓一小段连续帧（PNG list），用于瞬态 UI（toast/banner）的时间窗断言。
+
+        默认实现：间隔 interval 秒连拍 count 张 screenshot_raw。有 mjpeg 常驻流的
+        平台（AppiumPlatform）走同一路径但每张几乎零成本（从帧缓冲取最新帧）；
+        无 mjpeg 时每张是一次真截图，故仅在断言型 step 触发以控成本。
+        """
+        import time
+        n = max(1, count)
+        frames: list[bytes] = []
+        for i in range(n):
+            try:
+                frames.append(self.screenshot_raw())
+            except Exception:
+                pass
+            if i < n - 1:
+                time.sleep(max(0.0, interval))
+        return frames
+
     @property
     @abstractmethod
     def screen_size(self) -> tuple[int, int]:
