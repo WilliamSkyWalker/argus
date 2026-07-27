@@ -4,7 +4,7 @@
 
 Argus reads a **BDD `.feature` test case** (Gherkin / Cucumber), **looks at the screen** (iOS / Android / Browser), decides what to do, performs the action, and judges pass/fail on its own — the way a human tester would, but driven by a vision LLM.
 
-- 👁️ **Pure-vision first** — sends the raw screenshot to the LLM; uses the UI tree for precise tap coordinates when one is available, falls back to visual estimation otherwise.
+- 👁️ **Pure vision** — sends the raw screenshot to the LLM and locates everything visually, with **no UI tree**. Coordinates are percentage-based (resolution-independent); on a missed tap a dedicated grounding model can re-locate the target.
 - 🧭 **Step-driven** — iterates Gherkin steps one at a time; a hard validator forbids step-skipping and bans "PASS" on assertions that can't be visually verified (no self-deception).
 - 🤖 **Self-healing reports** — after a failure it runs a root-cause classifier (`case_outdated / app_bug / llm_misjudge / fixture_failure / flaky`) for human review.
 - 📱 **Multi-platform, multi-device** — Android (adb + uiautomator2), iOS (idb + simctl), Browser (Selenium). Schedule many Android devices against a shared case queue.
@@ -30,7 +30,7 @@ BDD .feature test case (hand-written, or Figma-generated)
      for each Gherkin step:
        for sub-action in 1..10:
          dialog_dismisser.dismiss()        # auto-close known system popups
-         screenshot + skills enhance       # loading / keyboard / scroll / element-marker / diff
+         screenshot + skills enhance       # loading / keyboard / scroll / diff / toast
          brain.decide() → JSON action      # vision LLM
          step_validator.validate()         # monotonic step index, evidence, no blind PASS
            ├─ reject → feed reason back to the LLM
@@ -211,8 +211,7 @@ What the skill implements (full protocol in [`.claude/skills/argus-drive/SKILL.m
 | `ANDROID_SERIAL` / `ANDROID_PACKAGE` | single-device serial / **app package under test (required for Android — no default; configure in `.env`)** |
 | `LLM_MAX_TOKENS` | output token cap shared by brain + planner (default 8192) |
 | `AGENT_MAX_STEPS` | backstop step cap (normal path uses per-step sub-action limit of 10) |
-| `SKILLS_ENABLED` | preprocessing pipeline (loading/keyboard/scroll/element-marker/diff/toast) |
-| `TAP_SNAP_TO_CLICKABLE` | Android: snap a tap onto the enclosing clickable node's center (default on; no-op for treeless apps like Flutter) |
+| `SKILLS_ENABLED` | preprocessing pipeline (loading/keyboard/scroll/diff/toast) |
 
 > ⚠️ **Upgrade note (breaking, Android only):** `ANDROID_PACKAGE` no longer has a hard-coded default — **set it in `.env`** (`ANDROID_PACKAGE=com.your.app`) or override per-run via the env var (`ANDROID_PACKAGE=com.your.app python3 -m argus.cli run …`). If unset, Android state-reset raises a clear error instead of silently testing the wrong app. `_accounts.json` is unchanged — `git pull` upgrade needs no data migration; browser/iOS unaffected.
 
@@ -250,8 +249,8 @@ CLAUDE.md         deep architecture & behavior notes (read this to contribute)
 
 ## Known limitations
 
-- **Tap accuracy is a calibration problem, not a VLM bias.** If taps land off-target, first check the screenshot-px → device-px scale (`wm size` vs the actual `screencap` size — they differ on e.g. Samsung resolution-override devices). With calibration right, visual coordinates land. On native-widget apps, UI-tree `bounds` / **tap snap-to-clickable** / `element_marker` add further precision; write hints as directions ("top-right"), not pixel coordinates.
-- **Treeless apps (e.g. Flutter Canvas)** expose little/no UI tree → Argus relies on vision; tap-snap and tree-simplification are automatically no-ops there.
+- **Tap accuracy is a calibration problem, not a VLM bias.** If taps land off-target, first check the screenshot-px → device-px scale (`wm size` vs the actual `screencap` size — they differ on e.g. Samsung resolution-override devices). With calibration right, percentage-based visual coordinates land. Argus is **pure-vision (no UI tree)**: on repeated misses a dedicated grounding model (`LLM_MODEL_GROUNDING`) re-locates the target, with a coordinate-grid overlay as a further fallback. Write hints as directions ("top-right"), not pixel coordinates.
+- **Self-drawn / canvas UIs (e.g. Flutter)** are handled exactly like everything else — Argus never reads a UI tree, so there is no special-casing or degradation for treeless apps.
 - Assertions that can't be visually verified (analytics events, backend calls, system time, notification drawer, cross-app deep links) are intentionally **forced to fail** — write them out or tag them out.
 
 For the full architecture, module-by-module notes, and contribution guidance, see **[CLAUDE.md](./CLAUDE.md)**.
@@ -265,7 +264,7 @@ For the full architecture, module-by-module notes, and contribution guidance, se
 
 Argus 读取 **BDD `.feature` 测试用例**（Gherkin / Cucumber），**直接看屏幕**（iOS / Android / 浏览器），自己决定怎么操作、执行动作，并自主判定通过/失败 —— 像人类测试员一样，但由视觉大模型驱动。
 
-- 👁️ **纯视觉优先** —— 把原始截图发给 LLM；有 UI 树时用 bounds 精确点击，没有时退回视觉估算。
+- 👁️ **纯视觉** —— 把原始截图发给 LLM，全靠视觉定位，**不读 UI 树**。坐标用百分比（与分辨率无关）；点空时可由专用 grounding 模型重定位目标。
 - 🧭 **Step-driven** —— 逐个推进 Gherkin step；硬校验器禁止跳步，并禁止对"无法视觉验证的断言"判 PASS（杜绝自欺）。
 - 🤖 **自愈报告** —— 失败后跑根因分类（`case_outdated / app_bug / llm_misjudge / fixture_failure / flaky`）供人工复审。
 - 📱 **多平台多设备** —— Android（adb + uiautomator2）、iOS（idb + simctl）、浏览器（Selenium）。多台 Android 可共享用例队列动态调度。
@@ -434,8 +433,8 @@ Skill 实现了什么（完整协议见 [`.claude/skills/argus-drive/SKILL.md`](
 
 ## 已知限制
 
-- **tap 点不中是分辨率标定问题，不是 VLM 偏差**：先查截图 px → 设备 px 的缩放比例（`wm size` vs `screencap` 实际尺寸 —— 三星 Override 分辨率等设备两者不等）。标定对了，视觉坐标就落中。原生控件 App 上 UI 树 `bounds`、**tap 吸附（snap-to-clickable）**、`element_marker` 进一步提精度；hints 写方位不写像素。
-- **无 UI 树的 app（如 Flutter Canvas）** 暴露不出可用树 → 走纯视觉；tap 吸附与树简化在这类 app 上自动 no-op。
+- **tap 点不中是分辨率标定问题，不是 VLM 偏差**：先查截图 px → 设备 px 的缩放比例（`wm size` vs `screencap` 实际尺寸 —— 三星 Override 分辨率等设备两者不等）。标定对了，百分比视觉坐标就落中。Argus 是**纯视觉、不读 UI 树**：反复点空时由专用 grounding 模型（`LLM_MODEL_GROUNDING`）重定位，再不行叠坐标网格兜底。hints 写方位不写像素。
+- **自绘 / Canvas 界面（如 Flutter）** 和其它 app 一视同仁 —— Argus 从不读 UI 树，无特殊分支、也不会对这类 app 降级。
 - **不可视觉验证的断言**（埋点 / 后端调用 / 系统时间 / 通知抽屉 / 跨 App deeplink）被**强制判 fail** —— 请改写或用 tag 排除。
 
 完整架构、逐模块说明与贡献指引见 **[CLAUDE.md](./CLAUDE.md)**。
