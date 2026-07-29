@@ -197,3 +197,6 @@ tests/*
 
 # go-ios / WDA 签名时在 repo 根目录落的产物
 /selfIdentity.plist
+
+# argus run --report 对 inline/无 target 用例的机读报告 fallback(运行产物，勿入库)
+/__auto__.json
