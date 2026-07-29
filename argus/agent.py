@@ -25,7 +25,7 @@ import io
 import re
 import time
 
-from PIL import Image, ImageChops
+from PIL import Image
 
 from .brain import Brain
 from .grounding import GroundingLocator
@@ -58,10 +58,8 @@ MAX_TURNS_WITHOUT_PROGRESS = 15
 # 单个 step 内最多用 grounding 兜底重定位几次（超过则回落到网格兜底，防死循环）。
 MAX_GROUNDING_PER_STEP = 2
 
-# 分层执行（split_act_check）：操作步连续失败几次就逃生回大 LLM 接管该步。
+# 分层执行（split_act_check）：操作步 grounding 定位失败/执行异常连续几次就逃生回大 LLM。
 ESCAPE_ACTION_FAILS = 2
-# 判"动作生效"的像素变化比例阈值（before/after 差异 > 此比例 = 界面变了 = 生效）。
-_ACTION_CHANGE_RATIO = 0.01
 
 # 断言型 step 关键字（触发多帧时间窗断言，见 #4）。And/But 的实际类别继承前一 primary。
 _ASSERT_KEYWORDS = ("Then", "But", "那么", "但是")
@@ -679,37 +677,24 @@ class Agent:
                 self.platform.press_key(act.get("key", "enter"))
             elif atype == "back":
                 self.platform.press_key("back")
+            elif atype == "open_app":
+                self.platform.open_target(target or act.get("value", ""))
             else:
-                # swipe(需自定义坐标)/open_app 等 MVP 不在分层内直接处理 → 逃生大 LLM
+                # swipe(需自定义坐标)等 MVP 不在分层内直接处理 → 逃生大 LLM
                 return ("exec_fail", before_bytes, f"{note}(分层暂不支持 {atype},交大 LLM)")
         except Exception as e:
             return ("exec_fail", before_bytes, f"{note}(执行异常: {e})")
 
-        # 3. 回看截图,判生效(界面是否变化)
+        # 执行成功即推进 —— **不做视觉自我验证**。用 before/after 像素变化判"生效"对小变化
+        # UI(计算器数字、toggle、勾选等)会误判 no_effect，导致操作步全部逃生 + 重复点击
+        # (实测 11×15 因此 44 turn/fail)。分层的正确语义:操作步只执行 + 推进,点得对不对
+        # 交给后面的检查步(Then)兜底 —— 这才是 argus step 推进的本意。
         time.sleep(self.step_delay)
         try:
             after_bytes = self.platform.screenshot_raw()
-        except Exception as e:
-            return ("no_effect", before_bytes, f"{note}(生效判定截图失败: {e})")
-        changed = self._images_changed(before_bytes, after_bytes)
-        return ("advanced" if changed else "no_effect", after_bytes, note)
-
-    @staticmethod
-    def _images_changed(before_bytes: bytes, after_bytes: bytes,
-                        ratio: float = _ACTION_CHANGE_RATIO) -> bool:
-        """两张截图差异像素占比 > ratio 即判"界面已变化"(动作生效信号)。"""
-        try:
-            b = Image.open(io.BytesIO(before_bytes)).convert("RGB")
-            a = Image.open(io.BytesIO(after_bytes)).convert("RGB")
-            if b.size != a.size:
-                a = a.resize(b.size)
-            diff = ImageChops.difference(a, b).convert("L")
-            hist = diff.histogram()
-            changed_px = sum(hist[26:])          # 灰度差 >25 记为变化像素
-            total = max(1, a.size[0] * a.size[1])
-            return (changed_px / total) > ratio
         except Exception:
-            return True  # 判定失败时保守认为变化了(避免误判卡死)
+            after_bytes = before_bytes
+        return ("advanced", after_bytes, note)
 
     # 匹配 case body 里的参考图声明行：`- **Ref**: <path>[ | <path> ...]`
     _REF_LINE_RE = re.compile(r'^\s*-\s*\*\*Ref\*\*:\s*(.+?)\s*$')
