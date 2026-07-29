@@ -362,7 +362,6 @@ class Agent:
                 seq = self.brain.plan_step_actions(raw_bytes, step_text, evidence_ctx)  # ① 大模型拆步
                 if seq:
                     ok, done_n, note = self._run_action_sequence(seq, screen_size)  # ② 小模型批量执行
-                    batch_done = True   # 已批量执行 → 下一轮 fall through 到 brain 验证(③)
                     after_bytes = raw_bytes
                     try:
                         after_bytes = self.platform.screenshot_raw()
@@ -371,13 +370,24 @@ class Agent:
                         pass
                     self.brain.note_external_action(
                         f"[分层批量执行] {note}", {"type": "batch", "n": len(seq)}, after_bytes)
-                    log.info("[Turn %d] 操作步 %d 批量执行 %d/%d 动作%s → 下一轮 brain 验证",
-                             turn, idx, done_n, len(seq),
-                             "" if ok else "(中途 grounding 失败，交 brain 看屏纠错)")
                     step_record.update(action={"type": "batch", "n": len(seq)},
                                        observation=f"[分层批量] {note}",
                                        duration=time.time() - turn_start)
                     steps_detail.append(step_record)
+                    if ok:
+                        batch_done = True   # 全部执行成功 → 下一轮 fall through 到 brain 验证(③)
+                        log.info("[Turn %d] 操作步 %d 批量执行 %d/%d 完成 → 下一轮 brain 验证",
+                                 turn, idx, done_n, len(seq))
+                    else:
+                        # ③ 纠错闭环:批量中途 grounding 定位失败(疑似权限弹窗/遮挡挡住目标) →
+                        # **不推进、下一轮重拆序列**;plan_step_actions 看屏会把"点掉弹窗"纳入新序列
+                        # 开头(见其 prompt)，从而先 dismiss 再继续。连续失败达 ESCAPE_ACTION_FAILS
+                        # → 逃生回 brain 逐步(brain 亲自看屏处理)。
+                        act_fails += 1
+                        log.warning("[Turn %d] 操作步 %d 批量中断于第 %d/%d(%s)→ 下一轮%s",
+                                    turn, idx, done_n, len(seq), note,
+                                    "逃生回 brain 逐步" if act_fails >= ESCAPE_ACTION_FAILS
+                                    else "重拆序列(含弹窗处理)")
                     time.sleep(self.step_delay)
                     continue
                 log.info("[Turn %d] 操作步 %d 拆步为空，回退 brain 逐步决策", turn, idx)
