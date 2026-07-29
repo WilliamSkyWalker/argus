@@ -242,6 +242,7 @@ class Agent:
         turns_without_progress = 0  # 自上次推进到下一 step 以来累计的 turn（推进即清零）
         grounding_attempts_in_step = 0  # 本 step 已用 grounding 兜底几次（cap 见 MAX_GROUNDING_PER_STEP）
         act_fails = 0  # 分层执行:本操作步连续失败次数（达 ESCAPE_ACTION_FAILS 逃生回大 LLM）
+        batch_done = False  # 分层执行:本操作步是否已批量执行过(执行后→下一轮走 brain 验证)
 
         # turn = LLM 调用次数（含被 reject 的、含成功的 sub-action）。
         # 主收敛：per-step 的 MAX_TURNS_WITHOUT_PROGRESS（连续无推进即 fail）。
@@ -347,54 +348,39 @@ class Agent:
             ctx = run_pipeline(self.skills_pipeline, ctx)
             prev_raw_image = raw_image
 
-            # ── 分层执行（split_act_check）：操作步(When/Given)用 planner 预规划的
-            #    结构化动作 + grounding 定位直接执行，**不调大 LLM**；检查步(Then/But)
-            #    仍走下方的 brain 路径。操作步连续失败 → 逃生回大 LLM 接管该步。──
+            # ── 分层执行(split_act_check)：操作步(When/Given) = ①大模型拆序列 ②小模型批量
+            #    执行 ③下一轮大模型验证。检查步(Then/But)直接走下方 brain 路径。开关平台通用
+            #    (桌面 + 移动端同生效)。拆步为空 → 回退 brain 逐步;批量中途 grounding 失败/验证
+            #    未达成 → 交下方 brain 看屏纠错(dismiss 弹窗 + 重拆，阶段3)。──
             idx = current_step_index
             is_action_step = (self.split_act_check
                               and 1 <= idx <= len(assertion_flags)
                               and not assertion_flags[idx - 1])
-            planned_act = plan_acts_by_idx.get(idx)
-            if is_action_step and planned_act and act_fails < ESCAPE_ACTION_FAILS:
-                result, after_bytes, note = self._run_action_step(
-                    planned_act, raw_bytes, screen_size)
-                step_record.update(action=planned_act,
-                                   observation=f"[分层操作] {note}",
-                                   duration=time.time() - turn_start)
-                # 记进 brain history，让后续检查步的 LLM 知道操作已发生
-                self.brain.note_external_action(f"[分层操作] {note}", planned_act, after_bytes)
-                try:
-                    prev_raw_image = Image.open(io.BytesIO(after_bytes))
-                except Exception:
-                    pass
-                if result == "advanced":
-                    step_status[idx] = "pass"
-                    while len(completed_evidence) < idx:
-                        completed_evidence.append("")
-                    completed_evidence[idx - 1] = f"[分层操作步] 已执行 {note}，界面产生预期变化"
-                    log.info("[Turn %d] ✅ 操作步 %d 分层执行推进: %s", turn, idx, note)
+            if is_action_step and not batch_done and act_fails < ESCAPE_ACTION_FAILS:
+                step_text = scenario_steps[idx - 1]
+                evidence_ctx = "；".join(e for e in completed_evidence if e)  # 勿用 ctx(会盖 SkillContext)
+                seq = self.brain.plan_step_actions(raw_bytes, step_text, evidence_ctx)  # ① 大模型拆步
+                if seq:
+                    ok, done_n, note = self._run_action_sequence(seq, screen_size)  # ② 小模型批量执行
+                    batch_done = True   # 已批量执行 → 下一轮 fall through 到 brain 验证(③)
+                    after_bytes = raw_bytes
+                    try:
+                        after_bytes = self.platform.screenshot_raw()
+                        prev_raw_image = Image.open(io.BytesIO(after_bytes))
+                    except Exception:
+                        pass
+                    self.brain.note_external_action(
+                        f"[分层批量执行] {note}", {"type": "batch", "n": len(seq)}, after_bytes)
+                    log.info("[Turn %d] 操作步 %d 批量执行 %d/%d 动作%s → 下一轮 brain 验证",
+                             turn, idx, done_n, len(seq),
+                             "" if ok else "(中途 grounding 失败，交 brain 看屏纠错)")
+                    step_record.update(action={"type": "batch", "n": len(seq)},
+                                       observation=f"[分层批量] {note}",
+                                       duration=time.time() - turn_start)
                     steps_detail.append(step_record)
-                    if idx >= n_steps:
-                        return self._build_result(
-                            "pass", "all steps passed (split-act)",
-                            turn, start_time, steps_detail, scenario_steps, step_status)
-                    current_step_index = idx + 1
-                    sub_actions_in_step = 0
-                    rejects_in_step = 0
-                    turns_without_progress = 0
-                    grounding_attempts_in_step = 0
-                    act_fails = 0
                     time.sleep(self.step_delay)
                     continue
-                # 未生效/定位失败 → 计数，达阈值下一轮逃生回大 LLM
-                act_fails += 1
-                step_record["error"] = f"split-act {result}: {note}"
-                log.warning("[Turn %d] 操作步 %d 分层执行未生效(%s): %s (fails=%d/%d)%s",
-                            turn, idx, result, note, act_fails, ESCAPE_ACTION_FAILS,
-                            "，下一轮逃生回大 LLM" if act_fails >= ESCAPE_ACTION_FAILS else "")
-                steps_detail.append(step_record)
-                time.sleep(self.step_delay)
-                continue
+                log.info("[Turn %d] 操作步 %d 拆步为空，回退 brain 逐步决策", turn, idx)
 
             # ⚠️ no_effect 判断已**停用** —— 它靠 visual-diff 像素变化判"上次点击没生效"，但对
             # 小变化 UI(计算器数字、输入单字符、toggle/勾选)会**误判**成没生效(实测计算器
@@ -588,6 +574,7 @@ class Agent:
                 turns_without_progress = 0   # 推进了 → 清零无进展计数
                 grounding_attempts_in_step = 0  # 新 step 重置 grounding 兜底次数
                 act_fails = 0  # 新 step 重置分层操作失败计数
+                batch_done = False  # 新 step 重置批量执行标记
                 time.sleep(self.step_delay)
                 continue
 
@@ -710,6 +697,22 @@ class Agent:
         except Exception:
             after_bytes = before_bytes
         return ("advanced", after_bytes, note)
+
+    def _run_action_sequence(self, seq: list[dict],
+                             screen_size: tuple[int, int]) -> tuple[bool, int, str]:
+        """【小模型·批量执行】把大模型拆出的原子动作序列逐个用 grounding 定位并执行。
+
+        复用 _run_action_step(每个动作:grounding 按 target 定位 + 执行 + 回看截图)。中途某个
+        动作 grounding 定位失败 / 执行异常 → 停止并返回 (False, 已执行数, 说明)，交上层 brain
+        看屏纠错(dismiss 弹窗 + 重拆，阶段3)；全部成功 → (True, n, 说明)。
+        """
+        before = self.platform.screenshot_raw()
+        for i, act in enumerate(seq):
+            result, after, note = self._run_action_step(act, before, screen_size)
+            if result != "advanced":
+                return (False, i, f"第 {i + 1}/{len(seq)} 个动作失败: {note}")
+            before = after
+        return (True, len(seq), f"{len(seq)} 个动作全部执行完毕")
 
     # 匹配 case body 里的参考图声明行：`- **Ref**: <path>[ | <path> ...]`
     _REF_LINE_RE = re.compile(r'^\s*-\s*\*\*Ref\*\*:\s*(.+?)\s*$')

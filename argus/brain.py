@@ -732,6 +732,56 @@ class Brain:
             lines.append(line)
         return "\n".join(lines)
 
+    def plan_step_actions(self, screenshot_png: bytes, step_text: str,
+                          context: str = "") -> list[dict]:
+        """【大模型·拆步】看**当前截图**，把一个操作步骤拆成要依次执行的原子动作序列。
+
+        分层执行(大模型规划/小模型执行)的规划端:大模型只在这里出一次力，把一个复合
+        When(如"计算 11×15")拆成 [{tap,AC},{tap,1},{tap,1},{tap,×},{tap,1},{tap,5},{tap,=}]，
+        后续由 grounding 小模型逐个定位执行、大模型不再逐个介入。返回 [{type,target,value,key},…]；
+        LLM/解析失败返回 []（调用方回退到 brain 逐步决策）。
+        """
+        from .planner import _sanitize_act
+        prompt = (
+            "你是测试执行规划器。下面给你**当前 App 截图**和**一个操作步骤的文字描述**。\n"
+            "把这个步骤拆成在当前屏幕上要**依次执行的原子操作序列**"
+            "(每个原子操作 = 一次点击 / 一次输入 / 一次滚动 / 一次按键)。\n"
+            "看截图判断元素位置，输出严格 JSON(不要 markdown 代码块):\n"
+            '{"actions": [{"type": "tap|input|swipe|scroll_up|scroll_down|press_key|long_press|open_app",'
+            ' "target": "要点击/输入的元素的简短视觉描述(tap/input/long_press 必填)",'
+            ' "value": "要输入的文本(仅 input)", "key": "按键名(仅 press_key)"}, ...]}\n'
+            "规则:target 用当前截图里看得见的元素描述(按钮名 / 图标 / 文字 / 方位)，供定位模型精确定位;"
+            "一个原子操作只做一件事(点一个键 / 输入一次);只输出完成这一步需要的操作，不多不少;"
+            "若一步只需一个操作，actions 就一个元素;只返回 JSON。\n\n"
+            f"操作步骤:\n{step_text}"
+            + (f"\n\n已完成步骤的上下文:\n{context}" if context else "")
+        )
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model, max_tokens=self.max_tokens,
+                messages=[{"role": "user", "content": [
+                    {"type": "text", "text": prompt},
+                    _image_block(screenshot_png),
+                ]}],
+                response_format={"type": "json_object"},
+            )
+            raw = resp.choices[0].message.content or ""
+        except Exception as e:
+            log.warning("plan_step_actions LLM 调用失败: %s", e)
+            return []
+        try:
+            data = _extract_json(raw)
+        except Exception as e:
+            log.warning("plan_step_actions JSON 解析失败: %s (raw=%s)", e, raw[:150])
+            return []
+        raw_actions = data.get("actions", []) if isinstance(data, dict) else []
+        acts: list[dict] = []
+        for a in raw_actions if isinstance(raw_actions, list) else []:
+            sa = _sanitize_act(a)
+            if sa is not None:
+                acts.append(sa)
+        return acts
+
     def note_external_action(self, observation: str, action: dict,
                              screenshot_png: bytes) -> None:
         """记录一次**非 brain 决策**的动作（如 agent 层的 grounding 重定位重 tap）。
