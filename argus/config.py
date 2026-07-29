@@ -55,6 +55,10 @@ DEFAULT_CONFIG = {
     # 或跑测时 `ANDROID_PACKAGE=… python3 -m argus.cli run …` 临时覆盖。
     # 跑 Android 时若为空 → 直接报错，绝不静默兜底（防止测错 App）。
     "ANDROID_PACKAGE": "",
+    # macOS 桌面（前台窗口级驱动）
+    # 被测 App 名（= 菜单栏显示名 / CGWindowOwnerName，如 Calculator / 备忘录）。
+    # 跑 mac 平台必填；为空 → 直接报错（同 ANDROID_PACKAGE 的防误测策略）。
+    "MAC_APP": "",
     # Appium（iOS + Android 统一后端）
     "APPIUM_SERVER_URL": "",          # 空 → 默认 http://127.0.0.1:4723（server 由 argus 自动起）
     "APPIUM_DEVICE": "",              # udid / adb serial；空 → android 用 ANDROID_SERIAL，ios 用 SIMULATOR_UDID
@@ -211,6 +215,9 @@ def load_config() -> dict:
         "android": {
             "serial": values["ANDROID_SERIAL"],
             "package": values["ANDROID_PACKAGE"],
+        },
+        "mac": {
+            "app": values["MAC_APP"],
         },
         "appium": {
             # os 由 create_platform 按平台名权威覆盖；这里给个合理默认

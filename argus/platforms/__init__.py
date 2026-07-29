@@ -2,7 +2,7 @@
 
 from .base import Platform
 
-AVAILABLE_PLATFORMS = ("ios", "android", "browser", "appium")
+AVAILABLE_PLATFORMS = ("ios", "android", "browser", "appium", "mac", "macos", "desktop")
 
 
 def create_platform(platform_name: str, config: dict) -> Platform:
@@ -17,6 +17,10 @@ def create_platform(platform_name: str, config: dict) -> Platform:
     elif platform_name == "browser":
         from .browser import BrowserPlatform
         return BrowserPlatform()
+    elif platform_name in ("mac", "macos", "desktop"):
+        # macOS 桌面原生驱动（pyautogui，纯视觉）。desktop 暂等价 mac；以后 win/linux 再分流。
+        from .desktop_mac import DesktopMacPlatform
+        return DesktopMacPlatform()
     else:
         raise ValueError(
             f"Unknown platform: {platform_name}. "
