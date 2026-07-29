@@ -396,31 +396,36 @@ class Agent:
                 time.sleep(self.step_delay)
                 continue
 
-            # no-effect 反馈：上一动作的像素变化 < 阈值 → 标记给 LLM 看
-            if turn > 1 and self.brain.history:
-                prev_entry = self.brain.history[-1]
-                prev_action_type = (prev_entry.get("action") or {}).get("type", "")
-                if prev_action_type in ("tap", "swipe", "swipe_up", "swipe_down",
-                                        "scroll_up", "scroll_down", "press_key"):
-                    diff_res = ctx.skill_results.get("visual_diff")
-                    if diff_res and not diff_res.metadata.get("changed", True):
-                        # 例外：tap 后软键盘从无→有 = 成功聚焦了输入框。键盘弹出在截图里
-                        # 像素变化极小（visual_diff 会判 unchanged），但这是**有效**操作 —
-                        # 不能当 no_effect 让 LLM 去重复点别处，要正向提示它「已聚焦，去 input」。
-                        if prev_action_type == "tap" and ime_visible and not prev_ime_visible:
-                            prev_entry["focused_input"] = True
-                            consec_no_effect = 0  # 聚焦成功，重置卡住计数
-                            log.info("[Turn %d] 上次 tap 唤起软键盘，判定输入框已聚焦"
-                                     "（不计 no_effect，提示 LLM 直接 input）", turn)
-                        else:
-                            prev_entry["no_effect"] = True
-                            consec_no_effect += 1
-                            log.warning("[Turn %d] 上次 %s 无可见变化 (change=%.2f%%, 连续%d次)",
-                                        turn, prev_action_type,
-                                        diff_res.metadata.get("change_ratio", 0) * 100,
-                                        consec_no_effect)
-                    else:
-                        consec_no_effect = 0  # 有可见变化，重置
+            # ⚠️ no_effect 判断已**停用** —— 它靠 visual-diff 像素变化判"上次点击没生效"，但对
+            # 小变化 UI(计算器数字、输入单字符、toggle/勾选)会**误判**成没生效(实测计算器
+            # change 0.42% 被判 no_effect)，进而误触发网格图 / grounding 重点 / 算无进展，
+            # 又慢又不稳(拆步 11×15 因此 fail)。现在:坐标靠"每 tap grounding 前置定位"保证准，
+            # 点没点上交给 brain 看下一张截图自己判断。原逻辑注释保留于下，便于日后恢复/调参。
+            #
+            # ── 原 no_effect 判断(停用，注释保留备查)──
+            # if turn > 1 and self.brain.history:
+            #     prev_entry = self.brain.history[-1]
+            #     prev_action_type = (prev_entry.get("action") or {}).get("type", "")
+            #     if prev_action_type in ("tap", "swipe", "swipe_up", "swipe_down",
+            #                             "scroll_up", "scroll_down", "press_key"):
+            #         diff_res = ctx.skill_results.get("visual_diff")
+            #         if diff_res and not diff_res.metadata.get("changed", True):
+            #             if prev_action_type == "tap" and ime_visible and not prev_ime_visible:
+            #                 prev_entry["focused_input"] = True
+            #                 consec_no_effect = 0
+            #             else:
+            #                 prev_entry["no_effect"] = True
+            #                 consec_no_effect += 1
+            #         else:
+            #             consec_no_effect = 0
+            # ── 原逻辑结束 ──
+            #
+            # 现仅保留"tap 唤起软键盘 = 聚焦成功"这个正向提示(靠 is_ime_visible，不依赖 visual-diff):
+            if (turn > 1 and self.brain.history
+                    and (self.brain.history[-1].get("action") or {}).get("type") == "tap"
+                    and ime_visible and not prev_ime_visible):
+                self.brain.history[-1]["focused_input"] = True
+                log.info("[Turn %d] 上次 tap 唤起软键盘，判定输入框已聚焦", turn)
 
             prev_ime_visible = ime_visible  # 记录本回合键盘态，供下一回合检测 tap 是否唤起键盘
 
@@ -600,6 +605,16 @@ class Agent:
                 )
 
             # status == "in_progress" — 执行 action 推进当前 step
+            # ── brain 判断 + grounding 定位:每个 tap/long_press 一律用 grounding 按 target
+            #    定位坐标（大模型只负责判断"点哪个元素"，坐标交小模型 grounding —— 实测大模型
+            #    估坐标偏 ~7% 是点空主因）。grounding 未启用/无 target/没定位到 → 回退 brain 坐标。
+            if (self.grounding.enabled and isinstance(action, dict)
+                    and action.get("type") in ("tap", "long_press") and action.get("target")):
+                _coord = self.grounding.locate(raw_bytes, action["target"], screen_size)
+                if _coord is not None:
+                    action["x"], action["y"] = _coord
+                    log.info("[Turn %d] grounding 定位「%s」→ (%d,%d)（替换 brain 坐标）",
+                             turn, action["target"], _coord[0], _coord[1])
             log.info("[Turn %d] 执行动作: %s", turn, action)
             last_err = None
             for attempt in range(1, ACTION_MAX_RETRIES + 1):
