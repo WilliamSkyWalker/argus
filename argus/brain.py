@@ -865,6 +865,45 @@ class Brain:
                 out.append(r)
         return out or None
 
+    def dismiss_blocking_popup(self, screenshot_png: bytes) -> dict | None:
+        """探测当前截图有无**拦截性弹窗/遮挡层**（权限请求、评分/更新提示、对话框、cookie 条、
+        全屏引导蒙层等）挡住主内容；有则返回**关闭它**的 tap action，没有返回 None。
+
+        用于合并断言疑似被弹窗挡住 → 先关再重判（见 agent._verify_assert_block）。权限类**优先
+        点「不允许/拒绝/关闭」**，绝不点「允许」——避免真授权改变设备状态、污染后续用例。
+        """
+        prompt = (
+            "看这张 App 截图，判断是否有**拦截性弹窗 / 遮挡层**——系统权限请求、评分/更新提示、"
+            "对话框、cookie 条、全屏引导蒙层等，**挡住了主内容**。\n"
+            "输出严格 JSON（不要 markdown）：\n"
+            '{"popup": true/false, "target": "要点的关闭按钮的简短视觉描述",'
+            ' "x_pct": <0-100>, "y_pct": <0-100>}\n'
+            "规则：有拦截性弹窗才 popup=true，给关闭它的按钮——**权限类优先选「不允许/拒绝/关闭」，"
+            "绝不点「允许」**（避免改设备状态）；评分/更新选「以后/取消/关闭/X」。target 用截图里"
+            "看得见的按钮文字/图标，x_pct/y_pct 是该按钮**中心**的百分比坐标。没有拦截性弹窗 → "
+            '{"popup": false}。只返回 JSON。'
+        )
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model, max_tokens=512,
+                messages=[{"role": "user", "content": [
+                    {"type": "text", "text": prompt}, _image_block(screenshot_png)]}],
+                response_format={"type": "json_object"},
+            )
+            data = _extract_json(resp.choices[0].message.content or "")
+        except Exception as e:
+            log.warning("dismiss_blocking_popup 调用失败: %s", e)
+            return None
+        if not isinstance(data, dict) or not data.get("popup"):
+            return None
+        act: dict = {"type": "tap", "target": (data.get("target") or "").strip()}
+        try:
+            act["x_pct"] = float(data["x_pct"])
+            act["y_pct"] = float(data["y_pct"])
+        except (KeyError, TypeError, ValueError):
+            pass
+        return act
+
     def note_external_action(self, observation: str, action: dict,
                              screenshot_png: bytes) -> None:
         """记录一次**非 brain 决策**的动作（如 agent 层的元素定位重定位重 tap）。

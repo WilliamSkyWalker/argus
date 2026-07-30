@@ -106,9 +106,10 @@ DEFAULT_CONFIG = {
     # 慢加载（>15 轮才出结果）会被无进展上限误判假失败；超出此预算才恢复计数、最终收敛。
     "AGENT_WAIT_MAX_S": "45",
     # 连续断言合并（性能优化 Phase 3）：连续 Then/And（同屏、中间无操作步）合成 1 次大模型
-    # 调用逐条判，一次推进多步——省调用次数。**默认关**（安全，验证充分再开）；开启后
-    # 反偷懒硬墙逐条套用 + 去重 + 负向断言加压（见 step_validator.validate_assertion_batch）。
-    "AGENT_MERGE_ASSERTS": "false",
+    # 调用逐条判，一次推进多步——省调用次数。反偷懒硬墙逐条套用 + 去重 + 负向断言加压
+    # （见 step_validator.validate_assertion_batch）。有 fail 先探测弹窗→关掉→重截重判
+    # （合并同步 inline、设备还在那屏，可关弹窗），避免"弹窗假 fail"。**默认开**。
+    "AGENT_MERGE_ASSERTS": "true",
     # 连续多少次 no_effect 触发元素定位兜底（见 #2）；仅当配了
     # LLM_MODEL_LOCATOR 才生效。到网格兜底(3 次)之前先试定位模型精定位。
     "AGENT_LOCATE_RETRY": "2",

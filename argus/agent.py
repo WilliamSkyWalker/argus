@@ -62,6 +62,9 @@ MAX_LOCATE_PER_STEP = 2
 # 分层执行（split_act_check）：操作步 元素定位失败/执行异常连续几次就逃生回大 LLM。
 ESCAPE_ACTION_FAILS = 2
 
+# 合并断言（Phase 3）疑似被弹窗挡住时，最多"关弹窗+重判"几次（防叠层弹窗/防死循环）。
+MAX_POPUP_DISMISS = 2
+
 # 断言型 step 关键字（触发多帧时间窗断言，见 #4）。And/But 的实际类别继承前一 primary。
 _ASSERT_KEYWORDS = ("Then", "But", "那么", "但是")
 _ACTION_KEYWORDS = ("When", "Given", "当", "假如", "如果", "前提")
@@ -452,7 +455,7 @@ class Agent:
                     kind, payload = self._verify_assert_block(
                         _i, _j, _frames, _ev_ctx, retry_feedback, scenario_steps,
                         completed_evidence, step_status, steps_detail, screenshot_png,
-                        turn, start_time, n_steps)
+                        turn, start_time, n_steps, screen_size)
                     if kind == "reject":
                         rejects_in_step += 1
                         log.warning("[Turn %d] 合并断言校验 REJECT (#%d/%d): %s",
@@ -788,57 +791,116 @@ class Agent:
                              retry_feedback: str, scenario_steps: list[str],
                              completed_evidence: list[str], step_status: dict,
                              steps_detail: list, screenshot_png: bytes,
-                             turn: int, start_time: float, n_steps: int):
+                             turn: int, start_time: float, n_steps: int,
+                             screen_size: tuple[int, int]):
         """批量验证连续断言块 [i..j]（Phase 3）。返回 (kind, payload)：
 
           ('fallback', None)      —— LLM/解析失败，调用方回退逐步验证
           ('reject', reason)      —— 校验未过，调用方计 reject 并重试
-          ('result', result_dict) —— 出现 fail 或已验到最后一步，调用方直接 return
+          ('result', result_dict) —— 真 fail（关弹窗后仍 fail / 无弹窗）或已验到末步 → 调用方 return
           ('advance', j)          —— 全过且非末步，调用方 current_step_index=j+1 继续
 
-        逐条 verdict 由 brain.verify_assertions_batch 产出，validate_assertion_batch 逐条
-        套硬墙 + 去重 + 负向加压。全 pass 才推进；任一 fail → 该 step fail、终止 scenario。
+        全 pass 才一次推进多步；**有 fail 先探测弹窗**：合并是同步 inline、设备还在那屏，若有
+        拦截性弹窗挡住断言目标 → **直接关掉、重截图、重判**（最多 MAX_POPUP_DISMISS 次，防叠层
+        弹窗/死循环），避免"弹窗假 fail"；关掉后仍 fail、或压根没弹窗 → 真 fail。逐条硬墙 + 去重
+        + 负向加压由 validate_assertion_batch 兜底。
         """
         assertions = [{"index": k, "text": scenario_steps[k - 1]} for k in range(i, j + 1)]
-        results = self.brain.verify_assertions_batch(frames, assertions, ev_ctx, retry_feedback)
-        if results is None:
-            return ("fallback", None)
-        ok, reason = validate_assertion_batch(results, assertions)
-        if not ok:
-            return ("reject", reason)
-        by_id: dict[int, dict] = {}
-        for r in results:
-            try:
-                by_id[int(r["id"])] = r
-            except (TypeError, ValueError, KeyError):
-                pass
-        for k in range(i, j + 1):
-            r = by_id.get(k, {})
-            ev = r.get("evidence", "")
-            verdict = r.get("verdict")
+
+        def _record_pass(k: int, ev: str) -> None:
             while len(completed_evidence) < k:
                 completed_evidence.append("")
-            rec = {
+            completed_evidence[k - 1] = ev
+            step_status[k] = "pass"
+            steps_detail.append({
                 "screenshot_png": screenshot_png, "step_index": k,
                 "observation": f"[合并断言] {ev}",
-                "step_progress": {"current_step_index": k, "current_step_status": verdict,
-                                  "evidence": ev, "fail_reason": r.get("fail_reason", "")},
+                "step_progress": {"current_step_index": k, "current_step_status": "pass",
+                                  "evidence": ev, "fail_reason": ""},
                 "duration": time.time() - start_time,
-            }
-            if verdict == "pass":
-                completed_evidence[k - 1] = ev
-                step_status[k] = "pass"
-                steps_detail.append(rec)
-                log.info("[Turn %d] ✅(合并) Step %d PASS: %s", turn, k, ev)
-            else:
-                step_status[k] = "fail"
-                for m in range(k + 1, n_steps + 1):
-                    step_status[m] = "skip"
-                steps_detail.append(rec)
-                log.warning("[Turn %d] ❌(合并) Step %d FAIL: %s", turn, k, r.get("fail_reason", ""))
-                return ("result", self._build_result(
-                    "fail", f"step {k} fail(merged): {r.get('fail_reason', '')}",
-                    turn, start_time, steps_detail, scenario_steps, step_status))
+            })
+            log.info("[Turn %d] ✅(合并) Step %d PASS: %s", turn, k, ev)
+
+        by_id: dict[int, dict] = {}
+        dismiss_n = 0
+        while True:
+            results = self.brain.verify_assertions_batch(frames, assertions, ev_ctx, retry_feedback)
+            if results is None:
+                return ("fallback", None)
+            ok, reason = validate_assertion_batch(results, assertions)
+            if not ok:
+                return ("reject", reason)
+            by_id = {}
+            for r in results:
+                try:
+                    by_id[int(r["id"])] = r
+                except (TypeError, ValueError, KeyError):
+                    pass
+            first_fail = next((k for k in range(i, j + 1)
+                               if by_id.get(k, {}).get("verdict") != "pass"), None)
+            if first_fail is None:
+                break                                   # 全 pass
+
+            # 有 fail → 先探测是不是拦截性弹窗挡住的
+            if dismiss_n < MAX_POPUP_DISMISS:
+                act = self.brain.dismiss_blocking_popup(screenshot_png)
+                if act:
+                    dismiss_n += 1
+                    if self.locator.enabled and act.get("target"):
+                        c = self.locator.locate(screenshot_png, act["target"], screen_size)
+                        if c:
+                            act["x"], act["y"] = c
+                    if "x" not in act and act.get("x_pct") is not None:
+                        w, h = screen_size
+                        act["x"] = int(round(float(act["x_pct"]) / 100.0 * w))
+                        act["y"] = int(round(float(act["y_pct"]) / 100.0 * h))
+                    log.info("[Turn %d] 合并 fail@step %d 疑似弹窗，关闭「%s」后重判",
+                             turn, first_fail, act.get("target", ""))
+                    try:
+                        self.platform.execute_action(act)
+                    except Exception as e:
+                        log.warning("[Turn %d] 关弹窗执行失败: %s", turn, e)
+                    self.brain.note_external_action(
+                        f"[合并断言] 关闭拦截弹窗「{act.get('target', '')}」后重判", act, screenshot_png)
+                    time.sleep(self.step_delay)
+                    # 重截 + 重采样（关掉弹窗后屏幕变了）
+                    window: list[bytes] = []
+                    if self.settle_enabled:
+                        try:
+                            _s, window = wait_settled(
+                                self.platform, timeout_s=self.settle_timeout,
+                                interval=self.settle_interval,
+                                stable_needed=self.settle_stable_frames)
+                        except Exception:
+                            window = []
+                    screenshot_png = window[-1] if window else self.platform.screenshot_raw()
+                    frames = sample_then_frames(window)[0] if window else [screenshot_png]
+                    retry_feedback = ""
+                    continue                            # 重判
+
+            # 没弹窗 / 关到上限仍 fail → 真 fail
+            for k in range(i, first_fail):
+                _record_pass(k, by_id.get(k, {}).get("evidence", ""))
+            r = by_id.get(first_fail, {})
+            fr = r.get("fail_reason", "")
+            step_status[first_fail] = "fail"
+            for m in range(first_fail + 1, n_steps + 1):
+                step_status[m] = "skip"
+            steps_detail.append({
+                "screenshot_png": screenshot_png, "step_index": first_fail,
+                "observation": f"[合并断言] {r.get('evidence', '') or fr}",
+                "step_progress": {"current_step_index": first_fail, "current_step_status": "fail",
+                                  "evidence": r.get("evidence", ""), "fail_reason": fr},
+                "duration": time.time() - start_time,
+            })
+            log.warning("[Turn %d] ❌(合并) Step %d FAIL: %s", turn, first_fail, fr)
+            return ("result", self._build_result(
+                "fail", f"step {first_fail} fail(merged): {fr}",
+                turn, start_time, steps_detail, scenario_steps, step_status))
+
+        # 全 pass → 一次推进多步
+        for k in range(i, j + 1):
+            _record_pass(k, by_id.get(k, {}).get("evidence", ""))
         if j >= n_steps:
             return ("result", self._build_result(
                 "pass", "all steps passed (merged asserts)",
