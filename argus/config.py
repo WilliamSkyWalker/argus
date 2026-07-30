@@ -19,19 +19,19 @@ DEFAULT_CONFIG = {
     "LLM_BASE_URL": "https://openrouter.ai/api/v1",
     # 分级模型路由（借鉴 midscene 按 intent 选模型）：不同用途可挂不同模型，
     # 都为空则统一回落到 LLM_MODEL（默认行为不变）。共用 LLM_BASE_URL / LLM_API_KEY，
-    # 除非 grounding 单独指定端点（见下）。
+    # 除非元素定位（locator）单独指定端点（见下）。
     #   LLM_MODEL_BRAIN     —— step 决策/视觉验证（空=用 LLM_MODEL）
     #   LLM_MODEL_PLANNER   —— 开跑前拆剧本（可用更便宜/更快的模型）
-    #   LLM_MODEL_GROUNDING —— 专用视觉定位模型；**空=关闭 grounding 兜底**（见 #2）。
-    #     可选专用 grounding VLM：bytedance/ui-tars-1.5-7b 等 UI-TARS 系，或 Claude/Gemini
+    #   LLM_MODEL_LOCATOR —— 专用元素定位小模型；**空=关闭定位兜底**（见 #2）。
+    #     可选专用元素定位 VLM：bytedance/ui-tars-1.5-7b 等 UI-TARS 系，或 Claude/Gemini
     #     某档（如 anthropic/claude-sonnet-5，computer-use 血统、与 brain 不同家族更能加信号）。
     "LLM_MODEL_BRAIN": "",
     "LLM_MODEL_PLANNER": "",
-    "LLM_MODEL_GROUNDING": "",
-    # grounding 模型的独立端点（留空则复用 LLM_BASE_URL / LLM_API_KEY）。
-    # 想把 grounding 指到另一家供应商（如自部署 UI-TARS）时才需要。
-    "LLM_GROUNDING_BASE_URL": "",
-    "LLM_GROUNDING_API_KEY": "",
+    "LLM_MODEL_LOCATOR": "",
+    # 定位模型的独立端点（留空则复用 LLM_BASE_URL / LLM_API_KEY）。
+    # 想把定位模型指到另一家供应商（如自部署 UI-TARS）时才需要。
+    "LLM_LOCATOR_BASE_URL": "",
+    "LLM_LOCATOR_API_KEY": "",
     # ── 旧默认（DashScope / Qwen）保留参考；需要切回时反注释下面四行替换上面 ──
     # "LLM_PROVIDER": "qwen",
     # "LLM_MODEL": "qwen-vl-max",
@@ -93,14 +93,14 @@ DEFAULT_CONFIG = {
     # 让「出现过又消失」的 toast/banner 等瞬态 UI 可被判断。<=1 = 关闭（只发单帧）。
     # 配合 mjpeg 时几乎零成本；无 mjpeg 时断言 step 会多截几张图。
     "AGENT_ASSERT_BURST_FRAMES": "3",
-    # 连续多少次 no_effect 触发 grounding 定位兜底（见 #2）；仅当配了
-    # LLM_MODEL_GROUNDING 才生效。到网格兜底(3 次)之前先试 grounding 精定位。
-    "AGENT_GROUNDING_RETRY": "2",
-    # 分层执行（借鉴 midscene planning+grounding 双模型）：开启后**操作步**(When/Given)
-    # 不调大 LLM，改用 planner 预规划的结构化动作 + grounding 定位直接执行；**检查步**
+    # 连续多少次 no_effect 触发元素定位兜底（见 #2）；仅当配了
+    # LLM_MODEL_LOCATOR 才生效。到网格兜底(3 次)之前先试定位模型精定位。
+    "AGENT_LOCATE_RETRY": "2",
+    # 分层执行（借鉴 midscene planning+定位 双模型）：开启后**操作步**(When/Given)
+    # 不调大 LLM，改用 planner 预规划的结构化动作 + 元素定位直接执行；**检查步**
     # (Then/But) 仍走大 LLM 深度视觉验证（反谎报硬墙不变）。操作步连续失败会逃生回大 LLM。
     # 目的：把大 LLM 从"走流程"里省出来，只用在"判断页面对不对"。默认关（不动现有路径）。
-    # 依赖 grounding（LLM_MODEL_GROUNDING）来定位 tap/input 目标。
+    # 依赖元素定位（LLM_MODEL_LOCATOR）来定位 tap/input 目标。
     "AGENT_SPLIT_ACT_CHECK": "false",
     # Skills (comma-separated, or "all" / "none")
     "SKILLS_ENABLED": "loading_detector,keyboard_detector,scroll_map,visual_diff,toast_detector",
@@ -180,15 +180,15 @@ def load_config() -> dict:
     if values.get("LLM_X_TITLE"):
         extra_headers["X-Title"] = values["LLM_X_TITLE"]
 
-    # 分级模型：brain/planner/grounding 各自可覆盖，空则回落 LLM_MODEL。
+    # 分级模型：brain/planner/locator 各自可覆盖，空则回落 LLM_MODEL。
     brain_model = values.get("LLM_MODEL_BRAIN") or values["LLM_MODEL"]
     planner_model = values.get("LLM_MODEL_PLANNER") or values["LLM_MODEL"]
-    grounding_model = values.get("LLM_MODEL_GROUNDING") or ""  # 空 = 关闭 grounding
-    grounding = {
-        "model": grounding_model,
-        # grounding 独立端点，留空复用主 LLM 的 base_url / api_key
-        "base_url": values.get("LLM_GROUNDING_BASE_URL") or base_url,
-        "api_key": values.get("LLM_GROUNDING_API_KEY") or values["LLM_API_KEY"],
+    locator_model = values.get("LLM_MODEL_LOCATOR") or ""  # 空 = 关闭元素定位
+    locator = {
+        "model": locator_model,
+        # 定位模型独立端点，留空复用主 LLM 的 base_url / api_key
+        "base_url": values.get("LLM_LOCATOR_BASE_URL") or base_url,
+        "api_key": values.get("LLM_LOCATOR_API_KEY") or values["LLM_API_KEY"],
         "extra_headers": extra_headers,
         "max_tokens": int(values.get("LLM_MAX_TOKENS") or 8192),
     }
@@ -200,7 +200,7 @@ def load_config() -> dict:
             # brain 读 llm.model —— 用 brain 覆盖（默认 = LLM_MODEL，行为不变）
             "model": brain_model,
             "planner_model": planner_model,
-            "grounding": grounding,
+            "locator": locator,
             "api_key": values["LLM_API_KEY"],
             "base_url": base_url,
             "extra_headers": extra_headers,
@@ -255,7 +255,7 @@ def load_config() -> dict:
             "max_steps": int(values["AGENT_MAX_STEPS"]),
             "step_delay": float(values["AGENT_STEP_DELAY"]),
             "assert_burst_frames": int(values.get("AGENT_ASSERT_BURST_FRAMES") or 1),
-            "grounding_retry": int(values.get("AGENT_GROUNDING_RETRY") or 2),
+            "locate_retry": int(values.get("AGENT_LOCATE_RETRY") or 2),
             "split_act_check": values.get("AGENT_SPLIT_ACT_CHECK", "false").lower() == "true",
         },
         "skills": _parse_skills_config(values),

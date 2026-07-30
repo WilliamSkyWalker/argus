@@ -1,14 +1,17 @@
-"""Grounding 定位兜底 —— 用专用视觉定位模型精确定位元素坐标。
+"""元素定位（locator）—— 用专用小模型精确识别元素在屏上的坐标。
 
 背景（借鉴 midscene 的多模型分工）：主 brain（如 gemini-2.5-flash 这类通用 VLM）
 出的百分比坐标偶有偏差，点小按钮会空点。midscene 用 Qwen-VL / UI-TARS 这类**专门
-做 grounding 训练**的模型直接输出元素坐标，精度更高。argus 把它接成「兜底」：只在
-brain 的 tap 连续 no_effect（估坐标点空了）时，由 agent 在**代码层**换用 grounding
-模型对同一目标重新精定位并直接重 tap —— 不再把控制权交回 brain 让它盲猜同一坐标
-（见记忆 no-blind-retry）。
+做视觉定位（grounding）训练**的小模型直接输出元素坐标，精度更高。argus 把它接成
+定位兜底：只在 brain 的 tap 连续 no_effect（估坐标点空了）时，由 agent 在**代码层**
+换用定位小模型对同一目标重新精定位并直接重 tap —— 不再把控制权交回 brain 让它盲猜
+同一坐标（见记忆 no-blind-retry）。
 
-启用：配 LLM_MODEL_GROUNDING（空则本模块 disabled，locate() 恒返回 None）。
-端点默认复用主 LLM 的 base_url / api_key，可用 LLM_GROUNDING_* 单独指定。
+注：「grounding」在本项目指更大的定位兜底策略（后续还会有网格线版本、强模型版本）；
+本模块只是它当前的一种实现——基于小模型的元素定位器（ElementLocator）。
+
+启用：配 LLM_MODEL_LOCATOR（空则本模块 disabled，locate() 恒返回 None）。
+端点默认复用主 LLM 的 base_url / api_key，可用 LLM_LOCATOR_* 单独指定。
 
 输入图 + 目标文字描述（brain 在 tap action 里带的 `target` 字段），输出目标中心的
 设备像素坐标 (x, y)。协议与 brain 一致用**百分比**（问 % 比问绝对像素准）。
@@ -22,7 +25,7 @@ import re
 
 from .logger import get_logger
 
-log = get_logger("grounding")
+log = get_logger("locator")
 
 _SYSTEM_PROMPT = (
     "你是一个精确的 UI 元素定位器。用户给你一张 App 截图和一个目标元素的文字描述，"
@@ -65,11 +68,11 @@ _PAIR_RE = re.compile(r"[\(\[]\s*([\d.]+)\s*,\s*([\d.]+)\s*[\)\]]")
 _TIMEOUT_S = 20
 
 
-class GroundingLocator:
-    """专用 grounding 模型定位器。model 为空 = disabled。"""
+class ElementLocator:
+    """专用小模型元素定位器。model 为空 = disabled。"""
 
-    def __init__(self, grounding_cfg: dict | None = None):
-        cfg = grounding_cfg or {}
+    def __init__(self, locator_cfg: dict | None = None):
+        cfg = locator_cfg or {}
         self.model = (cfg.get("model") or "").strip()
         self._base_url = cfg.get("base_url") or ""
         self._api_key = cfg.get("api_key") or ""
@@ -122,7 +125,7 @@ class GroundingLocator:
             )
             raw = resp.choices[0].message.content or ""
         except Exception as e:
-            log.warning("grounding 模型调用失败: %s", e)
+            log.warning("定位模型调用失败: %s", e)
             return None
 
         # UI-TARS：原生动作语法 + 绝对像素解析（与通用 VLM 的 JSON+量级启发式隔离）。
@@ -133,15 +136,15 @@ class GroundingLocator:
             xy = self._extract_xy(raw)
             frac = self._to_fraction(xy[0], xy[1], w, h) if xy else None
         if xy is None:
-            log.info("grounding 未定位到「%s」(raw=%s)", target_desc, raw[:160])
+            log.info("未定位到「%s」(raw=%s)", target_desc, raw[:160])
             return None
         if frac is None:
-            log.info("grounding 坐标越界，弃用「%s」(raw=%s)", target_desc, raw[:160])
+            log.info("定位坐标越界，弃用「%s」(raw=%s)", target_desc, raw[:160])
             return None
         fx, fy = frac
         x = max(0, min(int(round(fx * w)), w - 1))
         y = max(0, min(int(round(fy * h)), h - 1))
-        log.info("grounding 定位「%s」→ %.1f%%,%.1f%% → px(%d,%d)",
+        log.info("元素定位「%s」→ %.1f%%,%.1f%% → px(%d,%d)",
                  target_desc, fx * 100, fy * 100, x, y)
         return (x, y)
 
@@ -149,7 +152,7 @@ class GroundingLocator:
     def _to_fraction(x: float, y: float, w: int, h: int) -> tuple[float, float] | None:
         """把模型给的坐标对归一到 0-1 分数。
 
-        实测各家 grounding 模型无视「用 0-100」的指令，各用各的量纲：Qwen-VL 系用
+        实测各家定位模型无视「用 0-100」的指令，各用各的量纲：Qwen-VL 系用
         0-1000，UI-TARS 用绝对像素，也有守规矩给 0-100 的。故**不信指令，按量级推断**，
         且**整对用同一量纲**（取 max 判定，避免一轴百分比一轴千分比混判）：
           max≤1.5 → 已是 0-1 分数；≤100 → 0-100 百分比；≤1000 → 0-1000 千分比；

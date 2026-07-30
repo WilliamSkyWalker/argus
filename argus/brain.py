@@ -218,7 +218,7 @@ def _coerce_xy(action: dict, dst_x: str = "x", dst_y: str = "y") -> bool:
 def _normalize_action(action: dict) -> dict:
     """把 GUI-agent 类模型(Qwen2.5-VL 等)的动作方言翻译成 argus 规范 schema。
 
-    这些模型受 grounding 训练强 prior 影响，倾向吐 {"type":"click","coordinate":[x,y]}
+    这些模型受视觉定位（grounding）训练强 prior 影响，倾向吐 {"type":"click","coordinate":[x,y]}
     而非 argus 约定的 {"type":"tap","x":..,"y":..}，不翻译会被 execute_action 当未知
     type / KeyError('x') 吞掉，每个动作变空操作。这里做无副作用的兼容映射。
     """
@@ -738,7 +738,7 @@ class Brain:
 
         分层执行(大模型规划/小模型执行)的规划端:大模型只在这里出一次力，把一个复合
         When(如"计算 11×15")拆成 [{tap,AC},{tap,1},{tap,1},{tap,×},{tap,1},{tap,5},{tap,=}]，
-        后续由 grounding 小模型逐个定位执行、大模型不再逐个介入。返回 [{type,target,value,key},…]；
+        后续由元素定位小模型逐个定位执行、大模型不再逐个介入。返回 [{type,target,value,key},…]；
         LLM/解析失败返回 []（调用方回退到 brain 逐步决策）。
         """
         from .planner import _sanitize_act
@@ -788,7 +788,7 @@ class Brain:
 
     def note_external_action(self, observation: str, action: dict,
                              screenshot_png: bytes) -> None:
-        """记录一次**非 brain 决策**的动作（如 agent 层的 grounding 重定位重 tap）。
+        """记录一次**非 brain 决策**的动作（如 agent 层的元素定位重定位重 tap）。
 
         保持 history 与 history_images 成对追加的不变式（discard_last 依赖它），
         且让下一轮 prompt 的「历史操作」叙述包含这次代码层动作，避免 LLM 以为

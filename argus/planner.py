@@ -65,7 +65,7 @@ class PlanStep:
     expected_state: str = ""
     action_hint: str = ""
     # 结构化可执行动作（仅动作步 when/given/and-as-when 有）。分层执行（#分层MVP）时，
-    # 框架直接按 act 用 grounding 定位并执行，不必让大 LLM 临场决策。None = 回退大 LLM。
+    # 框架直接按 act 用元素定位并执行，不必让大 LLM 临场决策。None = 回退大 LLM。
     act: dict | None = None
 
     def to_dict(self) -> dict:

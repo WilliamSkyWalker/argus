@@ -4,7 +4,7 @@
 
 Argus reads a **BDD `.feature` test case** (Gherkin / Cucumber), **looks at the screen** (iOS / Android / Browser), decides what to do, performs the action, and judges pass/fail on its own — the way a human tester would, but driven by a vision LLM.
 
-- 👁️ **Pure vision** — sends the raw screenshot to the LLM and locates everything visually, with **no UI tree**. Coordinates are percentage-based (resolution-independent); on a missed tap a dedicated grounding model can re-locate the target.
+- 👁️ **Pure vision** — sends the raw screenshot to the LLM and locates everything visually, with **no UI tree**. Coordinates are percentage-based (resolution-independent); on a missed tap a dedicated element-locator model can re-locate the target.
 - 🧭 **Step-driven** — iterates Gherkin steps one at a time; a hard validator forbids step-skipping and bans "PASS" on assertions that can't be visually verified (no self-deception).
 - 🤖 **Self-healing reports** — after a failure it runs a root-cause classifier (`case_outdated / app_bug / llm_misjudge / fixture_failure / flaky`) for human review.
 - 📱 **Multi-platform, multi-device** — Android (adb + uiautomator2), iOS (idb + simctl), Browser (Selenium). Schedule many Android devices against a shared case queue.
@@ -224,19 +224,19 @@ Argus routes sub-tasks to different models, and can split "acting" from "checkin
 | `LLM_MODEL` | fallback for every role | main multimodal model |
 | `LLM_MODEL_BRAIN` | per-step decision + visual verification | the "brain" — keep a strong reasoning VLM |
 | `LLM_MODEL_PLANNER` | one-shot scenario planning | can be a cheaper/faster model |
-| `LLM_MODEL_GROUNDING` | pixel-precise element location | a dedicated grounding VLM (e.g. `bytedance/ui-tars-1.5-7b`, other UI-TARS, or a Claude/Gemini tier). **Empty = grounding off.** |
-| `LLM_GROUNDING_BASE_URL` / `LLM_GROUNDING_API_KEY` | grounding endpoint | optional; falls back to the main LLM |
+| `LLM_MODEL_LOCATOR` | pixel-precise element location | a dedicated element-locator VLM (e.g. `bytedance/ui-tars-1.5-7b`, other UI-TARS, or a Claude/Gemini tier). **Empty = locator off.** |
+| `LLM_LOCATOR_BASE_URL` / `LLM_LOCATOR_API_KEY` | locator endpoint | optional; falls back to the main LLM |
 
-Grounding serves two roles: a **fallback** (when the brain's tap produces no visible effect, re-locate the target with the grounding model instead of blindly retrying), and the executor for **split execution** below.
+The **element locator** serves two roles: a **fallback** (when the brain's tap produces no visible effect, re-locate the target with the locator model instead of blindly retrying), and the executor for **split execution** below. ("Grounding" stays as the umbrella for this — a grid-overlay and a strong-model variant are planned.)
 
 **Split execution** — `AGENT_SPLIT_ACT_CHECK=true` (default off), routed by Gherkin step type:
 
-- **Action steps** (When/Given) run *without* the big LLM: the planner pre-plans a structured action → the grounding model locates the target → Argus executes and confirms the effect via visual-diff; on repeated failure it **escapes** back to the brain.
+- **Action steps** (When/Given) run *without* the big LLM: the planner pre-plans a structured action → the element-locator model locates the target → Argus executes and confirms the effect via visual-diff; on repeated failure it **escapes** back to the brain.
 - **Check steps** (Then/But) still go through the big LLM for deep visual verification (the anti-false-pass validator applies only here).
 
-Effect: the reasoning model is spent on *"is the page correct?"* instead of *"how do I tap this"* — a large cost/latency cut on action-heavy flows, with verdict quality preserved. Requires `LLM_MODEL_GROUNDING`.
+Effect: the reasoning model is spent on *"is the page correct?"* instead of *"how do I tap this"* — a large cost/latency cut on action-heavy flows, with verdict quality preserved. Requires `LLM_MODEL_LOCATOR`.
 
-Related knobs: `AGENT_GROUNDING_RETRY` (consecutive no-effect taps before grounding fallback), `AGENT_ASSERT_BURST_FRAMES` (frames captured on assertion steps for transient-UI checks), `APPIUM_MJPEG_ENABLED` (frame-stream screenshots). See **[`.env.example`](./.env.example)** for the full annotated list.
+Related knobs: `AGENT_LOCATE_RETRY` (consecutive no-effect taps before the locator fallback), `AGENT_ASSERT_BURST_FRAMES` (frames captured on assertion steps for transient-UI checks), `APPIUM_MJPEG_ENABLED` (frame-stream screenshots). See **[`.env.example`](./.env.example)** for the full annotated list.
 
 ## Project layout
 
@@ -249,7 +249,7 @@ CLAUDE.md         deep architecture & behavior notes (read this to contribute)
 
 ## Known limitations
 
-- **Tap accuracy is a calibration problem, not a VLM bias.** If taps land off-target, first check the screenshot-px → device-px scale (`wm size` vs the actual `screencap` size — they differ on e.g. Samsung resolution-override devices). With calibration right, percentage-based visual coordinates land. Argus is **pure-vision (no UI tree)**: on repeated misses a dedicated grounding model (`LLM_MODEL_GROUNDING`) re-locates the target, with a coordinate-grid overlay as a further fallback. Write hints as directions ("top-right"), not pixel coordinates.
+- **Tap accuracy is a calibration problem, not a VLM bias.** If taps land off-target, first check the screenshot-px → device-px scale (`wm size` vs the actual `screencap` size — they differ on e.g. Samsung resolution-override devices). With calibration right, percentage-based visual coordinates land. Argus is **pure-vision (no UI tree)**: on repeated misses a dedicated element-locator model (`LLM_MODEL_LOCATOR`) re-locates the target, with a coordinate-grid overlay as a further fallback. Write hints as directions ("top-right"), not pixel coordinates.
 - **Self-drawn / canvas UIs (e.g. Flutter)** are handled exactly like everything else — Argus never reads a UI tree, so there is no special-casing or degradation for treeless apps.
 - Assertions that can't be visually verified (analytics events, backend calls, system time, notification drawer, cross-app deep links) are intentionally **forced to fail** — write them out or tag them out.
 
@@ -264,7 +264,7 @@ For the full architecture, module-by-module notes, and contribution guidance, se
 
 Argus 读取 **BDD `.feature` 测试用例**（Gherkin / Cucumber），**直接看屏幕**（iOS / Android / 浏览器），自己决定怎么操作、执行动作，并自主判定通过/失败 —— 像人类测试员一样，但由视觉大模型驱动。
 
-- 👁️ **纯视觉** —— 把原始截图发给 LLM，全靠视觉定位，**不读 UI 树**。坐标用百分比（与分辨率无关）；点空时可由专用 grounding 模型重定位目标。
+- 👁️ **纯视觉** —— 把原始截图发给 LLM，全靠视觉定位，**不读 UI 树**。坐标用百分比（与分辨率无关）；点空时可由专用元素定位模型重定位目标。
 - 🧭 **Step-driven** —— 逐个推进 Gherkin step；硬校验器禁止跳步，并禁止对"无法视觉验证的断言"判 PASS（杜绝自欺）。
 - 🤖 **自愈报告** —— 失败后跑根因分类（`case_outdated / app_bug / llm_misjudge / fixture_failure / flaky`）供人工复审。
 - 📱 **多平台多设备** —— Android（adb + uiautomator2）、iOS（idb + simctl）、浏览器（Selenium）。多台 Android 可共享用例队列动态调度。
@@ -359,19 +359,19 @@ Argus 把不同子任务路由到不同模型，并可选地把"操作"与"检�
 | `LLM_MODEL` | 所有角色缺省 | 主多模态模型 |
 | `LLM_MODEL_BRAIN` | 每步决策 + 视觉验证 | "大脑"，保持强推理 VLM |
 | `LLM_MODEL_PLANNER` | 开跑前一次性拆剧本 | 可用更便宜/快的模型 |
-| `LLM_MODEL_GROUNDING` | 像素级元素定位 | 专用视觉定位 VLM（如 `bytedance/ui-tars-1.5-7b`、其他 UI-TARS，或 Claude/Gemini 某档）。**留空 = 关闭 grounding。** |
-| `LLM_GROUNDING_BASE_URL` / `LLM_GROUNDING_API_KEY` | grounding 独立端点 | 可选，留空复用主 LLM |
+| `LLM_MODEL_LOCATOR` | 像素级元素定位 | 专用视觉定位 VLM（如 `bytedance/ui-tars-1.5-7b`、其他 UI-TARS，或 Claude/Gemini 某档）。**留空 = 关闭元素定位。** |
+| `LLM_LOCATOR_BASE_URL` / `LLM_LOCATOR_API_KEY` | 定位模型独立端点 | 可选，留空复用主 LLM |
 
-grounding 有两个用途：**兜底**（brain 的 tap 点空时用它重定位，而非盲目重试）＋ 下面**分层执行**的执行器。
+元素定位有两个用途：**兜底**（brain 的 tap 点空时用它重定位，而非盲目重试）＋ 下面**分层执行**的执行器。（「grounding」保留指这套更大的定位兜底策略——网格版、强模型版规划中。）
 
 **分层执行** —— `AGENT_SPLIT_ACT_CHECK=true`（默认关），按 Gherkin step 类型路由：
 
-- **操作步**（When/Given）**不调大 LLM**：planner 预规划结构化动作 → grounding 定位目标 → 执行并用 visual-diff 确认生效；反复失败则**逃生**回大 LLM。
+- **操作步**（When/Given）**不调大 LLM**：planner 预规划结构化动作 → 元素定位目标 → 执行并用 visual-diff 确认生效；反复失败则**逃生**回大 LLM。
 - **检查步**（Then/But）仍走大 LLM 做深度视觉验证（反谎报硬校验只作用于此）。
 
-效果：把推理模型花在**"页面对不对"**而非**"怎么点中"**，在操作密集流程上大幅降本提速，同时保住判定质量。依赖 `LLM_MODEL_GROUNDING`。
+效果：把推理模型花在**"页面对不对"**而非**"怎么点中"**，在操作密集流程上大幅降本提速，同时保住判定质量。依赖 `LLM_MODEL_LOCATOR`。
 
-相关可调项：`AGENT_GROUNDING_RETRY`（连续点空几次触发 grounding 兜底）、`AGENT_ASSERT_BURST_FRAMES`（断言步抓几帧做瞬态 UI 检查）、`APPIUM_MJPEG_ENABLED`（帧流截图）。完整带注释清单见 **[`.env.example`](./.env.example)**。
+相关可调项：`AGENT_LOCATE_RETRY`（连续点空几次触发元素定位兜底）、`AGENT_ASSERT_BURST_FRAMES`（断言步抓几帧做瞬态 UI 检查）、`APPIUM_MJPEG_ENABLED`（帧流截图）。完整带注释清单见 **[`.env.example`](./.env.example)**。
 
 ## 用例格式（BDD Gherkin）
 
@@ -433,7 +433,7 @@ Skill 实现了什么（完整协议见 [`.claude/skills/argus-drive/SKILL.md`](
 
 ## 已知限制
 
-- **tap 点不中是分辨率标定问题，不是 VLM 偏差**：先查截图 px → 设备 px 的缩放比例（`wm size` vs `screencap` 实际尺寸 —— 三星 Override 分辨率等设备两者不等）。标定对了，百分比视觉坐标就落中。Argus 是**纯视觉、不读 UI 树**：反复点空时由专用 grounding 模型（`LLM_MODEL_GROUNDING`）重定位，再不行叠坐标网格兜底。hints 写方位不写像素。
+- **tap 点不中是分辨率标定问题，不是 VLM 偏差**：先查截图 px → 设备 px 的缩放比例（`wm size` vs `screencap` 实际尺寸 —— 三星 Override 分辨率等设备两者不等）。标定对了，百分比视觉坐标就落中。Argus 是**纯视觉、不读 UI 树**：反复点空时由专用元素定位模型（`LLM_MODEL_LOCATOR`）重定位，再不行叠坐标网格兜底。hints 写方位不写像素。
 - **自绘 / Canvas 界面（如 Flutter）** 和其它 app 一视同仁 —— Argus 从不读 UI 树，无特殊分支、也不会对这类 app 降级。
 - **不可视觉验证的断言**（埋点 / 后端调用 / 系统时间 / 通知抽屉 / 跨 App deeplink）被**强制判 fail** —— 请改写或用 tag 排除。
 

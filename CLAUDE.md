@@ -18,9 +18,9 @@ Argus = 视觉驱动 AI QA agent，替代人工测试。喂 `.feature`(Gherkin) 
 
 `brain.py` LLM 决策：发**原始截图** + 最近 1-3 张历史截图 + planner hint + step 列表 + 已过 step 的 evidence 锚点 + 上次 reject 理由 → 返回带 `step_progress` 的 JSON。**不可视觉验证的断言禁 PASS**(埋点/后端/系统时间/通知抽屉/跨App deeplink → 必须 fail，不许「假设通过/推断成立」蒙混)。
 
-**分级模型 / grounding / 多帧断言 / 参考图**（借鉴 midscene）：
-- **分级模型**：`LLM_MODEL_BRAIN/PLANNER/GROUNDING` 各可覆盖，空→回落 `LLM_MODEL`(默认零变化)。planner 可挂更便宜模型。
-- **grounding 定位兜底**(`grounding.py`，默认关)：tap action 带 `target` 描述；连续 no_effect≥阈值时 agent **代码层**换专用定位模型(`LLM_MODEL_GROUNDING`)重定位并重点击，不让 brain 盲猜同坐标；失败再降级到网格。配了模型才启用(可用 GUI 专用定位模型如 `bytedance/ui-tars-1.5-7b`，或 `anthropic/claude-sonnet-5` 这类通用 tier)。
+**分级模型 / 元素定位 / 多帧断言 / 参考图**（借鉴 midscene）：
+- **分级模型**：`LLM_MODEL_BRAIN/PLANNER/LOCATOR` 各可覆盖，空→回落 `LLM_MODEL`(默认零变化)。planner 可挂更便宜模型。
+- **元素定位兜底**(`locator.py`，`ElementLocator`，默认关)：tap action 带 `target` 描述；连续 no_effect≥阈值时 agent **代码层**换定位小模型(`LLM_MODEL_LOCATOR`)重定位并重点击，不让 brain 盲猜同坐标；失败再降级到网格。配了模型才启用(可用 GUI 专用定位模型如 `bytedance/ui-tars-1.5-7b`，或 `anthropic/claude-sonnet-5` 这类通用 tier)。**注**：「grounding」在本项目保留指**更大的定位兜底策略**(网格版、强模型版规划中)，当前这个定位小模型只是它的一种实现——**别再把小模型叫 grounding**。
 - **多帧时间窗断言**(默认开，`AGENT_ASSERT_BURST_FRAMES=3`)：断言型 step(Then/But)抓一小段连续帧喂 brain，让「出现过又消失」的 toast/banner 可判(有 mjpeg 时近零成本)。
 - **参考图断言**(默认关)：case 声明 `@ref:<path>` / `# argus-ref:` → 渲染成绝对路径 → brain 拿设计稿做视觉走查对比。供 Figma 走查。
 
@@ -95,12 +95,12 @@ argus figma frames|gen-tests|review <url>
 ```
 PLATFORM=android|ios|browser
 LLM_PROVIDER=openrouter  LLM_API_KEY=…  LLM_BASE_URL=https://openrouter.ai/api/v1  LLM_MODEL=google/gemini-2.5-flash
-LLM_MODEL_BRAIN=  LLM_MODEL_PLANNER=  LLM_MODEL_GROUNDING=   # 分级模型，空→回落 LLM_MODEL(grounding 空=关)
-LLM_GROUNDING_BASE_URL=  LLM_GROUNDING_API_KEY=   # grounding 独立端点(空→复用主 LLM)
+LLM_MODEL_BRAIN=  LLM_MODEL_PLANNER=  LLM_MODEL_LOCATOR=   # 分级模型，空→回落 LLM_MODEL(locator 空=关)
+LLM_LOCATOR_BASE_URL=  LLM_LOCATOR_API_KEY=   # 定位模型独立端点(空→复用主 LLM)
 ANDROID_PACKAGE=com.example.app   # 被测包名(必填)；填真值别提交
 APPIUM_DEVICE=  APPIUM_SERVER_URL=  # 设备 udid/serial；空则默认
 APPIUM_MJPEG_ENABLED=true  APPIUM_MJPEG_PORT=  APPIUM_MJPEG_QUALITY=90   # mjpeg 帧流截图(多设备需各给端口)
-AGENT_ASSERT_BURST_FRAMES=3  AGENT_GROUNDING_RETRY=2   # 断言多帧数 / 触发 grounding 的连续 no_effect 数
+AGENT_ASSERT_BURST_FRAMES=3  AGENT_LOCATE_RETRY=2   # 断言多帧数 / 触发元素定位的连续 no_effect 数
 IOS_TEAM_ID=  IOS_WDA_BUNDLE_ID=com.example.wda  IOS_BUNDLE_ID=   # iOS 真机签名
 BROWSER_HEADLESS / VIEWPORT_* / SELENIUM_GRID_URL ; FIGMA_TOKEN ; SKILLS_ENABLED
 ```

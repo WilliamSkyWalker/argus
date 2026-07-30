@@ -28,7 +28,7 @@ import time
 from PIL import Image
 
 from .brain import Brain
-from .grounding import GroundingLocator
+from .locator import ElementLocator
 from .logger import get_logger
 from .planner import plan_scenario
 from .platforms import create_platform
@@ -55,10 +55,10 @@ MAX_REJECTS_PER_STEP = 3
 # 真卡死（不停动作却永不 pass）会在这里被掐断。整 case 上限 ≈ n_steps × 本值。
 MAX_TURNS_WITHOUT_PROGRESS = 15
 
-# 单个 step 内最多用 grounding 兜底重定位几次（超过则回落到网格兜底，防死循环）。
-MAX_GROUNDING_PER_STEP = 2
+# 单个 step 内最多用 元素定位兜底重定位几次（超过则回落到网格兜底，防死循环）。
+MAX_LOCATE_PER_STEP = 2
 
-# 分层执行（split_act_check）：操作步 grounding 定位失败/执行异常连续几次就逃生回大 LLM。
+# 分层执行（split_act_check）：操作步 元素定位失败/执行异常连续几次就逃生回大 LLM。
 ESCAPE_ACTION_FAILS = 2
 
 # 断言型 step 关键字（触发多帧时间窗断言，见 #4）。And/But 的实际类别继承前一 primary。
@@ -153,22 +153,22 @@ class Agent:
 
         # 分级模型：planner 用自己的 model（缺省回落 brain model）
         self.planner_model = cfg["llm"].get("planner_model") or self.brain.model
-        # grounding 定位兜底（LLM_MODEL_GROUNDING 为空则 disabled）
-        self.grounding = GroundingLocator(cfg["llm"].get("grounding"))
-        if self.grounding.enabled:
-            log.info("grounding 定位兜底已启用: model=%s", self.grounding.model)
+        # 元素定位兜底（LLM_MODEL_LOCATOR 为空则 disabled）
+        self.locator = ElementLocator(cfg["llm"].get("locator"))
+        if self.locator.enabled:
+            log.info("元素定位兜底已启用: model=%s", self.locator.model)
 
         self.max_steps = cfg["agent"]["max_steps"]
         self.step_delay = cfg["agent"]["step_delay"]
-        self.grounding_retry = int(cfg["agent"].get("grounding_retry", 2))
+        self.locate_retry = int(cfg["agent"].get("locate_retry", 2))
         self.assert_burst_frames = int(cfg["agent"].get("assert_burst_frames", 1))
-        # 分层执行：操作步走 grounding、检查步走 LLM（依赖 grounding 定位 tap/input 目标）
+        # 分层执行：操作步走元素定位、检查步走 LLM（依赖元素定位找 tap/input 目标）
         self.split_act_check = bool(cfg["agent"].get("split_act_check", False))
         if self.split_act_check:
-            if self.grounding.enabled:
-                log.info("分层执行已启用: 操作步走 grounding 直接执行, 检查步走 LLM")
+            if self.locator.enabled:
+                log.info("分层执行已启用: 操作步走元素定位直接执行, 检查步走 LLM")
             else:
-                log.warning("分层执行已开但 grounding 未启用(LLM_MODEL_GROUNDING 空): "
+                log.warning("分层执行已开但 元素定位未启用(LLM_MODEL_LOCATOR 空): "
                             "tap/input 操作步将无法定位、直接逃生回大 LLM")
         log.info("max_steps=%d, step_delay=%.1f", self.max_steps, self.step_delay)
 
@@ -240,7 +240,7 @@ class Agent:
         prev_ime_visible = False  # 上一回合软键盘是否可见（检测 tap 是否唤起键盘=聚焦输入框）
         consec_no_effect = 0      # 连续 no_effect 次数（定位不准的信号）
         turns_without_progress = 0  # 自上次推进到下一 step 以来累计的 turn（推进即清零）
-        grounding_attempts_in_step = 0  # 本 step 已用 grounding 兜底几次（cap 见 MAX_GROUNDING_PER_STEP）
+        locate_attempts_in_step = 0  # 本 step 已用 元素定位兜底几次（cap 见 MAX_LOCATE_PER_STEP）
         act_fails = 0  # 分层执行:本操作步连续失败次数（达 ESCAPE_ACTION_FAILS 逃生回大 LLM）
         batch_done = False  # 分层执行:本操作步是否已批量执行过(执行后→下一轮走 brain 验证)
 
@@ -350,7 +350,7 @@ class Agent:
 
             # ── 分层执行(split_act_check)：操作步(When/Given) = ①大模型拆序列 ②小模型批量
             #    执行 ③下一轮大模型验证。检查步(Then/But)直接走下方 brain 路径。开关平台通用
-            #    (桌面 + 移动端同生效)。拆步为空 → 回退 brain 逐步;批量中途 grounding 失败/验证
+            #    (桌面 + 移动端同生效)。拆步为空 → 回退 brain 逐步;批量中途元素定位失败/验证
             #    未达成 → 交下方 brain 看屏纠错(dismiss 弹窗 + 重拆，阶段3)。──
             idx = current_step_index
             is_action_step = (self.split_act_check
@@ -379,7 +379,7 @@ class Agent:
                         log.info("[Turn %d] 操作步 %d 批量执行 %d/%d 完成 → 下一轮 brain 验证",
                                  turn, idx, done_n, len(seq))
                     else:
-                        # ③ 纠错闭环:批量中途 grounding 定位失败(疑似权限弹窗/遮挡挡住目标) →
+                        # ③ 纠错闭环:批量中途 元素定位失败(疑似权限弹窗/遮挡挡住目标) →
                         # **不推进、下一轮重拆序列**;plan_step_actions 看屏会把"点掉弹窗"纳入新序列
                         # 开头(见其 prompt)，从而先 dismiss 再继续。连续失败达 ESCAPE_ACTION_FAILS
                         # → 逃生回 brain 逐步(brain 亲自看屏处理)。
@@ -394,8 +394,8 @@ class Agent:
 
             # ⚠️ no_effect 判断已**停用** —— 它靠 visual-diff 像素变化判"上次点击没生效"，但对
             # 小变化 UI(计算器数字、输入单字符、toggle/勾选)会**误判**成没生效(实测计算器
-            # change 0.42% 被判 no_effect)，进而误触发网格图 / grounding 重点 / 算无进展，
-            # 又慢又不稳(拆步 11×15 因此 fail)。现在:坐标靠"每 tap grounding 前置定位"保证准，
+            # change 0.42% 被判 no_effect)，进而误触发网格图 / 元素定位重点 / 算无进展，
+            # 又慢又不稳(拆步 11×15 因此 fail)。现在:坐标靠"每 tap 元素定位前置"保证准，
             # 点没点上交给 brain 看下一张截图自己判断。原逻辑注释保留于下，便于日后恢复/调参。
             #
             # ── 原 no_effect 判断(停用，注释保留备查)──
@@ -425,39 +425,39 @@ class Agent:
 
             prev_ime_visible = ime_visible  # 记录本回合键盘态，供下一回合检测 tap 是否唤起键盘
 
-            # ── grounding 兜底：连续点空 → 代码层换专用定位模型重定位并直接重 tap ──
+            # ── 元素定位兜底：连续点空 → 代码层换专用定位模型重定位并直接重 tap ──
             # 不再把控制权交回 brain 让它盲猜同一坐标（见记忆 no-blind-retry）。
-            # 仅在 grounding 启用 + 达阈值 + 未超本 step 上限 + 上次是带 target 的 tap 时触发。
-            if (self.grounding.enabled
-                    and consec_no_effect >= self.grounding_retry
-                    and grounding_attempts_in_step < MAX_GROUNDING_PER_STEP
+            # 仅在 元素定位启用 + 达阈值 + 未超本 step 上限 + 上次是带 target 的 tap 时触发。
+            if (self.locator.enabled
+                    and consec_no_effect >= self.locate_retry
+                    and locate_attempts_in_step < MAX_LOCATE_PER_STEP
                     and self.brain.history):
                 last_action = (self.brain.history[-1].get("action") or {})
                 target_desc = (last_action.get("target")
                                if last_action.get("type") in ("tap", "long_press") else None)
                 if target_desc:
-                    coord = self.grounding.locate(raw_bytes, target_desc, screen_size)
+                    coord = self.locator.locate(raw_bytes, target_desc, screen_size)
                     if coord is not None:
                         gx, gy = coord
-                        grounding_attempts_in_step += 1
+                        locate_attempts_in_step += 1
                         ground_action = {"type": last_action.get("type", "tap"),
                                          "x": gx, "y": gy, "target": target_desc}
                         if last_action.get("type") == "long_press":
                             ground_action["duration"] = last_action.get("duration", 1.5)
-                        log.info("[Turn %d] grounding 重定位「%s」→ (%d,%d)，代码层重点击",
+                        log.info("[Turn %d] 元素定位重定位「%s」→ (%d,%d)，代码层重点击",
                                  turn, target_desc, gx, gy)
                         try:
                             self.platform.execute_action(ground_action)
                         except Exception as e:
-                            log.warning("[Turn %d] grounding 重点击执行失败: %s", turn, e)
+                            log.warning("[Turn %d] 元素定位重点击执行失败: %s", turn, e)
                         # 记为一次外部动作（保持 brain history 不变式 + 让下轮 LLM 知道已重定位）
                         self.brain.note_external_action(
-                            f"[grounding] 按目标「{target_desc}」重定位并重新点击 ({gx},{gy})",
+                            f"[元素定位] 按目标「{target_desc}」重定位并重新点击 ({gx},{gy})",
                             ground_action, screenshot_png)
-                        consec_no_effect = 0  # 给这次 grounding 点击一个干净的效果判定窗口
+                        consec_no_effect = 0  # 给这次 定位点击一个干净的效果判定窗口
                         step_record.update(
                             action=ground_action,
-                            observation=f"[grounding] 重定位重点击「{target_desc}」",
+                            observation=f"[元素定位] 重定位重点击「{target_desc}」",
                             duration=time.time() - turn_start,
                         )
                         steps_detail.append(step_record)
@@ -466,7 +466,7 @@ class Agent:
 
             # 定位不准的重试阶梯（按连续 no_effect 次数升级）：
             #   首次(0)      —— brain 原始坐标
-            #   grounding 启用时先由上面的 grounding 兜底重定位（≥grounding_retry 次）
+            #   元素定位启用时先由上面的 元素定位兜底重定位（≥locate_retry 次）
             #   重试 ≥3 次   —— 发坐标网格红线图，让 LLM 照网格读精确坐标（保持到命中为止）
             use_grid = consec_no_effect >= 3
             if use_grid:
@@ -582,7 +582,7 @@ class Agent:
                 sub_actions_in_step = 0
                 rejects_in_step = 0
                 turns_without_progress = 0   # 推进了 → 清零无进展计数
-                grounding_attempts_in_step = 0  # 新 step 重置 grounding 兜底次数
+                locate_attempts_in_step = 0  # 新 step 重置 元素定位兜底次数
                 act_fails = 0  # 新 step 重置分层操作失败计数
                 batch_done = False  # 新 step 重置批量执行标记
                 time.sleep(self.step_delay)
@@ -602,15 +602,15 @@ class Agent:
                 )
 
             # status == "in_progress" — 执行 action 推进当前 step
-            # ── brain 判断 + grounding 定位:每个 tap/long_press 一律用 grounding 按 target
-            #    定位坐标（大模型只负责判断"点哪个元素"，坐标交小模型 grounding —— 实测大模型
-            #    估坐标偏 ~7% 是点空主因）。grounding 未启用/无 target/没定位到 → 回退 brain 坐标。
-            if (self.grounding.enabled and isinstance(action, dict)
+            # ── brain 判断 + 元素定位:每个 tap/long_press 一律用 元素定位按 target
+            #    定位坐标（大模型只负责判断"点哪个元素"，坐标交定位小模型 —— 实测大模型
+            #    估坐标偏 ~7% 是点空主因）。元素定位未启用/无 target/没定位到 → 回退 brain 坐标。
+            if (self.locator.enabled and isinstance(action, dict)
                     and action.get("type") in ("tap", "long_press") and action.get("target")):
-                _coord = self.grounding.locate(raw_bytes, action["target"], screen_size)
+                _coord = self.locator.locate(raw_bytes, action["target"], screen_size)
                 if _coord is not None:
                     action["x"], action["y"] = _coord
-                    log.info("[Turn %d] grounding 定位「%s」→ (%d,%d)（替换 brain 坐标）",
+                    log.info("[Turn %d] 元素定位「%s」→ (%d,%d)（替换 brain 坐标）",
                              turn, action["target"], _coord[0], _coord[1])
             log.info("[Turn %d] 执行动作: %s", turn, action)
             last_err = None
@@ -648,26 +648,26 @@ class Agent:
                          screen_size: tuple[int, int]) -> tuple[str, bytes, str]:
         """分层执行:按 planner 的结构化动作直接操作(不调大 LLM)。
 
-        tap/input/long_press 用 grounding 按 target 定位坐标;swipe 类/按键/滚动直接调
+        tap/input/long_press 用 元素定位按 target 定位坐标;swipe 类/按键/滚动直接调
         platform 原语。执行后回看一张截图,visual-diff 判"界面是否产生变化"作为生效信号。
 
         返回 (result, after_bytes, note):
           result ∈ 'advanced'(生效,推进) | 'no_effect'(执行了但无变化) |
-                   'locate_fail'(grounding 没定位到) | 'exec_fail'(执行异常/不支持)
+                   'locate_fail'(元素定位没定位到) | 'exec_fail'(执行异常/不支持)
         """
         atype = act.get("type", "")
         target = act.get("target", "")
         label = target or act.get("key") or act.get("value") or ""
         note = f"{atype} {label}".strip()
 
-        # 1. 需要视觉定位的动作:grounding 按 target 找坐标
+        # 1. 需要视觉定位的动作:元素定位按 target 找坐标
         px = None
         if atype in ("tap", "input", "long_press"):
-            if not self.grounding.enabled:
-                return ("locate_fail", before_bytes, f"{note}(grounding 未启用无法定位)")
-            px = self.grounding.locate(before_bytes, target, screen_size)
+            if not self.locator.enabled:
+                return ("locate_fail", before_bytes, f"{note}(元素定位未启用无法定位)")
+            px = self.locator.locate(before_bytes, target, screen_size)
             if px is None:
-                return ("locate_fail", before_bytes, f"{note}(grounding 未定位到「{target}」)")
+                return ("locate_fail", before_bytes, f"{note}(元素定位未定位到「{target}」)")
 
         # 2. 执行动作
         try:
@@ -710,10 +710,10 @@ class Agent:
 
     def _run_action_sequence(self, seq: list[dict],
                              screen_size: tuple[int, int]) -> tuple[bool, int, str]:
-        """【小模型·批量执行】把大模型拆出的原子动作序列逐个用 grounding 定位并执行。
+        """【小模型·批量执行】把大模型拆出的原子动作序列逐个用 元素定位并执行。
 
-        复用 _run_action_step(每个动作:grounding 按 target 定位 + 执行 + 回看截图)。中途某个
-        动作 grounding 定位失败 / 执行异常 → 停止并返回 (False, 已执行数, 说明)，交上层 brain
+        复用 _run_action_step(每个动作:元素定位按 target 定位 + 执行 + 回看截图)。中途某个
+        动作 元素定位失败 / 执行异常 → 停止并返回 (False, 已执行数, 说明)，交上层 brain
         看屏纠错(dismiss 弹窗 + 重拆，阶段3)；全部成功 → (True, n, 说明)。
         """
         before = self.platform.screenshot_raw()
