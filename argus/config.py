@@ -23,7 +23,7 @@ DEFAULT_CONFIG = {
     #   LLM_MODEL_BRAIN     —— step 决策/视觉验证（空=用 LLM_MODEL）
     #   LLM_MODEL_PLANNER   —— 开跑前拆剧本（可用更便宜/更快的模型）
     #   LLM_MODEL_GROUNDING —— 专用视觉定位模型；**空=关闭 grounding 兜底**（见 #2）。
-    #     可选专用 grounding VLM：qwen/qwen3-vl-32b-instruct、UI-TARS 系，或 Claude/Gemini
+    #     可选专用 grounding VLM：bytedance/ui-tars-1.5-7b 等 UI-TARS 系，或 Claude/Gemini
     #     某档（如 anthropic/claude-sonnet-5，computer-use 血统、与 brain 不同家族更能加信号）。
     "LLM_MODEL_BRAIN": "",
     "LLM_MODEL_PLANNER": "",

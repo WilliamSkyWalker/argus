@@ -20,7 +20,7 @@ Argus = 视觉驱动 AI QA agent，替代人工测试。喂 `.feature`(Gherkin) 
 
 **分级模型 / grounding / 多帧断言 / 参考图**（借鉴 midscene）：
 - **分级模型**：`LLM_MODEL_BRAIN/PLANNER/GROUNDING` 各可覆盖，空→回落 `LLM_MODEL`(默认零变化)。planner 可挂更便宜模型。
-- **grounding 定位兜底**(`grounding.py`，默认关)：tap action 带 `target` 描述；连续 no_effect≥阈值时 agent **代码层**换专用定位模型(`LLM_MODEL_GROUNDING`)重定位并重点击，不让 brain 盲猜同坐标；失败再降级到网格。配了模型才启用(推荐 `anthropic/claude-sonnet-5`；Qwen-VL/UI-TARS 是国产因内容审查不用)。
+- **grounding 定位兜底**(`grounding.py`，默认关)：tap action 带 `target` 描述；连续 no_effect≥阈值时 agent **代码层**换专用定位模型(`LLM_MODEL_GROUNDING`)重定位并重点击，不让 brain 盲猜同坐标；失败再降级到网格。配了模型才启用(可用 GUI 专用定位模型如 `bytedance/ui-tars-1.5-7b`，或 `anthropic/claude-sonnet-5` 这类通用 tier)。
 - **多帧时间窗断言**(默认开，`AGENT_ASSERT_BURST_FRAMES=3`)：断言型 step(Then/But)抓一小段连续帧喂 brain，让「出现过又消失」的 toast/banner 可判(有 mjpeg 时近零成本)。
 - **参考图断言**(默认关)：case 声明 `@ref:<path>` / `# argus-ref:` → 渲染成绝对路径 → brain 拿设计稿做视觉走查对比。供 Figma 走查。
 

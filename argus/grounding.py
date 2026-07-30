@@ -33,6 +33,29 @@ _SYSTEM_PROMPT = (
     "若图中找不到该元素，返回 {\"found\": false}。不要输出其他内容。"
 )
 
+# UI-TARS 系（GUI 专用定位模型）**必须**用它自己的原生 prompt——实测（见本模块 test 记录）：
+# 喂上面的中文 JSON prompt，UI-TARS-1.5-7B 会被顶出训练分布，**同一模型同一 prompt 坐标量纲
+# 时而 0-100 百分比、时而绝对像素**，无法在解析端可靠消歧；换回原生 `Action: click(...)` 语法
+# 后输出**稳定为「所发送图片的绝对像素」**（借鉴 midscene：原生 prompt + 版本已知的确定性解析，
+# 而非按量级猜）。故 UI-TARS 走独立 prompt + 独立「绝对像素」解析（见 _extract_xy_uitars /
+# _px_from_uitars），与通用指令 VLM 的 JSON+量级启发式完全隔离，互不影响。
+_UITARS_SYSTEM_PROMPT = (
+    "You are a GUI agent. You are given a screenshot and a description of one "
+    "target element. Output the action that clicks the **center** of that element.\n\n"
+    "## Output Format\nAction: ...\n\n"
+    "## Action Space\nclick(point='<point>x1 y1</point>')\n\n"
+    "## Note\n"
+    "- Coordinates are absolute pixels in the given image.\n"
+    "- Output only the single Action line. No Thought, no extra text.\n\n"
+    "## User Instruction\n"
+)
+
+
+def _is_uitars(model: str) -> bool:
+    """model 名含 'tars'（如 bytedance/ui-tars-1.5-7b）→ 走 UI-TARS 原生定位链路。"""
+    return "tars" in (model or "").lower()
+
+
 # 从模型输出里抠坐标的兜底正则（UI-TARS 等 GUI 专用模型不吐 JSON，用自己的动作语法：
 # click(point='x y') / start_box='(x,y)' / <point>x y</point> / (x,y) / [x, y]）。
 _POINT_TAG_RE = re.compile(r"<point>\s*([\d.]+)[\s,]+([\d.]+)\s*</point>", re.I)
@@ -78,6 +101,9 @@ class GroundingLocator:
         w, h = screen_size
         if not (w and h):
             return None
+        is_tars = _is_uitars(self.model)
+        system = _UITARS_SYSTEM_PROMPT if is_tars else _SYSTEM_PROMPT
+        user_text = target_desc if is_tars else f"目标元素：{target_desc}"
         try:
             client = self._ensure_client()
             b64 = base64.standard_b64encode(image_png).decode()
@@ -85,9 +111,9 @@ class GroundingLocator:
                 model=self.model,
                 max_tokens=self._max_tokens,
                 messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "system", "content": system},
                     {"role": "user", "content": [
-                        {"type": "text", "text": f"目标元素：{target_desc}"},
+                        {"type": "text", "text": user_text},
                         {"type": "image_url",
                          "image_url": {"url": f"data:image/png;base64,{b64}",
                                        "detail": "high"}},
@@ -99,11 +125,16 @@ class GroundingLocator:
             log.warning("grounding 模型调用失败: %s", e)
             return None
 
-        xy = self._extract_xy(raw)
+        # UI-TARS：原生动作语法 + 绝对像素解析（与通用 VLM 的 JSON+量级启发式隔离）。
+        if is_tars:
+            xy = self._extract_xy_uitars(raw)
+            frac = self._px_from_uitars(xy[0], xy[1], w, h) if xy else None
+        else:
+            xy = self._extract_xy(raw)
+            frac = self._to_fraction(xy[0], xy[1], w, h) if xy else None
         if xy is None:
             log.info("grounding 未定位到「%s」(raw=%s)", target_desc, raw[:160])
             return None
-        frac = self._to_fraction(xy[0], xy[1], w, h)
         if frac is None:
             log.info("grounding 坐标越界，弃用「%s」(raw=%s)", target_desc, raw[:160])
             return None
@@ -138,6 +169,46 @@ class GroundingLocator:
         else:
             fx = x / w if w else 0.0
             fy = y / h if h else 0.0
+        if 0.0 <= fx <= 1.0 and 0.0 <= fy <= 1.0:
+            return (fx, fy)
+        return None
+
+    @staticmethod
+    def _extract_xy_uitars(raw: str) -> tuple[float, float] | None:
+        """从 UI-TARS 原生动作输出抠坐标：`Action: click(point='(x y)')` /
+        `click(start_box='(x,y)')` / `start_box='[x1,y1,x2,y2]'`（box 取中心，借鉴 midscene）。
+
+        先剥掉 `Thought:` 段，取第一个 `click(...)` 括号内容里的数字；2 个=点，4 个=box→中心。
+        """
+        text = re.sub(r"Thought:.*?(?=Action:|$)", "", raw or "", flags=re.S)
+        m = re.search(r"click\s*\(([^)]*(?:\([^)]*\)[^)]*)*)\)", text, re.I)
+        seg = m.group(1) if m else text
+        nums = re.findall(r"-?\d+\.?\d*", seg)
+        if len(nums) >= 4:                       # box [x1,y1,x2,y2] → 中心
+            x = (float(nums[0]) + float(nums[2])) / 2
+            y = (float(nums[1]) + float(nums[3])) / 2
+            return (x, y)
+        if len(nums) >= 2:                       # point (x, y)
+            return (float(nums[0]), float(nums[1]))
+        return None
+
+    @staticmethod
+    def _px_from_uitars(x: float, y: float, w: int, h: int) -> tuple[float, float] | None:
+        """UI-TARS 坐标归一：实测（native prompt）稳定输出**所发送图片的绝对像素**——
+        直接除以屏宽/高。不走通用 _to_fraction 的量级启发式：那套把 (100,1000] 判成千分比，
+        会把 UI-TARS 上半屏的绝对像素（如 (545,954)）误算到屏幕下方（→ (589,2290)）。
+        仅当坐标越出图片范围时，才兜底按 0-1000 归一。越界返回 None。
+        """
+        try:
+            x = float(x); y = float(y)
+        except (TypeError, ValueError):
+            return None
+        if 0 <= x <= w and 0 <= y <= h:          # 绝对像素（观测到的稳定情形）
+            fx, fy = x / w, y / h
+        elif max(abs(x), abs(y)) <= 1000:        # 兜底：0-1000 归一
+            fx, fy = x / 1000.0, y / 1000.0
+        else:
+            return None
         if 0.0 <= fx <= 1.0 and 0.0 <= fy <= 1.0:
             return (fx, fy)
         return None

@@ -224,7 +224,7 @@ Argus routes sub-tasks to different models, and can split "acting" from "checkin
 | `LLM_MODEL` | fallback for every role | main multimodal model |
 | `LLM_MODEL_BRAIN` | per-step decision + visual verification | the "brain" — keep a strong reasoning VLM |
 | `LLM_MODEL_PLANNER` | one-shot scenario planning | can be a cheaper/faster model |
-| `LLM_MODEL_GROUNDING` | pixel-precise element location | a dedicated grounding VLM (e.g. `qwen/qwen3-vl-32b-instruct`, UI-TARS, or a Claude/Gemini tier). **Empty = grounding off.** |
+| `LLM_MODEL_GROUNDING` | pixel-precise element location | a dedicated grounding VLM (e.g. `bytedance/ui-tars-1.5-7b`, other UI-TARS, or a Claude/Gemini tier). **Empty = grounding off.** |
 | `LLM_GROUNDING_BASE_URL` / `LLM_GROUNDING_API_KEY` | grounding endpoint | optional; falls back to the main LLM |
 
 Grounding serves two roles: a **fallback** (when the brain's tap produces no visible effect, re-locate the target with the grounding model instead of blindly retrying), and the executor for **split execution** below.
@@ -359,7 +359,7 @@ Argus 把不同子任务路由到不同模型，并可选地把"操作"与"检�
 | `LLM_MODEL` | 所有角色缺省 | 主多模态模型 |
 | `LLM_MODEL_BRAIN` | 每步决策 + 视觉验证 | "大脑"，保持强推理 VLM |
 | `LLM_MODEL_PLANNER` | 开跑前一次性拆剧本 | 可用更便宜/快的模型 |
-| `LLM_MODEL_GROUNDING` | 像素级元素定位 | 专用视觉定位 VLM（如 `qwen/qwen3-vl-32b-instruct`、UI-TARS，或 Claude/Gemini 某档）。**留空 = 关闭 grounding。** |
+| `LLM_MODEL_GROUNDING` | 像素级元素定位 | 专用视觉定位 VLM（如 `bytedance/ui-tars-1.5-7b`、其他 UI-TARS，或 Claude/Gemini 某档）。**留空 = 关闭 grounding。** |
 | `LLM_GROUNDING_BASE_URL` / `LLM_GROUNDING_API_KEY` | grounding 独立端点 | 可选，留空复用主 LLM |
 
 grounding 有两个用途：**兜底**（brain 的 tap 点空时用它重定位，而非盲目重试）＋ 下面**分层执行**的执行器。
