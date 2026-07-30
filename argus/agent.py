@@ -168,6 +168,8 @@ class Agent:
         self.settle_timeout = float(cfg["agent"].get("settle_timeout", 6.0))
         self.settle_interval = float(cfg["agent"].get("settle_interval", 0.3))
         self.settle_stable_frames = int(cfg["agent"].get("settle_stable_frames", 2))
+        # wait_for（Phase 2）：per-step 墙钟等待预算；等待轮不计入 no-progress，超预算才收敛。
+        self.wait_max_s = float(cfg["agent"].get("wait_max_s", 45.0))
         if self.settle_enabled:
             log.info("settle 闸已启用: timeout=%.1fs interval=%.2fs stable=%d",
                      self.settle_timeout, self.settle_interval, self.settle_stable_frames)
@@ -249,6 +251,7 @@ class Agent:
         prev_ime_visible = False  # 上一回合软键盘是否可见（检测 tap 是否唤起键盘=聚焦输入框）
         consec_no_effect = 0      # 连续 no_effect 次数（定位不准的信号）
         turns_without_progress = 0  # 自上次推进到下一 step 以来累计的 turn（推进即清零）
+        wait_elapsed_in_step = 0.0  # 本 step 累计"主动等待"墙钟秒（Phase 2；推进即清零）
         locate_attempts_in_step = 0  # 本 step 已用 元素定位兜底几次（cap 见 MAX_LOCATE_PER_STEP）
         act_fails = 0  # 分层执行:本操作步连续失败次数（达 ESCAPE_ACTION_FAILS 逃生回大 LLM）
         batch_done = False  # 分层执行:本操作步是否已批量执行过(执行后→下一轮走 brain 验证)
@@ -614,6 +617,7 @@ class Agent:
                 sub_actions_in_step = 0
                 rejects_in_step = 0
                 turns_without_progress = 0   # 推进了 → 清零无进展计数
+                wait_elapsed_in_step = 0.0   # 新 step 重置等待预算
                 locate_attempts_in_step = 0  # 新 step 重置 元素定位兜底次数
                 act_fails = 0  # 新 step 重置分层操作失败计数
                 batch_done = False  # 新 step 重置批量执行标记
@@ -634,6 +638,40 @@ class Agent:
                 )
 
             # status == "in_progress" — 执行 action 推进当前 step
+
+            # ── wait 动作（Phase 2：wait_for / 与 no-progress 解耦）──
+            #   brain 主动等待（等加载 / 等结果出现）时：本轮**不计入** turns_without_progress
+            #   （撤回 line 内先前 +1），改由 per-step 墙钟预算 self.wait_max_s 兜底——避免慢加载
+            #   >MAX_TURNS_WITHOUT_PROGRESS 轮被误判假失败。等待本身：settle 开时用代码层
+            #   wait_settled 等到屏幕稳定（零 LLM 的"等加载完"）；再兜一个下限短睡，让"已稳定但
+            #   结果未出现"的异步态也推进墙钟。预算耗尽 → 恢复计数、落常规路径最终收敛。
+            if action_type == "wait" and wait_elapsed_in_step < self.wait_max_s:
+                turns_without_progress = max(0, turns_without_progress - 1)  # 撤回本轮无进展计数
+                remaining = self.wait_max_s - wait_elapsed_in_step
+                t_wait = time.time()
+                if self.settle_enabled:
+                    try:
+                        wait_settled(self.platform,
+                                     timeout_s=min(self.settle_timeout, remaining),
+                                     interval=self.settle_interval,
+                                     stable_needed=self.settle_stable_frames)
+                    except Exception as we:
+                        log.debug("[Turn %d] wait settle 异常: %s", turn, we)
+                floor = min(2.0, max(0.0, remaining - (time.time() - t_wait)))
+                if floor > 0:
+                    time.sleep(floor)
+                wait_elapsed_in_step += time.time() - t_wait
+                log.info("[Turn %d] 等待中: 累计 %.1fs / 预算 %.0fs（不计无进展）",
+                         turn, wait_elapsed_in_step, self.wait_max_s)
+                step_record["observation"] = (
+                    f"[等待] 累计 {wait_elapsed_in_step:.1f}s / {self.wait_max_s:.0f}s")
+                step_record["duration"] = time.time() - turn_start
+                steps_detail.append(step_record)
+                continue
+            if action_type == "wait":
+                log.warning("[Turn %d] 等待预算 %.0fs 耗尽仍未推进，恢复 no-progress 计数",
+                            turn, self.wait_max_s)
+
             # ── brain 判断 + 元素定位:每个 tap/long_press 一律用 元素定位按 target
             #    定位坐标（大模型只负责判断"点哪个元素"，坐标交定位小模型 —— 实测大模型
             #    估坐标偏 ~7% 是点空主因）。元素定位未启用/无 target/没定位到 → 回退 brain 坐标。

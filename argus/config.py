@@ -101,6 +101,10 @@ DEFAULT_CONFIG = {
     "AGENT_SETTLE_TIMEOUT": "6.0",      # settle 轮询最长等待秒数（到时回退同步判）
     "AGENT_SETTLE_INTERVAL": "0.3",     # settle 轮询帧间隔秒
     "AGENT_SETTLE_STABLE_FRAMES": "2",  # 连续几对相邻帧"没动"判定稳定
+    # wait_for（性能优化 Phase 2）：一个 step 最多花多少**墙钟秒**在"等待"上（等加载 /
+    # 等结果出现）。brain 主动 wait 的轮**不计入** MAX_TURNS_WITHOUT_PROGRESS——否则
+    # 慢加载（>15 轮才出结果）会被无进展上限误判假失败；超出此预算才恢复计数、最终收敛。
+    "AGENT_WAIT_MAX_S": "45",
     # 连续多少次 no_effect 触发元素定位兜底（见 #2）；仅当配了
     # LLM_MODEL_LOCATOR 才生效。到网格兜底(3 次)之前先试定位模型精定位。
     "AGENT_LOCATE_RETRY": "2",
@@ -267,6 +271,7 @@ def load_config() -> dict:
             "settle_timeout": float(values.get("AGENT_SETTLE_TIMEOUT") or 6.0),
             "settle_interval": float(values.get("AGENT_SETTLE_INTERVAL") or 0.3),
             "settle_stable_frames": int(values.get("AGENT_SETTLE_STABLE_FRAMES") or 2),
+            "wait_max_s": float(values.get("AGENT_WAIT_MAX_S") or 45.0),
             "locate_retry": int(values.get("AGENT_LOCATE_RETRY") or 2),
             "split_act_check": values.get("AGENT_SPLIT_ACT_CHECK", "false").lower() == "true",
         },

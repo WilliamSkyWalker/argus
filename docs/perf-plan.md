@@ -35,7 +35,13 @@
 
 ---
 
-## Phase 2. `wait_for`（等待直到 X 出现）
+## Phase 2. `wait_for`（等待直到 X 出现）  ✅ 核心已实现（commit 待定）
+> **已实现**：wait 轮与 `MAX_TURNS_WITHOUT_PROGRESS` **解耦** + per-step 墙钟预算
+> `AGENT_WAIT_MAX_S`（默认 45s）；wait 动作用 `wait_settled` 等到稳定（零 LLM 等加载完）
+> + 下限短睡处理"已稳定但结果未出现"的异步态；预算耗尽恢复计数最终收敛。
+> **待办（降优先级）**：OCR/模板匹配"X 在不在"的确定性 pre-screen（现靠 brain 每轮复检；
+> 需从 NL 断言里抽 X 的可判信号，另立小任务）。
+
 - 动机：现状靠 per-step 子循环隐式轮询，每轮询烧一次大模型，且总预算被 `MAX_TURNS_WITHOUT_PROGRESS=15` 卡死 → **慢加载（>15 轮）会假失败**；`wait` 动作单次还钳 5s。
 - 做法：识别"等待/直到/until"类语义 → 进**代码层轮询**：固定 interval 截图，先用**便宜手段筛**（loading_detector / OCR / 模板匹配先看 X 在不在），只在"疑似出现"时才调一次大模型确认。
 - **与 no-progress 解耦**：wait 轮次不计入 `MAX_TURNS_WITHOUT_PROGRESS`；改成独立 **wall-clock 超时**（用例可声明 `timeout`）。
