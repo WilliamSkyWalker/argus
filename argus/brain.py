@@ -786,6 +786,85 @@ class Brain:
                 acts.append(sa)
         return acts
 
+    def verify_assertions_batch(self, frames: list[bytes],
+                                assertions: list[dict],
+                                context: str = "",
+                                retry_feedback: str = "") -> list[dict] | None:
+        """【大模型·批量断言】一次调用判定一串**连续、同屏**的断言步（性能优化 Phase 3）。
+
+        assertions = [{"index": <1-based step 序号>, "text": <断言 step 原文>}, ...]，都针对
+        同一结果屏。frames = settle 采样的首/中/稳（1 或 3 张）。逐条回 verdict+evidence+where，
+        供 agent 校验后一次推进多步。LLM/解析失败返回 None（调用方回退逐步验证）。
+
+        ⚠️ 反偷懒红线（也写进 prompt，校验在 step_validator.validate_assertion_batch 兜底）：
+        每条必须各自给**独有** evidence（≥15字、引具体可见元素）+ where（屏上位置）；负向断言
+        （不展示/没有 X）必须写成"查了区域 Y，未发现 X"；不可视觉验证 → 该条 fail；禁"假设通过/
+        推断成立/后台逻辑"等蒙混话术。
+        """
+        lines = "\n".join(f'  {a["index"]}. {a["text"]}' for a in assertions)
+        ids = [a["index"] for a in assertions]
+        prompt = (
+            "你是严格的视觉验收器。下面给你 App 的**结果屏截图**和**一组针对该屏的断言**"
+            "（它们判断的是同一个页面/状态）。请**逐条**独立判定每条是否成立。\n\n"
+            f"待判定断言（共 {len(assertions)} 条，编号即 step 序号）：\n{lines}\n\n"
+            "输出严格 JSON（不要 markdown 代码块）：\n"
+            '{"results": [{"id": <编号>, "verdict": "pass|fail",'
+            ' "evidence": "<该条独有证据：引用当前截图里能验证这一条的具体元素/文字/位置/颜色，≥15字>",'
+            ' "where": "<该证据在屏上的位置，如 顶部/右下角/坐标百分比>",'
+            ' "fail_reason": "<verdict=fail 时必填：为什么这一条不满足>"}]}\n\n'
+            "🚨 硬规定（违反该条判 fail 或会被打回重判）：\n"
+            "1. **每条给各自独有的 evidence** —— 不同断言必须引用各自不同的屏上元素；"
+            "禁止多条套用雷同/模板化证据（如都写「页面正常显示」）。\n"
+            "2. **evidence 必须是当前截图真实可见内容**，≥15字，含具体元素（按钮/文字/标题/图标/"
+            "输入框…）或方位或带引号 UI 文字；光复述断言文本不算。\n"
+            "3. **负向断言**（「不展示 / 没有 / 不应出现 X」）：必须写成"
+            "「查看了<区域>，未发现 X」，明确说你看了哪里、确认不存在；不能默认没有就 pass。\n"
+            "4. **看不见 / 无法视觉验证的断言**（埋点/后端/系统时间/跨 App 等）→ 该条 verdict=fail，"
+            "**禁止**用「假设通过 / 推断成立 / 后台逻辑 / 符合预期」蒙混。\n"
+            "5. 每条 id 必须回一次，一条都不能漏；只返回 JSON。\n"
+            f"（编号集合应恰为：{ids}）"
+            + (f"\n\n已通过步骤的锚点（供理解上下文，勿据此臆断当前屏）：\n{context}" if context else "")
+            + (f"\n\n⚠️ 上一轮判定被打回，请修正：{retry_feedback}" if retry_feedback else "")
+        )
+        user_content: list[dict] = [{"type": "text", "text": prompt}]
+        if frames and len(frames) > 1:
+            user_content.append({"type": "text", "text": (
+                f"以下 {len(frames)} 张是该屏一小段时间窗内的**连续截图**"
+                f"（Frame 1 最早 → Frame {len(frames)} 最新）。判断「是否出现过 X」看全部帧；"
+                "「当前是否 X 态」以最后一帧为准。")})
+            for off, f in enumerate(frames, start=1):
+                tag = "（最新）" if off == len(frames) else ""
+                user_content.append({"type": "text", "text": f"#### Frame {off}/{len(frames)}{tag}"})
+                user_content.append(_image_block(f))
+        elif frames:
+            user_content.append({"type": "text", "text": "### 结果屏截图（以此为准）"})
+            user_content.append(_image_block(frames[0]))
+        else:
+            return None
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model, max_tokens=self.max_tokens,
+                messages=[{"role": "user", "content": user_content}],
+                response_format={"type": "json_object"},
+            )
+            raw = resp.choices[0].message.content or ""
+        except Exception as e:
+            log.warning("verify_assertions_batch LLM 调用失败: %s", e)
+            return None
+        try:
+            data = _extract_json(raw)
+        except Exception as e:
+            log.warning("verify_assertions_batch JSON 解析失败: %s (raw=%s)", e, raw[:150])
+            return None
+        results = data.get("results") if isinstance(data, dict) else None
+        if not isinstance(results, list):
+            return None
+        out: list[dict] = []
+        for r in results:
+            if isinstance(r, dict) and "id" in r:
+                out.append(r)
+        return out or None
+
     def note_external_action(self, observation: str, action: dict,
                              screenshot_png: bytes) -> None:
         """记录一次**非 brain 决策**的动作（如 agent 层的元素定位重定位重 tap）。

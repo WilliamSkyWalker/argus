@@ -20,6 +20,8 @@ Two layers of validation:
 
 from __future__ import annotations
 
+import re
+
 # ── Words that count as "concrete screen element reference" ────────
 #
 # Heuristic: a valid evidence string must contain at least one of these
@@ -163,4 +165,85 @@ def validate_step_progress(decision: dict, prev_index: int, total_steps: int) ->
                 "继续推进当前 step 需要给出具体 action（tap / swipe / input / wait / ...）。"
             )
 
+    return True, ""
+
+
+# ── 连续断言合并（Phase 3）的批量校验：把逐步硬墙逐条套用，并加合并专属的防偷懒闸 ──
+
+# 负向断言标记（"不展示 / 没有 X" 一类）——判 pass 时 evidence 必须写明"看过、确认不存在"。
+_NEG_MARKERS = ("不展示", "不显示", "没有", "不应", "不得", "不出现", "未出现",
+                "不存在", "不再", "禁止", "无 ", "不含", "不会")
+_ABSENCE_EVIDENCE = ("未发现", "没有", "不存在", "未出现", "查看", "查了", "检查",
+                     "找不到", "不见", "无此", "均无", "确认无", "扫", "遍历")
+
+
+def _is_negative_assertion(text: str) -> bool:
+    return any(m in (text or "") for m in _NEG_MARKERS)
+
+
+def _norm_evidence(s: str) -> str:
+    return re.sub(r"\s+", "", (s or "").strip().lower())
+
+
+def validate_assertion_batch(results: list, assertions: list) -> tuple[bool, str]:
+    """校验合并断言（Phase 3）的一批逐条结果。任一条不达标 → 打回整批（reject 重判）。
+
+    Args:
+        results: LLM 回的 [{id, verdict, evidence, where, fail_reason}, ...]
+        assertions: [{index, text}, ...]（这批断言的 step 序号 + 原文）
+
+    逐条套用 validate_evidence 硬墙，另加合并专属红线：where 必填、负向断言 pass 需写明
+    "看过未发现"、跨条 evidence 去重（防雷同/模板化偷懒）。Returns ``(ok, reject_reason)``。
+    """
+    if not isinstance(results, list) or not results:
+        return False, "results 缺失或为空；每条断言都要回一条 {id, verdict, evidence, where}。"
+    by_id: dict[int, dict] = {}
+    for r in results:
+        if not isinstance(r, dict) or "id" not in r:
+            return False, "results 里有条目缺 id；每条必须带 id（=step 序号）。"
+        try:
+            by_id[int(r["id"])] = r
+        except (TypeError, ValueError):
+            return False, f"results 里 id={r.get('id')!r} 不是整数。"
+
+    expected = [a["index"] for a in assertions]
+    text_by_id = {a["index"]: a["text"] for a in assertions}
+    missing = [i for i in expected if i not in by_id]
+    if missing:
+        return False, f"漏判 step {missing}；这批每条断言都要各回一次 verdict，一条不能少。"
+
+    seen: list[tuple[int, str]] = []
+    for idx in expected:
+        r = by_id[idx]
+        verdict = r.get("verdict")
+        if verdict not in ("pass", "fail"):
+            return False, f"step {idx} 的 verdict={verdict!r} 不合法，必须是 'pass' / 'fail'。"
+        ev = r.get("evidence", "") if isinstance(r.get("evidence"), str) else ""
+        ok, reason = validate_evidence(ev)
+        if not ok:
+            return False, f"step {idx} evidence 校验失败：{reason}"
+        where = r.get("where", "")
+        if not isinstance(where, str) or len(where.strip()) < 2:
+            return False, f"step {idx} 缺 where（该证据在屏幕上的位置）——合并判定必须逐条给位置。"
+        if verdict == "fail":
+            fr = r.get("fail_reason", "")
+            if not isinstance(fr, str) or len(fr.strip()) < 10:
+                return False, f"step {idx} verdict=fail 但 fail_reason 缺失或太短（< 10 字符）。"
+        # 负向断言判 pass：evidence 必须体现"看过、确认不存在"，不能默认没有就过
+        if verdict == "pass" and _is_negative_assertion(text_by_id.get(idx, "")):
+            if not any(m in ev for m in _ABSENCE_EVIDENCE):
+                return False, (
+                    f"step {idx} 是负向断言（「{text_by_id.get(idx, '')[:24]}」）判 pass，"
+                    "evidence 必须写明「查看了<区域>、未发现 X」——明确说你看了哪里、确认它不存在，"
+                    "不能默认没有就 pass。"
+                )
+        # 去重闸：跨条雷同/模板化 evidence
+        ne = _norm_evidence(ev)
+        for prev_idx, prev_ne in seen:
+            if ne == prev_ne or (len(ne) > 20 and (ne in prev_ne or prev_ne in ne)):
+                return False, (
+                    f"step {idx} 与 step {prev_idx} 的 evidence 雷同/模板化——"
+                    "不同断言要引用各自不同的屏上元素/文字/位置，别套用同一句证据。"
+                )
+        seen.append((idx, ne))
     return True, ""

@@ -52,7 +52,14 @@
 
 ---
 
-## Phase 3. Then-And 合并（连续断言块 → 1 次调用）
+## Phase 3. Then-And 合并（连续断言块 → 1 次调用）  ✅ 已实现（默认关 AGENT_MERGE_ASSERTS）
+> **已实现**：连续同屏断言块检测 + `brain.verify_assertions_batch`（逐条 verdict+evidence+where）
+> + `step_validator.validate_assertion_batch`（逐条硬墙 + 去重闸 + 负向断言 absence 加压）+ 一次
+> 推进多步；任一 fail 即停并终止 scenario（保守）。实机验证：base-001 的 Then/And/And/But 一个
+> turn 判完，逐条独立 evidence、step5 抓到真实 fail（未鲁棒图章）。**默认关**，验证充分再开。
+> **待办（红线 5/6，降优先级）**：OCR 确定性交叉核验、最弱条对抗复核。折中档（负向/P0 强制单独）
+> 暂未做——当前对负向断言是"prompt 加压 + validator absence 校验"而非排除。
+
 - 动机：连续断言步（Then + 继承的 And/But，中间无 When）几乎都在判同一屏 → 现状 K 步各跑一轮 brain。合并成 1 次调用（送 P1-B 采样帧 + K 条断言，逐条回 verdict+evidence）。
 - 依赖：P1-B 帧采样（同屏才合并）；需放开 `step_validator` 的 `+0/+1` 硬墙，允许一次推进 K 步（每步带各自 evidence）。
 

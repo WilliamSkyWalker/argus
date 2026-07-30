@@ -105,6 +105,10 @@ DEFAULT_CONFIG = {
     # 等结果出现）。brain 主动 wait 的轮**不计入** MAX_TURNS_WITHOUT_PROGRESS——否则
     # 慢加载（>15 轮才出结果）会被无进展上限误判假失败；超出此预算才恢复计数、最终收敛。
     "AGENT_WAIT_MAX_S": "45",
+    # 连续断言合并（性能优化 Phase 3）：连续 Then/And（同屏、中间无操作步）合成 1 次大模型
+    # 调用逐条判，一次推进多步——省调用次数。**默认关**（安全，验证充分再开）；开启后
+    # 反偷懒硬墙逐条套用 + 去重 + 负向断言加压（见 step_validator.validate_assertion_batch）。
+    "AGENT_MERGE_ASSERTS": "false",
     # 连续多少次 no_effect 触发元素定位兜底（见 #2）；仅当配了
     # LLM_MODEL_LOCATOR 才生效。到网格兜底(3 次)之前先试定位模型精定位。
     "AGENT_LOCATE_RETRY": "2",
@@ -272,6 +276,7 @@ def load_config() -> dict:
             "settle_interval": float(values.get("AGENT_SETTLE_INTERVAL") or 0.3),
             "settle_stable_frames": int(values.get("AGENT_SETTLE_STABLE_FRAMES") or 2),
             "wait_max_s": float(values.get("AGENT_WAIT_MAX_S") or 45.0),
+            "merge_asserts": values.get("AGENT_MERGE_ASSERTS", "false").lower() == "true",
             "locate_retry": int(values.get("AGENT_LOCATE_RETRY") or 2),
             "split_act_check": values.get("AGENT_SPLIT_ACT_CHECK", "false").lower() == "true",
         },

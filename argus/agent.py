@@ -34,7 +34,7 @@ from .planner import plan_scenario
 from .platforms import create_platform
 from .settle import wait_settled, sample_then_frames
 from .skills import SkillContext, create_pipeline, run_pipeline
-from .step_validator import validate_step_progress
+from .step_validator import validate_step_progress, validate_assertion_batch
 
 log = get_logger("agent")
 
@@ -117,6 +117,21 @@ def _classify_assertion_steps(scenario_steps: list[str]) -> list[bool]:
     return flags
 
 
+def _consecutive_assert_block(flags: list[bool], start_idx: int) -> tuple[int, int] | None:
+    """从 start_idx（1-based）起，返回极大连续断言块 (i, j) 闭区间（1-based）。
+
+    连续断言块 = 相邻且中间无操作步的 Then/And/But——它们判的是同一结果屏，可合并
+    成一次调用（Phase 3）。start_idx 本身不是断言步则返回 None。
+    """
+    n = len(flags)
+    if not (1 <= start_idx <= n) or not flags[start_idx - 1]:
+        return None
+    end = start_idx
+    while end < n and flags[end]:   # flags[end]（0-indexed）= step end+1 是否断言
+        end += 1
+    return (start_idx, end)
+
+
 class Agent:
     def __init__(self, config: dict | None = None):
         log.info("Agent.__init__ 开始")
@@ -170,6 +185,10 @@ class Agent:
         self.settle_stable_frames = int(cfg["agent"].get("settle_stable_frames", 2))
         # wait_for（Phase 2）：per-step 墙钟等待预算；等待轮不计入 no-progress，超预算才收敛。
         self.wait_max_s = float(cfg["agent"].get("wait_max_s", 45.0))
+        # 连续断言合并（Phase 3，默认关）：连续同屏 Then/And 合成 1 次调用逐条判。
+        self.merge_asserts = bool(cfg["agent"].get("merge_asserts", False))
+        if self.merge_asserts:
+            log.info("连续断言合并已启用（Phase 3）")
         if self.settle_enabled:
             log.info("settle 闸已启用: timeout=%.1fs interval=%.2fs stable=%d",
                      self.settle_timeout, self.settle_interval, self.settle_stable_frames)
@@ -415,6 +434,57 @@ class Agent:
                     time.sleep(self.step_delay)
                     continue
                 log.info("[Turn %d] 操作步 %d 拆步为空，回退 brain 逐步决策", turn, idx)
+
+            # ── 连续断言合并（Phase 3，gated AGENT_MERGE_ASSERTS）：当前是断言步且后面还有
+            #    连续断言步（同屏、中间无操作步）→ 一次调用逐条判 + 逐条硬墙 + 去重 + 负向加压，
+            #    一次推进多步。合并失败/被拒回退逐步验证。──
+            if (self.merge_asserts
+                    and 1 <= current_step_index <= len(assertion_flags)
+                    and assertion_flags[current_step_index - 1]):
+                _blk = _consecutive_assert_block(assertion_flags, current_step_index)
+                if _blk and _blk[1] > _blk[0]:           # 至少 2 条才合并
+                    _i, _j = _blk
+                    if self.settle_enabled and settle_window:
+                        _frames, _dyn = sample_then_frames(settle_window)
+                    else:
+                        _frames = [raw_bytes]
+                    _ev_ctx = "；".join(e for e in completed_evidence if e)
+                    kind, payload = self._verify_assert_block(
+                        _i, _j, _frames, _ev_ctx, retry_feedback, scenario_steps,
+                        completed_evidence, step_status, steps_detail, screenshot_png,
+                        turn, start_time, n_steps)
+                    if kind == "reject":
+                        rejects_in_step += 1
+                        log.warning("[Turn %d] 合并断言校验 REJECT (#%d/%d): %s",
+                                    turn, rejects_in_step, MAX_REJECTS_PER_STEP, payload)
+                        if rejects_in_step >= MAX_REJECTS_PER_STEP:
+                            step_status[current_step_index] = "fail"
+                            for m in range(current_step_index + 1, n_steps + 1):
+                                step_status[m] = "skip"
+                            return self._build_result(
+                                "fail",
+                                f"step {current_step_index} 合并断言连续 {MAX_REJECTS_PER_STEP} "
+                                f"次校验被拒：{payload}",
+                                turn, start_time, steps_detail, scenario_steps, step_status)
+                        retry_feedback = payload
+                        time.sleep(self.step_delay)
+                        continue
+                    if kind == "result":
+                        return payload
+                    if kind == "advance":
+                        current_step_index = _j + 1
+                        sub_actions_in_step = 0
+                        rejects_in_step = 0
+                        turns_without_progress = 0
+                        wait_elapsed_in_step = 0.0
+                        locate_attempts_in_step = 0
+                        act_fails = 0
+                        batch_done = False
+                        retry_feedback = ""
+                        time.sleep(self.step_delay)
+                        continue
+                    # kind == "fallback" → 落到下方逐步验证路径（不 continue）
+                    log.info("[Turn %d] 合并断言 LLM/解析失败，回退逐步验证", turn)
 
             # ⚠️ no_effect 判断已**停用** —— 它靠 visual-diff 像素变化判"上次点击没生效"，但对
             # 小变化 UI(计算器数字、输入单字符、toggle/勾选)会**误判**成没生效(实测计算器
@@ -713,6 +783,67 @@ class Agent:
             "timeout", "loop exited unexpectedly",
             turn, start_time, steps_detail, scenario_steps, step_status,
         )
+
+    def _verify_assert_block(self, i: int, j: int, frames: list[bytes], ev_ctx: str,
+                             retry_feedback: str, scenario_steps: list[str],
+                             completed_evidence: list[str], step_status: dict,
+                             steps_detail: list, screenshot_png: bytes,
+                             turn: int, start_time: float, n_steps: int):
+        """批量验证连续断言块 [i..j]（Phase 3）。返回 (kind, payload)：
+
+          ('fallback', None)      —— LLM/解析失败，调用方回退逐步验证
+          ('reject', reason)      —— 校验未过，调用方计 reject 并重试
+          ('result', result_dict) —— 出现 fail 或已验到最后一步，调用方直接 return
+          ('advance', j)          —— 全过且非末步，调用方 current_step_index=j+1 继续
+
+        逐条 verdict 由 brain.verify_assertions_batch 产出，validate_assertion_batch 逐条
+        套硬墙 + 去重 + 负向加压。全 pass 才推进；任一 fail → 该 step fail、终止 scenario。
+        """
+        assertions = [{"index": k, "text": scenario_steps[k - 1]} for k in range(i, j + 1)]
+        results = self.brain.verify_assertions_batch(frames, assertions, ev_ctx, retry_feedback)
+        if results is None:
+            return ("fallback", None)
+        ok, reason = validate_assertion_batch(results, assertions)
+        if not ok:
+            return ("reject", reason)
+        by_id: dict[int, dict] = {}
+        for r in results:
+            try:
+                by_id[int(r["id"])] = r
+            except (TypeError, ValueError, KeyError):
+                pass
+        for k in range(i, j + 1):
+            r = by_id.get(k, {})
+            ev = r.get("evidence", "")
+            verdict = r.get("verdict")
+            while len(completed_evidence) < k:
+                completed_evidence.append("")
+            rec = {
+                "screenshot_png": screenshot_png, "step_index": k,
+                "observation": f"[合并断言] {ev}",
+                "step_progress": {"current_step_index": k, "current_step_status": verdict,
+                                  "evidence": ev, "fail_reason": r.get("fail_reason", "")},
+                "duration": time.time() - start_time,
+            }
+            if verdict == "pass":
+                completed_evidence[k - 1] = ev
+                step_status[k] = "pass"
+                steps_detail.append(rec)
+                log.info("[Turn %d] ✅(合并) Step %d PASS: %s", turn, k, ev)
+            else:
+                step_status[k] = "fail"
+                for m in range(k + 1, n_steps + 1):
+                    step_status[m] = "skip"
+                steps_detail.append(rec)
+                log.warning("[Turn %d] ❌(合并) Step %d FAIL: %s", turn, k, r.get("fail_reason", ""))
+                return ("result", self._build_result(
+                    "fail", f"step {k} fail(merged): {r.get('fail_reason', '')}",
+                    turn, start_time, steps_detail, scenario_steps, step_status))
+        if j >= n_steps:
+            return ("result", self._build_result(
+                "pass", "all steps passed (merged asserts)",
+                turn, start_time, steps_detail, scenario_steps, step_status))
+        return ("advance", j)
 
     def _run_action_step(self, act: dict, before_bytes: bytes,
                          screen_size: tuple[int, int]) -> tuple[str, bytes, str]:
