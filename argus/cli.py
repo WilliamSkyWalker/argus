@@ -1586,21 +1586,6 @@ def _maybe_heal(agent, case_text: str, result: dict) -> None:
         log.warning("Healer 分析失败（不影响测试结果）: %s", e)
 
 
-def _heal_after_finalize(agent, results) -> None:
-    """异步 finalize（Phase 4）后，给收尾才翻成 fail 的 case 补跑 healer。
-
-    provisional 结果在 run 期跳过了 inline heal（overall 未定）；finalize 定案后这里补上。
-    _maybe_heal 只用 result 数据 + LLM client、不碰 live device，故收尾期补跑安全。
-    `"heal_report" not in r` 保证已 inline heal 过的同步 fail 不重复跑。
-    """
-    if agent is None:
-        return
-    for r in (results or []):
-        if (isinstance(r, dict) and r.get("result") in ("fail", "timeout", "error")
-                and "heal_report" not in r and r.get("case")):
-            _maybe_heal(agent, r["case"], r)
-
-
 def _run_sequential(cfg: dict, test_cases: list[str], url: str | None,
                     account: dict | None = None) -> list[dict]:
     """Run test cases sequentially with a single Agent.
@@ -1614,8 +1599,7 @@ def _run_sequential(cfg: dict, test_cases: list[str], url: str | None,
 
     results = []
     current_platform = cfg.get("platform", "")
-    try:
-      for i, raw_tc in enumerate(test_cases):
+    for i, raw_tc in enumerate(test_cases):
         tc = _apply_account_placeholders(raw_tc, account) if account else raw_tc
         # Platform tag mismatch → skip this case before running pm_clear etc
         skip_reason = _should_skip_by_platform(tc, current_platform) or _should_skip_by_automation(tc)
@@ -1665,16 +1649,11 @@ def _run_sequential(cfg: dict, test_cases: list[str], url: str | None,
 
         log.info("[%d/%d] 开始执行: %s", i + 1, len(test_cases), tc[:60])
         result = agent.run(tc)
-        log.info("[%d/%d] 结果: %s%s", i + 1, len(test_cases), result.get("result", "?"), "（异步待收尾）" if result.get("_provisional") else "")
-        result["case"] = tc
-        # 存 by-ref（异步 finalize 会就地改写 overall）；provisional 结果 overall 未定，
-        # inline heal 只对已定案的跑。
-        if not result.get("_provisional"):
-            _maybe_heal(agent, tc, result)
-        results.append(result)
-    finally:
-        agent.finalize_pending()  # 收尾 await 在飞异步断言（finally：abort 也不丢在飞判定）
-    _heal_after_finalize(agent, results)   # 收尾翻 fail 的 case 补 healer
+        log.info("[%d/%d] 结果: %s", i + 1, len(test_cases), result.get("result", "?"))
+        # fail/timeout/error → Healer 根因分析（失败不影响主流程）
+        _maybe_heal(agent, tc, result)
+        results.append({"case": tc, **result})
+
     return results
 
 
@@ -1923,7 +1902,8 @@ def _run_dispatched_devices(cfg: dict, test_cases: list[str],
                          n_done, total, worker_idx, device, tc[:60])
                 try:
                     result = agent.run(tc)
-                    log.info("[%d/%d Worker %d] 结果: %s%s", n_done, total, worker_idx, result.get("result", "?"), "（异步待收尾）" if result.get("_provisional") else "")
+                    log.info("[%d/%d Worker %d] 结果: %s",
+                             n_done, total, worker_idx, result.get("result", "?"))
                 except Exception as e:
                     # exc_info so a framework crash (vs a test fail) leaves a stack
                     # in the log instead of a bare message — a bare "division by
@@ -1933,15 +1913,11 @@ def _run_dispatched_devices(cfg: dict, test_cases: list[str],
                     result = {"result": "error", "reason": str(e),
                               "steps": 0, "duration": 0, "steps_detail": []}
 
-                # fail/timeout/error → Healer 根因分析（失败不影响主流程）。
-                # 异步 provisional 结果 overall 未定（收尾 finalize 才定）→ inline heal 只对已定案跑。
-                if not result.get("_provisional"):
-                    _maybe_heal(agent, tc, result)
+                # fail/timeout/error → Healer 根因分析（失败不影响主流程）
+                _maybe_heal(agent, tc, result)
 
                 with results_lock:
-                    result["case"] = tc
-                    result["device"] = device
-                    results[idx] = result   # by-ref：异步 finalize 就地改写 overall
+                    results[idx] = {"case": tc, **result, "device": device}
             finally:
                 # requeue（如有）发生在 try 内、此减一之前，因此任何时刻
                 # 「队列空 且 busy==0」⇒ 不会再有新 case，其他 worker 可安全退出
@@ -1958,14 +1934,6 @@ def _run_dispatched_devices(cfg: dict, test_cases: list[str],
                 f.result()
             except Exception as e:
                 log.error("Worker 异常退出: %s", e)
-
-    # 收尾：await 各 Agent 在飞异步断言（Phase 4），必须在结果用于报告前（finally 语义）
-    for ag in agents:
-        try:
-            ag.finalize_pending()
-        except Exception as e:
-            log.error("finalize_pending 异常: %s", e)
-    _heal_after_finalize(agents[0] if agents else None, results)  # 收尾翻 fail 的补 healer
 
     # Teardown agents
     for ag in agents:
@@ -2057,12 +2025,10 @@ def _run_concurrent(cfg: dict, test_cases: list[str], url: str | None,
                 idx = counter[0]
             log.info("[%d/%d] 开始执行: %s", idx, total, tc[:60])
             result = agent.run(tc)
-            log.info("[%d/%d] 结果: %s%s", idx, total, result.get("result", "?"), "（异步待收尾）" if result.get("_provisional") else "")
-            # fail/timeout/error → Healer（失败不影响主流程）。异步 provisional 未定案 → 跳过 inline heal
-            if not result.get("_provisional"):
-                _maybe_heal(agent, tc, result)
-            result["case"] = tc
-            return result   # by-ref：异步 finalize 就地改写 overall
+            log.info("[%d/%d] 结果: %s", idx, total, result.get("result", "?"))
+            # fail/timeout/error → Healer 根因分析（失败不影响主流程）
+            _maybe_heal(agent, tc, result)
+            return {"case": tc, **result}
         finally:
             # Return agent to pool
             with pool_lock:
@@ -2088,14 +2054,6 @@ def _run_concurrent(cfg: dict, test_cases: list[str], url: str | None,
                     "duration": 0,
                     "steps_detail": [],
                 }
-
-    # 收尾：await 各 Agent 在飞异步断言（Phase 4），必须在结果用于报告前
-    for agent in agents:
-        try:
-            agent.finalize_pending()
-        except Exception as e:
-            log.error("finalize_pending 异常: %s", e)
-    _heal_after_finalize(agents[0] if agents else None, results)  # 收尾翻 fail 的补 healer
 
     # Teardown all agents
     for agent in agents:

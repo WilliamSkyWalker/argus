@@ -106,16 +106,9 @@ DEFAULT_CONFIG = {
     # 慢加载（>15 轮才出结果）会被无进展上限误判假失败；超出此预算才恢复计数、最终收敛。
     "AGENT_WAIT_MAX_S": "45",
     # 连续断言合并（性能优化 Phase 3）：连续 Then/And（同屏、中间无操作步）合成 1 次大模型
-    # 调用逐条判，一次推进多步——省调用次数。反偷懒硬墙逐条套用 + 去重 + 负向断言加压
-    # （见 step_validator.validate_assertion_batch）。**默认开**。注：AGENT_ASYNC_ASSERTS 开时
-    # 断言走异步链路、本项被旁路（异步同样批量判）；关掉异步时本项仍生效。
-    "AGENT_MERGE_ASSERTS": "true",
-    # Then 异步（性能优化 Phase 4）：断言步不阻塞——冻结采样帧、丢有界异步池判、乐观继续跑
-    # 后续步；收尾 finally 里 await 全部在飞判定并按 step 序合并（最早 fail 定 case 失败点、
-    # 其后步作废/skip）。**默认开**。注：异步 provisional 结果不跑 inline healer（收尾翻 fail
-    # 的 case 暂不自动做根因分类）；关掉本项即回退全同步 + 逐 case inline heal。
-    "AGENT_ASYNC_ASSERTS": "true",
-    "AGENT_ASYNC_WORKERS": "4",     # 异步断言判定的有界并发数（每 Agent）
+    # 调用逐条判，一次推进多步——省调用次数。**默认关**（安全，验证充分再开）；开启后
+    # 反偷懒硬墙逐条套用 + 去重 + 负向断言加压（见 step_validator.validate_assertion_batch）。
+    "AGENT_MERGE_ASSERTS": "false",
     # 连续多少次 no_effect 触发元素定位兜底（见 #2）；仅当配了
     # LLM_MODEL_LOCATOR 才生效。到网格兜底(3 次)之前先试定位模型精定位。
     "AGENT_LOCATE_RETRY": "2",
@@ -284,8 +277,6 @@ def load_config() -> dict:
             "settle_stable_frames": int(values.get("AGENT_SETTLE_STABLE_FRAMES") or 2),
             "wait_max_s": float(values.get("AGENT_WAIT_MAX_S") or 45.0),
             "merge_asserts": values.get("AGENT_MERGE_ASSERTS", "false").lower() == "true",
-            "async_asserts": values.get("AGENT_ASYNC_ASSERTS", "false").lower() == "true",
-            "async_workers": int(values.get("AGENT_ASYNC_WORKERS") or 4),
             "locate_retry": int(values.get("AGENT_LOCATE_RETRY") or 2),
             "split_act_check": values.get("AGENT_SPLIT_ACT_CHECK", "false").lower() == "true",
         },
