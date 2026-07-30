@@ -32,6 +32,7 @@ from .locator import ElementLocator
 from .logger import get_logger
 from .planner import plan_scenario
 from .platforms import create_platform
+from .settle import wait_settled, sample_then_frames
 from .skills import SkillContext, create_pipeline, run_pipeline
 from .step_validator import validate_step_progress
 
@@ -162,6 +163,14 @@ class Agent:
         self.step_delay = cfg["agent"]["step_delay"]
         self.locate_retry = int(cfg["agent"].get("locate_retry", 2))
         self.assert_burst_frames = int(cfg["agent"].get("assert_burst_frames", 1))
+        # settle 闸（Phase 1）：截图前等屏幕稳定再决策/采样，零 LLM。
+        self.settle_enabled = bool(cfg["agent"].get("settle_enabled", True))
+        self.settle_timeout = float(cfg["agent"].get("settle_timeout", 6.0))
+        self.settle_interval = float(cfg["agent"].get("settle_interval", 0.3))
+        self.settle_stable_frames = int(cfg["agent"].get("settle_stable_frames", 2))
+        if self.settle_enabled:
+            log.info("settle 闸已启用: timeout=%.1fs interval=%.2fs stable=%d",
+                     self.settle_timeout, self.settle_interval, self.settle_stable_frames)
         # 分层执行：操作步走元素定位、检查步走 LLM（依赖元素定位找 tap/input 目标）
         self.split_act_check = bool(cfg["agent"].get("split_act_check", False))
         if self.split_act_check:
@@ -311,9 +320,21 @@ class Agent:
             turns_without_progress += 1
 
             # ── See — 截图（纯视觉，不取 UI 树）──
+            # settle 闸（Phase 1）：先等屏幕加载完/稳定再取帧，避免在过渡/加载态上
+            # 决策定坐标（点空）或判断（半成品屏假失败）。窗口帧留给下面 Then 采样用。
             log.info("[Turn %d/step %d] 截图...", turn, current_step_index)
+            settle_window: list[bytes] = []
             try:
-                raw_bytes = self.platform.screenshot_raw()
+                if self.settle_enabled:
+                    try:
+                        _settled, settle_window = wait_settled(
+                            self.platform, timeout_s=self.settle_timeout,
+                            interval=self.settle_interval,
+                            stable_needed=self.settle_stable_frames)
+                    except Exception as se:
+                        log.debug("[Turn %d] settle 异常，退回单帧: %s", turn, se)
+                        settle_window = []
+                raw_bytes = settle_window[-1] if settle_window else self.platform.screenshot_raw()
                 screenshot_png = raw_bytes
                 step_record["screenshot_png"] = screenshot_png
             except Exception as e:
@@ -473,22 +494,33 @@ class Agent:
                 log.info("[Turn %d] 连续 %d 次 no_effect，发坐标网格图帮 LLM 读精确坐标",
                          turn, consec_no_effect)
 
-            # ── 多帧时间窗断言（#4）：断言型 step 抓一小段连续帧，让 toast/banner 等
-            #    「出现过又消失」的瞬态 UI 可被判断。网格兜底轮不抓（那轮在纠偏定位）。──
+            # ── 断言型 step 帧采样（#4 / Phase 1）：网格兜底轮不采（那轮在纠偏定位）。──
+            #   settle 开：从 settle 窗口采「首/中/稳」+ 2% 路由——静态断言只送稳态 1 帧，
+            #     有过程/动画/瞬态才送 3 帧让 brain 判过程（横跨窗口，不漏早期就消失的 toast）。
+            #   settle 关：退回旧「无条件多帧」路径。
             burst_frames: list[bytes] = []
             is_assert = (1 <= current_step_index <= len(assertion_flags)
                          and assertion_flags[current_step_index - 1])
-            if is_assert and self.assert_burst_frames > 1 and not use_grid:
-                try:
-                    burst_frames = self.platform.screenshot_burst(
-                        count=self.assert_burst_frames, interval=0.25)
-                    if burst_frames:
-                        # 末帧即最新态，作为本轮权威当前截图
-                        screenshot_png = burst_frames[-1]
+            if is_assert and not use_grid:
+                if self.settle_enabled and settle_window:
+                    chosen, dynamic = sample_then_frames(settle_window)
+                    if chosen:
+                        if dynamic and len(chosen) > 1:
+                            burst_frames = chosen           # 动态 → 首/中/稳 3 帧
+                        screenshot_png = chosen[-1]         # 稳态帧为权威当前截图
                         step_record["screenshot_png"] = screenshot_png
-                except Exception as e:
-                    log.debug("[Turn %d] 断言多帧抓取失败，退回单帧: %s", turn, e)
-                    burst_frames = []
+                        log.info("[Turn %d] 断言采样: %s (%d 帧)",
+                                 turn, "动态" if dynamic else "静态", len(chosen))
+                elif self.assert_burst_frames > 1:
+                    try:
+                        burst_frames = self.platform.screenshot_burst(
+                            count=self.assert_burst_frames, interval=0.25)
+                        if burst_frames:
+                            screenshot_png = burst_frames[-1]
+                            step_record["screenshot_png"] = screenshot_png
+                    except Exception as e:
+                        log.debug("[Turn %d] 断言多帧抓取失败，退回单帧: %s", turn, e)
+                        burst_frames = []
 
             # ── 3. Think — LLM 决策（带 step 上下文 + planner hint + retry_feedback）──
             t_llm = time.time()

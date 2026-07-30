@@ -93,6 +93,14 @@ DEFAULT_CONFIG = {
     # 让「出现过又消失」的 toast/banner 等瞬态 UI 可被判断。<=1 = 关闭（只发单帧）。
     # 配合 mjpeg 时几乎零成本；无 mjpeg 时断言 step 会多截几张图。
     "AGENT_ASSERT_BURST_FRAMES": "3",
+    # settle 闸（性能优化 Phase 1，见 docs/perf-plan.md）：截图前先等屏幕"加载完/稳定"
+    # 再决策/采样——全程零 LLM（visual_diff 帧稳 + 状态栏噪声 mask + 超时兜底）。
+    # When 用稳态 1 帧；Then 采首/中/稳三点 + 2% 路由（静态→1 图，动态→3 图）。
+    # 默认开；关掉则退回"每 turn 单帧截图 + 无条件多帧断言"的旧路径。
+    "AGENT_SETTLE_ENABLED": "true",
+    "AGENT_SETTLE_TIMEOUT": "6.0",      # settle 轮询最长等待秒数（到时回退同步判）
+    "AGENT_SETTLE_INTERVAL": "0.3",     # settle 轮询帧间隔秒
+    "AGENT_SETTLE_STABLE_FRAMES": "2",  # 连续几对相邻帧"没动"判定稳定
     # 连续多少次 no_effect 触发元素定位兜底（见 #2）；仅当配了
     # LLM_MODEL_LOCATOR 才生效。到网格兜底(3 次)之前先试定位模型精定位。
     "AGENT_LOCATE_RETRY": "2",
@@ -255,6 +263,10 @@ def load_config() -> dict:
             "max_steps": int(values["AGENT_MAX_STEPS"]),
             "step_delay": float(values["AGENT_STEP_DELAY"]),
             "assert_burst_frames": int(values.get("AGENT_ASSERT_BURST_FRAMES") or 1),
+            "settle_enabled": values.get("AGENT_SETTLE_ENABLED", "true").lower() == "true",
+            "settle_timeout": float(values.get("AGENT_SETTLE_TIMEOUT") or 6.0),
+            "settle_interval": float(values.get("AGENT_SETTLE_INTERVAL") or 0.3),
+            "settle_stable_frames": int(values.get("AGENT_SETTLE_STABLE_FRAMES") or 2),
             "locate_retry": int(values.get("AGENT_LOCATE_RETRY") or 2),
             "split_act_check": values.get("AGENT_SPLIT_ACT_CHECK", "false").lower() == "true",
         },
