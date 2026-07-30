@@ -77,7 +77,16 @@
 
 ---
 
-## Phase 4. Then 异步（延迟软断言 + scenario 流水线）【重点】
+## Phase 4. Then 异步（延迟软断言 + scenario 流水线）【重点】  ✅ 已实现（默认关 AGENT_ASYNC_ASSERTS）
+> **已实现**：断言步冻采样帧 → 有界池（AGENT_ASYNC_WORKERS）异步判 → **乐观继续**跑后续步；
+> 每个终态出口（pass/尾块/同步 fail/no-progress/max_steps/loop-bottom）都登记 provisional 并
+> `return`，**从不阻塞在自己的断言上**。`finalize_pending()`（3 个 worker 路径末尾 + finally）
+> await 全部在飞判定、逐 case 合并：**最早 fail 定失败点、其后步 skip**；future/校验失败→冻帧上
+> 同步重判（保留 reject-retry），仍失败→保守 fail。结果 dict **by-ref** 存进 results（finalize
+> 就地改写 overall，summary 才对）。实机分片验证：3 case 全 defer→provisional pass→立刻跑下一
+> case（跨 case 重叠）→ 末尾收尾把 2 个翻成 fail（含 BUG-025），summary 1/3，0 provisional 泄漏。
+> **已知限制**：provisional 结果不跑 inline heal（收尾翻 fail 的 case 不自动 healer 分类）；
+> per-case 日志标「（异步待收尾）」。默认关。
 - 动机：一个 scenario 结尾常是一串 Then，设备要卡等每个 ~11s 裁决才收尾。异步后：抓帧 → 甩异步池判 → 设备**立刻领下一个 case**，把"末尾验证延迟"和"下一个 case 的启动/登录"重叠掉。
 - 前提：断言输入（P1-B 采样帧）在 settle 那刻**冻结**，验证何时返回都不影响正确性。
 - 机制：Then 处 settle → 冻采样帧 → enqueue 异步验证任务 `{step_idx, frames, assertion, evidence_anchors}` → 主流程继续；有界异步池跑 brain 验证；收尾报告前 `await` 所有待裁决，按 step_idx 回填。

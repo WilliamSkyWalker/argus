@@ -1599,7 +1599,8 @@ def _run_sequential(cfg: dict, test_cases: list[str], url: str | None,
 
     results = []
     current_platform = cfg.get("platform", "")
-    for i, raw_tc in enumerate(test_cases):
+    try:
+      for i, raw_tc in enumerate(test_cases):
         tc = _apply_account_placeholders(raw_tc, account) if account else raw_tc
         # Platform tag mismatch → skip this case before running pm_clear etc
         skip_reason = _should_skip_by_platform(tc, current_platform) or _should_skip_by_automation(tc)
@@ -1649,11 +1650,15 @@ def _run_sequential(cfg: dict, test_cases: list[str], url: str | None,
 
         log.info("[%d/%d] 开始执行: %s", i + 1, len(test_cases), tc[:60])
         result = agent.run(tc)
-        log.info("[%d/%d] 结果: %s", i + 1, len(test_cases), result.get("result", "?"))
-        # fail/timeout/error → Healer 根因分析（失败不影响主流程）
-        _maybe_heal(agent, tc, result)
-        results.append({"case": tc, **result})
-
+        log.info("[%d/%d] 结果: %s%s", i + 1, len(test_cases), result.get("result", "?"), "（异步待收尾）" if result.get("_provisional") else "")
+        result["case"] = tc
+        # 存 by-ref（异步 finalize 会就地改写 overall）；provisional 结果 overall 未定，
+        # inline heal 只对已定案的跑。
+        if not result.get("_provisional"):
+            _maybe_heal(agent, tc, result)
+        results.append(result)
+    finally:
+        agent.finalize_pending()  # 收尾 await 在飞异步断言（finally：abort 也不丢在飞判定）
     return results
 
 
@@ -1902,8 +1907,7 @@ def _run_dispatched_devices(cfg: dict, test_cases: list[str],
                          n_done, total, worker_idx, device, tc[:60])
                 try:
                     result = agent.run(tc)
-                    log.info("[%d/%d Worker %d] 结果: %s",
-                             n_done, total, worker_idx, result.get("result", "?"))
+                    log.info("[%d/%d Worker %d] 结果: %s%s", n_done, total, worker_idx, result.get("result", "?"), "（异步待收尾）" if result.get("_provisional") else "")
                 except Exception as e:
                     # exc_info so a framework crash (vs a test fail) leaves a stack
                     # in the log instead of a bare message — a bare "division by
@@ -1913,11 +1917,15 @@ def _run_dispatched_devices(cfg: dict, test_cases: list[str],
                     result = {"result": "error", "reason": str(e),
                               "steps": 0, "duration": 0, "steps_detail": []}
 
-                # fail/timeout/error → Healer 根因分析（失败不影响主流程）
-                _maybe_heal(agent, tc, result)
+                # fail/timeout/error → Healer 根因分析（失败不影响主流程）。
+                # 异步 provisional 结果 overall 未定（收尾 finalize 才定）→ inline heal 只对已定案跑。
+                if not result.get("_provisional"):
+                    _maybe_heal(agent, tc, result)
 
                 with results_lock:
-                    results[idx] = {"case": tc, **result, "device": device}
+                    result["case"] = tc
+                    result["device"] = device
+                    results[idx] = result   # by-ref：异步 finalize 就地改写 overall
             finally:
                 # requeue（如有）发生在 try 内、此减一之前，因此任何时刻
                 # 「队列空 且 busy==0」⇒ 不会再有新 case，其他 worker 可安全退出
@@ -1934,6 +1942,13 @@ def _run_dispatched_devices(cfg: dict, test_cases: list[str],
                 f.result()
             except Exception as e:
                 log.error("Worker 异常退出: %s", e)
+
+    # 收尾：await 各 Agent 在飞异步断言（Phase 4），必须在结果用于报告前（finally 语义）
+    for ag in agents:
+        try:
+            ag.finalize_pending()
+        except Exception as e:
+            log.error("finalize_pending 异常: %s", e)
 
     # Teardown agents
     for ag in agents:
@@ -2025,10 +2040,12 @@ def _run_concurrent(cfg: dict, test_cases: list[str], url: str | None,
                 idx = counter[0]
             log.info("[%d/%d] 开始执行: %s", idx, total, tc[:60])
             result = agent.run(tc)
-            log.info("[%d/%d] 结果: %s", idx, total, result.get("result", "?"))
-            # fail/timeout/error → Healer 根因分析（失败不影响主流程）
-            _maybe_heal(agent, tc, result)
-            return {"case": tc, **result}
+            log.info("[%d/%d] 结果: %s%s", idx, total, result.get("result", "?"), "（异步待收尾）" if result.get("_provisional") else "")
+            # fail/timeout/error → Healer（失败不影响主流程）。异步 provisional 未定案 → 跳过 inline heal
+            if not result.get("_provisional"):
+                _maybe_heal(agent, tc, result)
+            result["case"] = tc
+            return result   # by-ref：异步 finalize 就地改写 overall
         finally:
             # Return agent to pool
             with pool_lock:
@@ -2054,6 +2071,13 @@ def _run_concurrent(cfg: dict, test_cases: list[str], url: str | None,
                     "duration": 0,
                     "steps_detail": [],
                 }
+
+    # 收尾：await 各 Agent 在飞异步断言（Phase 4），必须在结果用于报告前
+    for agent in agents:
+        try:
+            agent.finalize_pending()
+        except Exception as e:
+            log.error("finalize_pending 异常: %s", e)
 
     # Teardown all agents
     for agent in agents:

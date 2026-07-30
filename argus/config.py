@@ -109,6 +109,11 @@ DEFAULT_CONFIG = {
     # 调用逐条判，一次推进多步——省调用次数。**默认关**（安全，验证充分再开）；开启后
     # 反偷懒硬墙逐条套用 + 去重 + 负向断言加压（见 step_validator.validate_assertion_batch）。
     "AGENT_MERGE_ASSERTS": "false",
+    # Then 异步（性能优化 Phase 4）：断言步不阻塞——冻结采样帧、丢有界异步池判、乐观继续跑
+    # 后续步；收尾 finally 里 await 全部在飞判定并按 step 序合并（最早 fail 定 case 失败点、
+    # 其后步作废/skip）。**默认关**（改动 run 主循环 + 收尾，充分验证再开）。
+    "AGENT_ASYNC_ASSERTS": "false",
+    "AGENT_ASYNC_WORKERS": "4",     # 异步断言判定的有界并发数（每 Agent）
     # 连续多少次 no_effect 触发元素定位兜底（见 #2）；仅当配了
     # LLM_MODEL_LOCATOR 才生效。到网格兜底(3 次)之前先试定位模型精定位。
     "AGENT_LOCATE_RETRY": "2",
@@ -277,6 +282,8 @@ def load_config() -> dict:
             "settle_stable_frames": int(values.get("AGENT_SETTLE_STABLE_FRAMES") or 2),
             "wait_max_s": float(values.get("AGENT_WAIT_MAX_S") or 45.0),
             "merge_asserts": values.get("AGENT_MERGE_ASSERTS", "false").lower() == "true",
+            "async_asserts": values.get("AGENT_ASYNC_ASSERTS", "false").lower() == "true",
+            "async_workers": int(values.get("AGENT_ASYNC_WORKERS") or 4),
             "locate_retry": int(values.get("AGENT_LOCATE_RETRY") or 2),
             "split_act_check": values.get("AGENT_SPLIT_ACT_CHECK", "false").lower() == "true",
         },

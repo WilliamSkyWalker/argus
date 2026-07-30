@@ -189,6 +189,13 @@ class Agent:
         self.merge_asserts = bool(cfg["agent"].get("merge_asserts", False))
         if self.merge_asserts:
             log.info("连续断言合并已启用（Phase 3）")
+        # Then 异步（Phase 4，默认关）：断言步冻帧丢异步池、乐观继续；收尾 await 合并。
+        self.async_asserts = bool(cfg["agent"].get("async_asserts", False))
+        self._async_workers = max(1, int(cfg["agent"].get("async_workers", 4)))
+        self._async_pool = None          # 懒建（首次 defer 时）
+        self._pending: list[dict] = []   # 待收尾的异步断言（跨 case 累积，finalize 清空）
+        if self.async_asserts:
+            log.info("Then 异步已启用（Phase 4）: workers=%d", self._async_workers)
         if self.settle_enabled:
             log.info("settle 闸已启用: timeout=%.1fs interval=%.2fs stable=%d",
                      self.settle_timeout, self.settle_interval, self.settle_stable_frames)
@@ -275,6 +282,26 @@ class Agent:
         act_fails = 0  # 分层执行:本操作步连续失败次数（达 ESCAPE_ACTION_FAILS 逃生回大 LLM）
         batch_done = False  # 分层执行:本操作步是否已批量执行过(执行后→下一轮走 brain 验证)
 
+        # ── Then 异步（Phase 4）per-case state ──
+        deferred_items: list[dict] = []      # 本 case 已 defer 的异步断言块（future + 占位记录）
+        sync_fail_idx: int | None = None     # 若有同步步失败，记其序号（收尾与异步 fail 取最早）
+        sync_fail_reason = ""
+
+        def _register_provisional():
+            """把本 case 收成 provisional 结果登记到 self._pending —— 收尾 finalize_pending
+            会 await 在飞异步断言并按 step 序合并（最早 fail 定失败点，overall 届时重算）。"""
+            case_result = self._build_result(
+                "pass", "async asserts pending", turn, start_time,
+                steps_detail, scenario_steps, step_status)
+            case_result["_provisional"] = True   # 收尾 finalize 前 overall 未定
+            self._pending.append({
+                "result": case_result, "items": deferred_items,
+                "step_status": step_status, "n_steps": n_steps,
+                "sync_fail_idx": sync_fail_idx, "sync_fail_reason": sync_fail_reason,
+                "completed_evidence": completed_evidence,
+            })
+            return case_result
+
         # turn = LLM 调用次数（含被 reject 的、含成功的 sub-action）。
         # 主收敛：per-step 的 MAX_TURNS_WITHOUT_PROGRESS（连续无推进即 fail）。
         # self.max_steps 为可选绝对兜底：AGENT_MAX_STEPS<=0 时禁用（仅靠 per-step 上限收敛）。
@@ -287,6 +314,10 @@ class Agent:
                 for i in step_status:
                     if step_status[i] == "pending":
                         step_status[i] = "skip"
+                if deferred_items:
+                    sync_fail_idx = current_step_index
+                    sync_fail_reason = f"max_steps {self.max_steps} reached"
+                    return _register_provisional()
                 return self._build_result(
                     "timeout", f"max_steps {self.max_steps} reached",
                     turn, start_time, steps_detail, scenario_steps, step_status,
@@ -309,6 +340,10 @@ class Agent:
                 step_status[current_step_index] = "fail"
                 for i in range(current_step_index + 1, n_steps + 1):
                     step_status[i] = "skip"
+                if deferred_items:
+                    sync_fail_idx = current_step_index
+                    sync_fail_reason = msg
+                    return _register_provisional()
                 return self._build_result(
                     "fail", f"step {current_step_index} no-progress: {msg}",
                     turn, start_time, steps_detail, scenario_steps, step_status,
@@ -322,6 +357,10 @@ class Agent:
                 step_status[current_step_index] = "fail"
                 for i in range(current_step_index + 1, n_steps + 1):
                     step_status[i] = "skip"
+                if deferred_items:
+                    sync_fail_idx = current_step_index
+                    sync_fail_reason = msg
+                    return _register_provisional()
                 return self._build_result(
                     "fail", f"step {current_step_index} timeout: {msg}",
                     turn, start_time, steps_detail, scenario_steps, step_status,
@@ -334,6 +373,10 @@ class Agent:
                 step_status[current_step_index] = "fail"
                 for i in range(current_step_index + 1, n_steps + 1):
                     step_status[i] = "skip"
+                if deferred_items:
+                    sync_fail_idx = current_step_index
+                    sync_fail_reason = msg
+                    return _register_provisional()
                 return self._build_result(
                     "fail", msg, turn, start_time, steps_detail, scenario_steps, step_status,
                 )
@@ -434,6 +477,55 @@ class Agent:
                     time.sleep(self.step_delay)
                     continue
                 log.info("[Turn %d] 操作步 %d 拆步为空，回退 brain 逐步决策", turn, idx)
+
+            # ── Then 异步 defer（Phase 4，gated AGENT_ASYNC_ASSERTS）：断言步冻采样帧、丢有界
+            #    异步池判、**乐观继续**跑后续步（不等结果）；收尾 finally 里 await 合并（最早 fail
+            #    定失败点、其后步作废）。优先于同步合并/逐步。──
+            if (self.async_asserts
+                    and 1 <= current_step_index <= len(assertion_flags)
+                    and assertion_flags[current_step_index - 1]):
+                _blk = _consecutive_assert_block(assertion_flags, current_step_index)
+                if _blk:
+                    _ai, _aj = _blk
+                    if self.settle_enabled and settle_window:
+                        _frames, _ = sample_then_frames(settle_window)
+                    else:
+                        _frames = [raw_bytes]
+                    _assertions = [{"index": k, "text": scenario_steps[k - 1]}
+                                   for k in range(_ai, _aj + 1)]
+                    _ev_ctx = "；".join(e for e in completed_evidence if e)
+                    _fut = self._ensure_async_pool().submit(
+                        self.brain.verify_assertions_batch, _frames, _assertions, _ev_ctx, "")
+                    _recs: dict[int, dict] = {}
+                    for k in range(_ai, _aj + 1):
+                        while len(completed_evidence) < k:
+                            completed_evidence.append("")
+                        step_status[k] = "pending"
+                        _rec = {"screenshot_png": screenshot_png, "step_index": k,
+                                "observation": "[异步断言 待判定]",
+                                "step_progress": {"current_step_index": k,
+                                                  "current_step_status": "pending",
+                                                  "evidence": "", "fail_reason": ""},
+                                "duration": 0.0}
+                        steps_detail.append(_rec)
+                        _recs[k] = _rec
+                    deferred_items.append({"block": (_ai, _aj), "assertions": _assertions,
+                                           "frames": _frames, "ev_ctx": _ev_ctx,
+                                           "future": _fut, "records": _recs})
+                    log.info("[Turn %d] 异步断言 defer step %d-%d（乐观继续）", turn, _ai, _aj)
+                    if _aj >= n_steps:
+                        return _register_provisional()   # 尾块 → case body 结束，provisional 返回
+                    current_step_index = _aj + 1
+                    sub_actions_in_step = 0
+                    rejects_in_step = 0
+                    turns_without_progress = 0
+                    wait_elapsed_in_step = 0.0
+                    locate_attempts_in_step = 0
+                    act_fails = 0
+                    batch_done = False
+                    retry_feedback = ""
+                    time.sleep(self.step_delay)
+                    continue
 
             # ── 连续断言合并（Phase 3，gated AGENT_MERGE_ASSERTS）：当前是断言步且后面还有
             #    连续断言步（同屏、中间无操作步）→ 一次调用逐条判 + 逐条硬墙 + 去重 + 负向加压，
@@ -678,6 +770,8 @@ class Agent:
 
                 if llm_step_idx >= n_steps:
                     # 最后一个 step 也过了 — 整 case 成功
+                    if deferred_items:
+                        return _register_provisional()  # 有在飞异步断言 → 收尾合并定 overall
                     return self._build_result(
                         "pass", "all steps passed",
                         turn, start_time, steps_detail, scenario_steps, step_status,
@@ -702,6 +796,11 @@ class Agent:
                 log.warning("[Turn %d] ❌ Step %d FAIL: %s", turn, llm_step_idx, fail_reason)
                 step_record["duration"] = time.time() - turn_start
                 steps_detail.append(step_record)
+                if deferred_items:
+                    # 有在飞异步断言 → 记本同步 fail，收尾按最早 fail 合并（可能异步 fail 更早）
+                    sync_fail_idx = llm_step_idx
+                    sync_fail_reason = fail_reason
+                    return _register_provisional()
                 return self._build_result(
                     "fail", f"step {llm_step_idx} fail: {fail_reason}",
                     turn, start_time, steps_detail, scenario_steps, step_status,
@@ -779,6 +878,10 @@ class Agent:
         for i in step_status:
             if step_status[i] == "pending":
                 step_status[i] = "skip"
+        if deferred_items:
+            sync_fail_idx = current_step_index
+            sync_fail_reason = "loop exited unexpectedly"
+            return _register_provisional()
         return self._build_result(
             "timeout", "loop exited unexpectedly",
             turn, start_time, steps_detail, scenario_steps, step_status,
@@ -844,6 +947,105 @@ class Agent:
                 "pass", "all steps passed (merged asserts)",
                 turn, start_time, steps_detail, scenario_steps, step_status))
         return ("advance", j)
+
+    # ── Then 异步（Phase 4）：有界池 + 收尾合并 ──────────────────────────────
+    def _ensure_async_pool(self):
+        if self._async_pool is None:
+            from concurrent.futures import ThreadPoolExecutor
+            self._async_pool = ThreadPoolExecutor(
+                max_workers=self._async_workers, thread_name_prefix="argus-assert")
+        return self._async_pool
+
+    def finalize_pending(self, timeout_s: float = 180.0) -> None:
+        """收尾：await 所有在飞异步断言判定，逐 case 合并进结果（Phase 4）。
+
+        **必须在写报告前调用**，放在 finally 保证 abort 也不丢在飞判定。幂等（无 pending
+        空转）。每个 case 内按 step 序合并：最早 fail 定失败点、其后步 skip；全 pass 则 pass。
+        就地改写各 case 的 result dict。
+        """
+        if not self._pending:
+            return
+        pend, self._pending = self._pending, []
+        log.info("异步收尾: 合并 %d 个 case 的在飞断言判定…", len(pend))
+        for p in pend:
+            try:
+                self._finalize_case(p, timeout_s)
+            except Exception as e:
+                log.error("finalize 某 case 异常: %s", e)
+
+    def _finalize_case(self, p: dict, timeout_s: float) -> None:
+        case_result = p["result"]
+        step_status = p["step_status"]
+        n_steps = p["n_steps"]
+        completed = p["completed_evidence"]
+        reason_by_idx: dict[int, str] = {}
+        for item in p["items"]:
+            assertions = item["assertions"]
+            frames = item["frames"]
+            ev_ctx = item["ev_ctx"]
+            # 1) 取异步结果 → 校验 → 冻帧上同步重判（保留 reject-retry 纪律，全在冻帧上）
+            try:
+                results = item["future"].result(timeout=timeout_s)
+            except Exception as e:
+                log.warning("异步断言 future 失败: %s", e)
+                results = None
+            reject_n = 0
+            while True:
+                ok, reason = (validate_assertion_batch(results, assertions)
+                              if results is not None else (False, "无判定结果"))
+                if ok:
+                    break
+                reject_n += 1
+                if reject_n > MAX_REJECTS_PER_STEP:
+                    results = None          # 放弃 → 下面保守判 fail
+                    break
+                fb = reason if results is not None else ""
+                results = self.brain.verify_assertions_batch(frames, assertions, ev_ctx, fb)
+            by_id: dict[int, dict] = {}
+            if results is not None:
+                for r in results:
+                    try:
+                        by_id[int(r["id"])] = r
+                    except (TypeError, ValueError, KeyError):
+                        pass
+            # 2) 写入 step_status + 占位记录
+            for k in range(item["block"][0], item["block"][1] + 1):
+                r = by_id.get(k)
+                if r is None:
+                    verdict, ev, fr = "fail", "", "异步断言无法判定（LLM/解析/校验均失败）→ 保守判 fail"
+                else:
+                    verdict = r.get("verdict") if r.get("verdict") in ("pass", "fail") else "fail"
+                    ev = r.get("evidence", "")
+                    fr = r.get("fail_reason", "")
+                step_status[k] = verdict
+                reason_by_idx[k] = fr
+                rec = item["records"].get(k)
+                if rec is not None:
+                    rec["observation"] = f"[异步断言] {ev or fr}"
+                    rec["step_progress"] = {"current_step_index": k, "current_step_status": verdict,
+                                            "evidence": ev, "fail_reason": fr}
+                if verdict == "pass":
+                    while len(completed) < k:
+                        completed.append("")
+                    completed[k - 1] = ev
+        # 3) 最早 fail 定失败点（含 sync fail），其后步作废
+        fails = [i for i in range(1, n_steps + 1) if step_status.get(i) == "fail"]
+        if p.get("sync_fail_idx"):
+            fails.append(p["sync_fail_idx"])
+            reason_by_idx.setdefault(p["sync_fail_idx"], p.get("sync_fail_reason", ""))
+        if not fails:
+            case_result["result"] = "pass"
+            case_result["reason"] = "all steps passed (async asserts)"
+        else:
+            ef = min(fails)
+            for i in range(ef + 1, n_steps + 1):
+                if step_status.get(i) != "skip":
+                    step_status[i] = "skip"          # 作废：基于"前面 then 假设通过"跑的
+            case_result["result"] = "fail"
+            case_result["reason"] = f"step {ef} fail: {reason_by_idx.get(ef, '')}"
+        case_result["step_status"] = step_status
+        case_result.pop("_provisional", None)   # 定案，去掉 provisional 标记
+        log.info("异步收尾: case → %s (%s)", case_result["result"], case_result["reason"][:70])
 
     def _run_action_step(self, act: dict, before_bytes: bytes,
                          screen_size: tuple[int, int]) -> tuple[str, bytes, str]:
