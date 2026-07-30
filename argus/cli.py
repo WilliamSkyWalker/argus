@@ -1586,6 +1586,21 @@ def _maybe_heal(agent, case_text: str, result: dict) -> None:
         log.warning("Healer 分析失败（不影响测试结果）: %s", e)
 
 
+def _heal_after_finalize(agent, results) -> None:
+    """异步 finalize（Phase 4）后，给收尾才翻成 fail 的 case 补跑 healer。
+
+    provisional 结果在 run 期跳过了 inline heal（overall 未定）；finalize 定案后这里补上。
+    _maybe_heal 只用 result 数据 + LLM client、不碰 live device，故收尾期补跑安全。
+    `"heal_report" not in r` 保证已 inline heal 过的同步 fail 不重复跑。
+    """
+    if agent is None:
+        return
+    for r in (results or []):
+        if (isinstance(r, dict) and r.get("result") in ("fail", "timeout", "error")
+                and "heal_report" not in r and r.get("case")):
+            _maybe_heal(agent, r["case"], r)
+
+
 def _run_sequential(cfg: dict, test_cases: list[str], url: str | None,
                     account: dict | None = None) -> list[dict]:
     """Run test cases sequentially with a single Agent.
@@ -1659,6 +1674,7 @@ def _run_sequential(cfg: dict, test_cases: list[str], url: str | None,
         results.append(result)
     finally:
         agent.finalize_pending()  # 收尾 await 在飞异步断言（finally：abort 也不丢在飞判定）
+    _heal_after_finalize(agent, results)   # 收尾翻 fail 的 case 补 healer
     return results
 
 
@@ -1949,6 +1965,7 @@ def _run_dispatched_devices(cfg: dict, test_cases: list[str],
             ag.finalize_pending()
         except Exception as e:
             log.error("finalize_pending 异常: %s", e)
+    _heal_after_finalize(agents[0] if agents else None, results)  # 收尾翻 fail 的补 healer
 
     # Teardown agents
     for ag in agents:
@@ -2078,6 +2095,7 @@ def _run_concurrent(cfg: dict, test_cases: list[str], url: str | None,
             agent.finalize_pending()
         except Exception as e:
             log.error("finalize_pending 异常: %s", e)
+    _heal_after_finalize(agents[0] if agents else None, results)  # 收尾翻 fail 的补 healer
 
     # Teardown all agents
     for agent in agents:

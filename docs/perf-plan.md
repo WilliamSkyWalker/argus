@@ -52,11 +52,11 @@
 
 ---
 
-## Phase 3. Then-And 合并（连续断言块 → 1 次调用）  ✅ 已实现（默认关 AGENT_MERGE_ASSERTS）
+## Phase 3. Then-And 合并（连续断言块 → 1 次调用）  ✅ 已实现（默认开 AGENT_MERGE_ASSERTS）
 > **已实现**：连续同屏断言块检测 + `brain.verify_assertions_batch`（逐条 verdict+evidence+where）
 > + `step_validator.validate_assertion_batch`（逐条硬墙 + 去重闸 + 负向断言 absence 加压）+ 一次
 > 推进多步；任一 fail 即停并终止 scenario（保守）。实机验证：base-001 的 Then/And/And/But 一个
-> turn 判完，逐条独立 evidence、step5 抓到真实 fail（未鲁棒图章）。**默认关**，验证充分再开。
+> turn 判完，逐条独立 evidence、step5 抓到真实 fail（未鲁棒图章）。**默认开**。
 > **待办（红线 5/6，降优先级）**：OCR 确定性交叉核验、最弱条对抗复核。折中档（负向/P0 强制单独）
 > 暂未做——当前对负向断言是"prompt 加压 + validator absence 校验"而非排除。
 
@@ -77,7 +77,7 @@
 
 ---
 
-## Phase 4. Then 异步（延迟软断言 + scenario 流水线）【重点】  ✅ 已实现（默认关 AGENT_ASYNC_ASSERTS）
+## Phase 4. Then 异步（延迟软断言 + scenario 流水线）【重点】  ✅ 已实现（默认开 AGENT_ASYNC_ASSERTS）
 > **已实现**：断言步冻采样帧 → 有界池（AGENT_ASYNC_WORKERS）异步判 → **乐观继续**跑后续步；
 > 每个终态出口（pass/尾块/同步 fail/no-progress/max_steps/loop-bottom）都登记 provisional 并
 > `return`，**从不阻塞在自己的断言上**。`finalize_pending()`（3 个 worker 路径末尾 + finally）
@@ -85,8 +85,8 @@
 > 同步重判（保留 reject-retry），仍失败→保守 fail。结果 dict **by-ref** 存进 results（finalize
 > 就地改写 overall，summary 才对）。实机分片验证：3 case 全 defer→provisional pass→立刻跑下一
 > case（跨 case 重叠）→ 末尾收尾把 2 个翻成 fail（含 BUG-025），summary 1/3，0 provisional 泄漏。
-> **已知限制**：provisional 结果不跑 inline heal（收尾翻 fail 的 case 不自动 healer 分类）；
-> per-case 日志标「（异步待收尾）」。默认关。
+> **healer**：provisional 时跳过 inline heal，finalize 定案后由 _heal_after_finalize 补跑（3 路径），
+> 收尾翻 fail 的 case 仍有根因分类。per-case 日志标「（异步待收尾）」。默认开。
 - 动机：一个 scenario 结尾常是一串 Then，设备要卡等每个 ~11s 裁决才收尾。异步后：抓帧 → 甩异步池判 → 设备**立刻领下一个 case**，把"末尾验证延迟"和"下一个 case 的启动/登录"重叠掉。
 - 前提：断言输入（P1-B 采样帧）在 settle 那刻**冻结**，验证何时返回都不影响正确性。
 - 机制：Then 处 settle → 冻采样帧 → enqueue 异步验证任务 `{step_idx, frames, assertion, evidence_anchors}` → 主流程继续；有界异步池跑 brain 验证；收尾报告前 `await` 所有待裁决，按 step_idx 回填。
