@@ -51,12 +51,12 @@ Argus = 视觉驱动 AI QA agent，替代人工测试。喂 `.feature`(Gherkin) 
 
 ## Claude Code 插件（`plugins/`，本仓同时是 marketplace）
 根 `.claude-plugin/marketplace.json` + `plugins/argus-{device,runner}/`。装法 `/plugin marketplace add WilliamSkyWalker/argus`。
-- `argus-device`：MCP profile=device + skill `argus-device` + `/argus-doctor`。无 LLM key 也能用，卖点是"Claude 自己当 brain 手动操设备"。
-- `argus-runner`：profile=full + skill `argus-drive`(拷贝自 `.claude/skills/`，**改一份要同步另一份**) + `/argus-doctor --profile full`。
+- **只有 `argus-device` 一个插件**（MCP profile=device + skill `argus-device` + `/argus-doctor`）。定位：Claude 自己当 brain 手动操设备，无 LLM key 也能用。
+- 跑用例/出报告**刻意不做成插件**（要 LLM key + `tests/`）——走 clone 后的 `argus run` 或 `/argus-drive` skill。曾有过 `argus-runner` 插件，已按"只留 Claude 当 brain 那条"删掉。
 - **插件缓存只拷插件目录自身**(`../..` 引用不到 argus 包)，所以 `scripts/argus_mcp.py` 运行时按 `ARGUS_HOME` → cwd 往上找 → 已装包 三级解析；两个插件的 `scripts/*.py` **内容必须逐字节一致**。
 - 对外文案(plugin.json/README/argus-device skill/命令)一律**英文**(插件目录面向全球用户)；`.claude-plugin/marketplace.json` 的 plugin `source` 必须写显式 `./plugins/<name>`(`metadata.pluginRoot`+裸 source 当前 CC 版本不支持，装不上)。
 - 真机验证插件（当前会话装完也拿不到新 MCP tool，必须新会话）：`cd <非 argus 目录> && ARGUS_HOME=<repo> claude -p "<任务>" --plugin-dir <repo>/plugins/argus-device --allowedTools "mcp__plugin_argus-device_argus-device__device_screenshot,…"` —— 插件 MCP tool 名格式是 `mcp__plugin_<插件名>_<server名>__<tool>`。
-- 改完必跑 `claude plugin validate .` + `plugins/argus-device` + `plugins/argus-runner`(它连 SKILL.md frontmatter 一起校验：**英文 description 里有 `: ` 必须加引号**，否则 YAML 解析失败、metadata 静默丢空)。
+- 改完必跑 `claude plugin validate .` + `plugins/argus-device`(它连 SKILL.md frontmatter 一起校验：**英文 description 里有 `: ` 必须加引号**，否则 YAML 解析失败、metadata 静默丢空)。
 - 提交到 Anthropic 官方目录**不走 PR**(`claude-plugins-community` 的 PR 自动关)，走表单 `clau.de/plugin-directory-submission`。
 
 ## 用例格式

@@ -38,5 +38,5 @@ The device must be **unlocked with the screen on** (a locked screen can't be cap
 
 A single long-lived Appium session is reused across processes, so turn-by-turn driving does not rebuild the connection each time. Everything runs on Appium primitives: **no adb for driving** (cloud device farms don't expose adb) and **no UI tree** (Flutter and custom-drawn UIs have nothing in it).
 
-## Relationship to argus-runner
-`argus-runner` is the other plugin in this marketplace: it runs `.feature`/`.md` suites as batch regression and emits HTML reports, and needs an LLM key plus a `tests/` directory. Its MCP server is a **superset** of this one, so installing both gives you duplicate tools — if you install the runner you don't need this plugin.
+## What this plugin is not
+It does not run test suites. Feeding `.feature`/`.md` cases to Argus's own agent loop — batch regression, multi-device parallelism, HTML reports — needs an LLM API key and a `tests/` directory, so it lives in the [Argus repo](https://github.com/WilliamSkyWalker/argus) itself (`argus run`), not here. This plugin is deliberately the zero-config half: **you** are the brain.

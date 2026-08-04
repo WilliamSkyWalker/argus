@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dependency check for the argus plugins (identical copy in argus-device and argus-runner — keep both in sync).
+"""Dependency check for the argus-device plugin.
 
 A plugin cannot install system dependencies (Node, the Appium server and its drivers,
 Xcode, ANDROID_HOME, Python packages), so it is far better to state everything that is
@@ -8,7 +8,7 @@ false failure.
 
 Usage:
     python3 doctor.py                 # device-driving profile (argus-device)
-    python3 doctor.py --profile full  # also check .env / LLM key / tests dir (argus-runner)
+    python3 doctor.py --profile full  # also check .env / LLM key / tests dir (running suites)
     python3 doctor.py --json
 
 Exit code: 0 = nothing blocking; 1 = at least one blocking item (warnings don't count).

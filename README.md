@@ -180,22 +180,20 @@ Start it with `python3 -m argus.mcp.server`. The repo ships a `.mcp.json`, so af
 
 ## Claude Code plugins
 
-This repo is also a **plugin marketplace** (`.claude-plugin/marketplace.json`), shipping two plugins under [`plugins/`](./plugins):
+This repo is also a **plugin marketplace** (`.claude-plugin/marketplace.json`), shipping [`argus-device`](./plugins/argus-device) — **Claude Code itself as the brain**, with Argus providing the eyes and hands:
 
 ```
 /plugin marketplace add WilliamSkyWalker/argus
-/plugin install argus-device@argus     # eyes + hands on a device (no LLM key needed)
-/plugin install argus-runner@argus     # run suites, emit HTML reports, /argus-drive
+/plugin install argus-device@argus
 ```
 
-| | [`argus-device`](./plugins/argus-device) | [`argus-runner`](./plugins/argus-runner) |
-|---|---|---|
-| For | letting Claude operate a device by hand | running `.feature`/`.md` suites |
-| MCP tools | 11 (device primitives + device management) | 19 (superset) |
-| Needs `LLM_API_KEY` | no | yes |
-| Skills | `argus-device` | `argus-drive` |
+- **skill `argus-device`** — the screenshot → decide → one-action loop, plus the anti-patterns that actually bite
+- **command `/argus-doctor`** — checks Python packages, Node + Appium server + drivers, adb + connected devices and simulators, printing the exact fix for anything missing
+- **MCP server** — 11 tools: `device_screenshot` `device_tap` `device_swipe` `device_input` `device_type_send` `device_key` `device_launch` `list_devices` `install_apk` `adb_reconnect` `setup_simulator`
 
-Both plugins locate Argus at runtime via `ARGUS_HOME` (a clone, no `pip install` needed) or an installed `argus` package — a plugin cache can't reach outside its own directory. Run **`/argus-doctor`** after installing: it checks Python packages, Node + Appium server + drivers, adb + connected devices, simulators, and (runner) the LLM key and `tests/` directory, printing the exact fix for anything missing.
+**No `LLM_API_KEY` needed** — the model you're already chatting with does the seeing and deciding (`ARGUS_MCP_PROFILE=device` trims the MCP surface to exactly that). The plugin locates Argus at runtime via `ARGUS_HOME` (a clone, no `pip install` needed) or an installed `argus` package, because a plugin cache can't reach outside its own directory.
+
+Running whole suites with reports is *not* in the plugin — that's `argus run` (LLM key, own agent loop) and the `/argus-drive` skill below, both driven from a clone of this repo.
 
 ## `/argus-drive` — Claude Code as the brain
 

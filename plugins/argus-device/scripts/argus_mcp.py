@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launcher for the argus MCP server (identical copy in argus-device and argus-runner — keep both in sync).
+"""Launcher for the argus MCP server used by the argus-device plugin.
 
 Why this shim exists: on install, Claude Code copies only the *plugin directory* into
 ``~/.claude/plugins/cache``. The argus Python package is not in there, and a plugin
