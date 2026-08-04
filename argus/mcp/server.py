@@ -812,15 +812,30 @@ def device_swipe(x1: int, y1: int, x2: int, y2: int,
     return {"ok": True, "from": [int(x1), int(y1)], "to": [int(x2), int(y2)]}
 
 
+# 支持的键名（Android；与 platforms/appium.py 的 key_map 同步）。纯数字 = 原始 keycode。
+_DEVICE_KEYS = ("enter", "delete", "tab", "space", "escape", "back", "home",
+                "recent", "wakeup", "power", "sleep", "menu")
+
+
 @mcp.tool()
 def device_key(key: str, serial: str | None = None) -> dict:
-    """按键：enter / delete / tab / space / escape / back / home / recent。
+    """按键：enter / delete / tab / space / escape / back / home / recent /
+    wakeup / power / sleep / menu，或直接给 Android keycode 数字（如 "24"）。
 
+    息屏时截图是全黑的（FLAG_SECURE），先 ``wakeup`` 再操作。
     注意：部分 Flutter App 里 back 会直接退出 App，关闭浮层/弹层优先用界面上的关闭控件。
+
+    不认识的键名**不会**假报成功 —— 直接返回 ``ok=False`` 并列出可用键名，
+    免得调用方把「按了但没反应」误判成「按到了但界面没变」。
     """
+    k = str(key).strip().lower()
+    if k not in _DEVICE_KEYS and not k.isdigit():
+        return {"ok": False, "key": key,
+                "error": f"unsupported key {key!r}",
+                "supported": list(_DEVICE_KEYS) + ["<android keycode digits>"]}
     plat = _get_android(serial)
-    plat.press_key(key)
-    return {"ok": True, "key": key}
+    plat.press_key(k)
+    return {"ok": True, "key": k}
 
 
 @mcp.tool()

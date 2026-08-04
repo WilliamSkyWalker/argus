@@ -394,9 +394,12 @@ class AppiumPlatform(Platform):
 
     def press_key(self, key: str) -> None:
         if self._os == "android":
+            # ⚠️ 改这里要同步 mcp/server.py 的 _DEVICE_KEYS（那边做入参校验）
             key_map = {
                 "enter": 66, "delete": 67, "tab": 61, "space": 62,
                 "escape": 111, "back": 4, "home": 3, "recent": 187,
+                # 电源/唤醒：设备息屏时截图全黑（FLAG_SECURE），先 wakeup 再干活
+                "wakeup": 224, "power": 26, "sleep": 223, "menu": 82,
             }
             code = key_map.get(key)
             if code is None:

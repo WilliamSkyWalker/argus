@@ -9,7 +9,7 @@ description: "Drive Android devices/emulators and iOS devices/simulators purely 
 
 ## Before you start (confirm, don't guess mid-run)
 - On first use or on any failure, run `/argus-doctor` — it settles the whole dependency chain in one shot.
-- **The device must be unlocked with the screen on.** A locked screen cannot be captured (FLAG_SECURE); it shows up as a black or failed screenshot.
+- **The device must be unlocked with the screen on.** A sleeping or locked screen cannot be captured (FLAG_SECURE) and comes back as an all-black screenshot. An all-black frame is a device-state problem, not a rendering one: send `device_key wakeup` and capture again. If it stays black, or a PIN/pattern lock screen appears, stop and ask the user to unlock it — do not attempt to unlock it yourself.
 - With more than one device, pass `serial` on every call. No `serial` = default device.
 
 ## Main loop (one action at a time — never fire two taps back to back)
@@ -29,7 +29,7 @@ description: "Drive Android devices/emulators and iOS devices/simulators purely 
 | `device_swipe` | swipe/scroll | raise the duration for inertial scrolling |
 | `device_input` | type text | goes through the IME; handles CJK and Flutter-drawn fields; **tap to focus first**; does not submit |
 | `device_type_send` | fill + submit + wait + screenshot | one round trip instead of four; ideal for "type it and show me the result" |
-| `device_key` | key event | enter/back/home…; ⚠️ in some apps (especially Flutter) back exits the app — prefer the on-screen close control for dismissing overlays |
+| `device_key` | key event | `enter` `delete` `tab` `space` `escape` `back` `home` `recent` `wakeup` `power` `sleep` `menu`, or a raw Android keycode as digits. An unsupported name returns `ok: false` instead of pretending it worked. ⚠️ in some apps (especially Flutter) `back` exits the app — prefer the on-screen close control for dismissing overlays, and note some search fields need two `back`s (clear query, then leave) |
 | `device_launch` | launch/relaunch an app | `force_stop=true` kills first; uses Appium activate, no adb |
 | `list_devices` | list available devices | to get serials |
 | `install_apk` | install a build | parallel across devices |
