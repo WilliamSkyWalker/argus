@@ -7,7 +7,7 @@ This is the device layer of [argus](https://github.com/WilliamSkyWalker/argus) (
 ## Install
 ```
 /plugin marketplace add WilliamSkyWalker/argus
-/plugin install argus-device@argus
+/plugin install argus-device@argus-plugins
 ```
 
 Then set up argus itself plus the system dependencies (a plugin cannot install these):
@@ -19,7 +19,7 @@ npm i -g appium@3                                   # Node LTS
 appium driver install uiautomator2                  # Android
 appium driver install xcuitest@latest               # iOS (optional)
 ```
-Then run **`/argus-doctor`** in Claude Code — it checks every link in the chain and prints the exact fix for whatever is missing.
+Then run **`/argus-device:doctor`** in Claude Code — it checks every link in the chain and prints the exact fix for whatever is missing.
 
 > Alternatively: `pip3 install "argus[mobile,mcp] @ git+https://github.com/WilliamSkyWalker/argus.git"` instead of cloning and setting `ARGUS_HOME`.
 
@@ -32,9 +32,9 @@ Just ask in plain language — the skill walks Claude through the screenshot→d
 The device must be **unlocked with the screen on** (a locked screen can't be captured). With several devices, say which one to use (`list_devices` gives you the serials).
 
 ## What's inside
-- **skill `argus-device`** — the vision-driven loop plus the anti-patterns that actually bite (scale calibration, no blind retries, no chained taps, IME focus, no UI tree on Flutter)
-- **command `/argus-doctor`** — dependency check (Python packages / Node + Appium + drivers / adb + devices / simulators)
-- **MCP server `argus-device`** — `device_screenshot` `device_tap` `device_swipe` `device_input` `device_type_send` `device_key` `device_launch` `list_devices` `install_apk` `adb_reconnect` `setup_simulator`
+- **skill `device`** — the vision-driven loop plus the anti-patterns that actually bite (scale calibration, no blind retries, no chained taps, IME focus, no UI tree on Flutter)
+- **command `/argus-device:doctor`** — dependency check (Python packages / Node + Appium + drivers / adb + devices / simulators)
+- **MCP server `argus`** — `device_screenshot` `device_tap` `device_swipe` `device_input` `device_type_send` `device_key` `device_launch` `list_devices` `install_apk` `adb_reconnect` `setup_simulator`
 
 A single long-lived Appium session is reused across processes, so turn-by-turn driving does not rebuild the connection each time. Everything runs on Appium primitives: **no adb for driving** (cloud device farms don't expose adb) and **no UI tree** (Flutter and custom-drawn UIs have nothing in it).
 

@@ -180,15 +180,15 @@ Start it with `python3 -m argus.mcp.server`. The repo ships a `.mcp.json`, so af
 
 ## Claude Code plugins
 
-This repo is also a **plugin marketplace** (`.claude-plugin/marketplace.json`), shipping [`argus-device`](./plugins/argus-device) — **Claude Code itself as the brain**, with Argus providing the eyes and hands:
+This repo is also a **plugin marketplace** named `argus-plugins` (`.claude-plugin/marketplace.json`), shipping [`argus-device`](./plugins/argus-device) — **Claude Code itself as the brain**, with Argus providing the eyes and hands:
 
 ```
 /plugin marketplace add WilliamSkyWalker/argus
-/plugin install argus-device@argus
+/plugin install argus-device@argus-plugins
 ```
 
-- **skill `argus-device`** — the screenshot → decide → one-action loop, plus the anti-patterns that actually bite
-- **command `/argus-doctor`** — checks Python packages, Node + Appium server + drivers, adb + connected devices and simulators, printing the exact fix for anything missing
+- **skill `device`** — the screenshot → decide → one-action loop, plus the anti-patterns that actually bite
+- **command `/argus-device:doctor`** — checks Python packages, Node + Appium server + drivers, adb + connected devices and simulators, printing the exact fix for anything missing
 - **MCP server** — 11 tools: `device_screenshot` `device_tap` `device_swipe` `device_input` `device_type_send` `device_key` `device_launch` `list_devices` `install_apk` `adb_reconnect` `setup_simulator`
 
 **No `LLM_API_KEY` needed** — the model you're already chatting with does the seeing and deciding (`ARGUS_MCP_PROFILE=device` trims the MCP surface to exactly that). The plugin locates Argus at runtime via `ARGUS_HOME` (a clone, no `pip install` needed) or an installed `argus` package, because a plugin cache can't reach outside its own directory.

@@ -36,7 +36,7 @@ _HINT = f"""[argus-mcp] Cannot find the argus package — the MCP server cannot 
   B. Install it as a package:
        pip3 install "argus[mobile,mcp] @ git+{REPO_URL}.git"
 
-Afterwards run /argus-doctor in Claude Code for a full check (Appium server, drivers and
+Afterwards run /argus-device:doctor in Claude Code for a full check (Appium server, drivers and
 connected devices included).
 """
 

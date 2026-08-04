@@ -1,14 +1,14 @@
 ---
-name: argus-device
+name: device
 description: "Drive Android devices/emulators and iOS devices/simulators purely by sight — screenshot the screen, locate elements visually, then tap/swipe/type/press keys, install APKs, launch apps. Use for any request to operate, verify or reproduce something on a phone: manual walkthroughs, bug reproduction, UI review, filling forms, repetitive tapping. Runs on Appium primitives; never shells out to adb for driving and never reads the UI tree."
 ---
 
-# argus-device
+# device — drive a phone by sight
 
-**You are the brain: look at the screenshot → decide → issue one action → look again.** The eyes and hands come from the `argus-device` MCP tools (the same capability is also reachable as `python3 -m argus.cli device …` in Bash, for non-MCP agents).
+**You are the brain: look at the screenshot → decide → issue one action → look again.** The eyes and hands come from this plugin's `device_*` MCP tools (the same capability is also reachable as `python3 -m argus.cli device …` in Bash, for non-MCP agents).
 
 ## Before you start (confirm, don't guess mid-run)
-- On first use or on any failure, run `/argus-doctor` — it settles the whole dependency chain in one shot.
+- On first use or on any failure, run `/argus-device:doctor` — it settles the whole dependency chain in one shot.
 - **The device must be unlocked with the screen on.** A sleeping or locked screen cannot be captured (FLAG_SECURE) and comes back as an all-black screenshot. An all-black frame is a device-state problem, not a rendering one: send `device_key wakeup` and capture again. If it stays black, or a PIN/pattern lock screen appears, stop and ask the user to unlock it — do not attempt to unlock it yourself.
 - With more than one device, pass `serial` on every call. No `serial` = default device.
 
