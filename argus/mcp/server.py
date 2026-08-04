@@ -34,7 +34,12 @@ import sys
 import time
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+# mcp SDK 的服务端类在 2.0 改了名和位置：FastMCP → MCPServer（`mcp.server`）。
+# 我们只用 tool() / remove_tool() / run() 三个接口，两版签名兼容，故按版本取类即可。
+try:                                          # mcp >= 2.0
+    from mcp.server import MCPServer as _MCPServerClass
+except ImportError:                           # mcp 1.x
+    from mcp.server.fastmcp import FastMCP as _MCPServerClass
 
 from ..cli import (
     RUNS_DIR,
@@ -49,7 +54,7 @@ from ..cli import (
 from ..gherkin import parse_feature_file
 from ..simulator import boot, create_device, list_devices as _list_ios_devices
 
-mcp = FastMCP("argus")
+mcp = _MCPServerClass("argus")
 
 
 @contextlib.contextmanager

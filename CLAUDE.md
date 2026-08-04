@@ -48,6 +48,7 @@ Argus = 视觉驱动 AI QA agent，替代人工测试。喂 `.feature`(Gherkin) 
 ## MCP（`argus/mcp/`，给 MCP-native agent 的可选适配器）
 `server.py` FastMCP stdio，把上面同一套能力也暴露为 MCP tool(list/run/device_*；device_* 与 `argus device` CLI **共享同一 session 状态文件**，可互相接管)。根目录 `.mcp.json` 让 Claude Code 自动挂载。`client.py` 让 brain 调外部 server(如 Figma MCP)，配置 `.argus/mcp_clients.json`(gitignored)。`/argus-drive` skill = Claude 当 brain、`argus device` CLI 当 platform 跑用例出 HTML 报告。
 **tool profile**：`--profile device` / `ARGUS_MCP_PROFILE=device` 只留 device_*+设备管理(11 个，摘掉跑测/报告 8 个)，这一档不需要 LLM key/tests/。新增跑测类 tool 必须登记进 `_RUN_PROFILE_ONLY`，否则启动自检报错。
+**mcp SDK 1.x/2.x 都要能跑**：2.0 把 `mcp.server.fastmcp.FastMCP` 改名成 `mcp.server.MCPServer`，server.py 用 try/except 两版兼容（只依赖 `tool()`/`remove_tool()`/`run()`，签名一致）。本机全局装的是 1.27，**但 `pip install` 默认拿 2.x** —— 只在本机测等于没测到 2.x，改 MCP 相关代码要用一次性 venv 双版本各跑一次握手。
 
 ## Claude Code 插件（`plugins/`，本仓同时是 marketplace）
 根 `.claude-plugin/marketplace.json` + `plugins/argus-{device,runner}/`。装法 `/plugin marketplace add WilliamSkyWalker/argus`。
