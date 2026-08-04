@@ -26,8 +26,8 @@ import re
 #
 # Heuristic: a valid evidence string must contain at least one of these
 # concrete-element tokens OR a quoted string (treated as a referenced UI
-# text). Tuned for Chinese-language test cases since nb_cases is the main
-# target; a few English variants kept for browser tests.
+# text). Tuned for Chinese-language test cases, since those are the primary
+# suites in practice; a few English variants kept for browser tests.
 
 _SCREEN_ELEMENT_WORDS = (
     # UI 控件

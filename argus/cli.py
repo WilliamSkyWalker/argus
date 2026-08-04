@@ -1177,7 +1177,7 @@ def _apply_account_placeholders(text: str, account: dict) -> str:
 def _load_preconditions(target_dir: Path | None) -> str | None:
     """加载 tests 下第一级目录里的 `_preconditions.md`（如有）。
 
-    用例：tests/nb_cases/_preconditions.md 描述 "登录态怎么判断、不在登录态怎么登录、
+    用例：tests/my-app/_preconditions.md 描述 "登录态怎么判断、不在登录态怎么登录、
     Onboarding 怎么完成、常见拦截弹窗怎么 dismiss"。运行时 prepend 到每个 case 文本前，
     让 LLM 在发现当前屏幕不符合 Background Given 时能照指南先恢复再开始测试。
 
@@ -1201,8 +1201,8 @@ def _find_target_dir(p: Path) -> Path | None:
     """从一个文件或目录路径向上回溯，找到最近的"含 README.md 的祖先目录"作为 target_dir。
 
     用于决定 report 目录位置等。约定一个 target 是含 README.md 的目录：
-      - tests/eve-kit/                  (README.md + cases/)
-      - tests/nb_cases/nb_mobile/       (README.md + 子模块/*.feature)
+      - tests/web-demo/                 (README.md + cases/)
+      - tests/my-app/mobile/            (README.md + 子模块/*.feature)
     """
     resolved = p.resolve()
     tests_resolved = TESTS_DIR.resolve()
@@ -1244,7 +1244,7 @@ def _resolve_test_target(test: str) -> tuple[list[str], Path | None]:
       - "path/to/file.feature"          → 单 .feature 文件（Gherkin 解析）
       - "path/to/dir/" 或 "tests-rel"   → 已存在目录，递归找 .feature 文件
       - "tests-rel/file.feature"        → TESTS_DIR 相对路径下的 .feature 文件
-      - "eve-kit" / "eve-kit/homepage"  → 兼容旧 .md：tests/<name>/cases/
+      - "web-demo" / "web-demo/homepage" → 兼容旧 .md：tests/<name>/cases/
       - "path/to/file.md"               → 兼容旧 .md/.txt 单文件
       - "inline text"                   → 字面 case 文本
     """
@@ -1278,7 +1278,7 @@ def _resolve_test_target(test: str) -> tuple[list[str], Path | None]:
         if case_file.exists():
             with open(case_file) as f:
                 return _parse_md_cases(f.read()), target_dir
-        # Try as-is (maybe the user typed "eve-kit/cases/foo.md")
+        # Try as-is (maybe the user typed "web-demo/cases/foo.md")
         case_file = target_dir / parts[1]
         if case_file.exists():
             with open(case_file) as f:
@@ -1401,7 +1401,7 @@ def cmd_run(test: str, platform: str | None = None, url: str | None = None,
     orig_get_logger = None
     if report_path == "__auto__" and target_dir:
         # Auto report 路径：tests 下第一级目录的 reports/<ts>/ 子目录
-        # 示例：nb_cases/nb_mobile/01-account/foo.feature → tests/nb_cases/reports/<ts>/foo-<ts>.html
+        # 示例：my-app/mobile/01-account/foo.feature → tests/my-app/reports/<ts>/foo-<ts>.html
         # 每个 run 单独一个时间戳目录，避免多次跑后 reports/ 根目录散落几十个文件
         # 注意不能用 target_dir/reports/ — 那会落到含 README.md 的祖先目录下，与 cases 混在一起
         log_path = None

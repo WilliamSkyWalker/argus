@@ -88,7 +88,7 @@ def list_targets() -> list[dict]:
     """列 tests/ 下所有可用 target。
 
     每个 target 返回:
-      - name: 目录名（如 "nb_cases" / "eve-kit"）
+      - name: 目录名（如 "my-app" / "web-demo"）
       - path: 绝对路径
       - feature_files / md_files: 各格式 case 文件计数
       - reports: 历史报告数
@@ -133,14 +133,14 @@ def list_cases(target: str, limit: int = 100, offset: int = 0) -> dict:
     """列 target 下所有 .feature scenario 的结构化元数据。
 
     target 接受三种形式:
-      - target 名: "nb_cases" / "eve-kit"
-      - 子目录: "nb_cases/nb_mobile/02-feed"
+      - target 名: "my-app" / "web-demo"
+      - 子目录: "my-app/mobile/02-feed"
       - 单文件: 任意 .feature 路径（绝对 / 相对 cwd / TESTS_DIR 相对）
 
     返回每个 scenario 的 tc_id / feature / file / priority / automation /
     platform / tags（来自 @tag 解析）。.md 旧格式不展开 scenario，会被忽略。
 
-    分页：默认每页 limit=100 条 scenario（整个 nb_cases 上千 scenario 会撑爆
+    分页：默认每页 limit=100 条 scenario（大 target 上千 scenario 会撑爆
     client token 上限，故必须分页）。case_count 始终是全量计数；truncated=True
     表示还有更多，用 next_offset 继续翻页。file 字段是相对 base_path 的路径
     （省去逐条重复绝对路径前缀的冗余）。

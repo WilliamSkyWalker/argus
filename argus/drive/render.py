@@ -4,7 +4,7 @@ journal 由 Claude 在跑测过程中用 Write 工具维护，结构如下：
 
     {
       "started_at": "2026-06-06T17:55:00",
-      "feature": "tests/nb_cases/nb_mobile/02-feed/04-feed-foryou.feature",
+      "feature": "tests/my-app/mobile/02-feed/04-feed-foryou.feature",
       "scenarios": [
         {
           "case": "TC-FEED-001b｜Top Bar 元素齐全",
