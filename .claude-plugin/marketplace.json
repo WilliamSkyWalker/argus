@@ -1,0 +1,26 @@
+{
+  "name": "argus",
+  "owner": {
+    "name": "argus",
+    "url": "https://github.com/WilliamSkyWalker/argus"
+  },
+  "metadata": {
+    "description": "Vision-driven mobile QA for Claude Code: drive real devices, emulators and simulators by screenshot, or run Gherkin suites into HTML reports."
+  },
+  "plugins": [
+    {
+      "name": "argus-device",
+      "source": "./plugins/argus-device",
+      "description": "Let Claude drive Android/iOS devices, emulators and simulators purely by sight: screenshot, look, tap/swipe/type/press. Appium under the hood, no UI tree, no LLM key needed.",
+      "category": "testing",
+      "tags": ["android", "ios", "appium", "emulator", "simulator", "mobile", "vision", "qa"]
+    },
+    {
+      "name": "argus-runner",
+      "source": "./plugins/argus-runner",
+      "description": "Run vision-driven test suites: feed .feature/.md cases, the agent watches the screen, executes, self-judges pass/fail and emits an HTML report with screenshots. Includes /argus-drive, where Claude itself is the brain.",
+      "category": "testing",
+      "tags": ["gherkin", "bdd", "regression", "report", "android", "ios", "appium", "qa"]
+    }
+  ]
+}

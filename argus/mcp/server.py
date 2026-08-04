@@ -837,6 +837,58 @@ def device_launch(package: str, activity: str | None = None,
 
 
 # ──────────────────────────────────────────────────────────────────
+# Tool profile（给 Claude Code 插件用：device 档只暴露设备原语）
+# ──────────────────────────────────────────────────────────────────
+
+# device 档保留的 tool：设备驱动原语 + 设备管理。
+# 意义：这一档**不需要 LLM_API_KEY、不需要 tests/ 目录、不需要 .env** 就能用，
+# 挂给任意 agent 当"手和眼"（见 plugins/argus-device）。
+_DEVICE_PROFILE_KEEP = {
+    "device_screenshot", "device_tap", "device_swipe", "device_input",
+    "device_type_send", "device_key", "device_launch",
+    "list_devices", "install_apk", "adb_reconnect", "setup_simulator",
+}
+
+# full 档独有（= device 档要摘掉的跑测/报告类）。
+# ⚠️ 新增这类 tool 时必须同步这里，否则 _apply_profile 的自检会在启动时直接报错。
+_RUN_PROFILE_ONLY = {
+    "list_targets", "list_cases", "list_runs", "get_run_status",
+    "get_report", "run_target", "run_case", "cancel_run",
+}
+
+
+def _apply_profile(profile: str) -> None:
+    """按 profile 裁剪暴露的 tool 集合。``full``（默认）= 全给，行为不变。"""
+    profile = (profile or "full").strip().lower()
+    if profile == "full":
+        return
+    if profile != "device":
+        raise SystemExit(
+            f"[argus.mcp] 未知 profile {profile!r}（可选 'device' / 'full'）")
+
+    failed = []
+    for name in sorted(_RUN_PROFILE_ONLY):
+        try:
+            mcp.remove_tool(name)
+        except Exception as e:                       # mcp 版本不兼容 / 已改名
+            failed.append(f"{name}({e})")
+    if failed:
+        raise SystemExit(
+            "[argus.mcp] device 档裁剪失败，拒绝以 full 集合启动: " + ", ".join(failed))
+
+    # 自检：确认剩下的都在白名单里（新加的跑测类 tool 忘了登记会在这里炸）
+    try:
+        left = {t.name for t in mcp._tool_manager.list_tools()}
+    except Exception:                                # 私有 API 没了就跳过自检
+        return
+    stray = left - _DEVICE_PROFILE_KEEP
+    if stray:
+        raise SystemExit(
+            "[argus.mcp] device 档出现未登记的 tool: " + ", ".join(sorted(stray))
+            + " —— 请把它加进 _DEVICE_PROFILE_KEEP 或 _RUN_PROFILE_ONLY")
+
+
+# ──────────────────────────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────────────────────────
 
@@ -847,10 +899,18 @@ def main() -> None:
     Claude Code / Desktop / Cursor 通过 ``command: python3 -m argus.mcp.server``
     + 工作目录指到 argus repo 即可挂载。
 
+    ``--profile device`` / ``ARGUS_MCP_PROFILE=device`` 只暴露设备原语（Claude Code
+    插件 argus-device 走这一档）；缺省 full = 全部 tool，与历史行为一致。
+
     stdout 守护：每个调到 cli helper（会 print）的 tool 在自己内部用
     ``_silenced_stdout`` 把 stdout 重定向到 stderr；这里不能全局换 sys.stdout
     因为 FastMCP 用 stdout 跑 JSON-RPC framing。
     """
+    ap = argparse.ArgumentParser(prog="argus.mcp.server", add_help=True)
+    ap.add_argument("--profile", choices=("device", "full"), default=None,
+                    help="暴露的 tool 集合（默认取 ARGUS_MCP_PROFILE，再默认 full）")
+    args = ap.parse_args()
+    _apply_profile(args.profile or os.environ.get("ARGUS_MCP_PROFILE") or "full")
     mcp.run()
 
 

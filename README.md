@@ -167,19 +167,39 @@ argus figma review <figma-url> --platform ios --screenshot app.png -o review.htm
 
 Argus speaks MCP both ways.
 
-**As a server** — `argus/mcp/server.py` (FastMCP, stdio transport) exposes 12 tools so you can drive Argus from Claude Code / Cursor / Claude Desktop in plain language (*"list the my-app scenarios"*, *"run login.feature"*):
+**As a server** — `argus/mcp/server.py` (FastMCP, stdio transport) exposes 19 tools so you can drive Argus from Claude Code / Cursor / Claude Desktop in plain language (*"list the my-app scenarios"*, *"run login.feature"*):
 
 - read-only: `list_targets` / `list_cases` / `list_runs` / `get_run_status` / `get_report`
 - execution: `run_target` / `run_case` / `cancel_run` (async — returns a `run_id` to poll)
 - devices: `list_devices` / `install_apk` / `adb_reconnect` / `setup_simulator`
+- device primitives: `device_screenshot` / `device_tap` / `device_swipe` / `device_input` / `device_type_send` / `device_key` / `device_launch`
 
-Start it with `python3 -m argus.mcp.server`. The repo ships a `.mcp.json`, so after cloning, **Claude Code auto-mounts the `argus` server** — just talk to it.
+Start it with `python3 -m argus.mcp.server`. The repo ships a `.mcp.json`, so after cloning, **Claude Code auto-mounts the `argus` server** — just talk to it. `--profile device` (or `ARGUS_MCP_PROFILE=device`) trims the surface to the device primitives only — no LLM key, no `tests/` directory needed; that's what the `argus-device` plugin below ships.
 
 **As a client** — during a run, Argus's brain can call external MCP servers (e.g. the Figma MCP). Configure them in `.argus/mcp_clients.json` (a `.example` is checked in; real tokens are gitignored). When a server is registered, the brain pulls its tool catalog and may invoke those tools mid-decision (every call is logged for audit).
 
+## Claude Code plugins
+
+This repo is also a **plugin marketplace** (`.claude-plugin/marketplace.json`), shipping two plugins under [`plugins/`](./plugins):
+
+```
+/plugin marketplace add WilliamSkyWalker/argus
+/plugin install argus-device@argus     # eyes + hands on a device (no LLM key needed)
+/plugin install argus-runner@argus     # run suites, emit HTML reports, /argus-drive
+```
+
+| | [`argus-device`](./plugins/argus-device) | [`argus-runner`](./plugins/argus-runner) |
+|---|---|---|
+| For | letting Claude operate a device by hand | running `.feature`/`.md` suites |
+| MCP tools | 11 (device primitives + device management) | 19 (superset) |
+| Needs `LLM_API_KEY` | no | yes |
+| Skills | `argus-device` | `argus-drive` |
+
+Both plugins locate Argus at runtime via `ARGUS_HOME` (a clone, no `pip install` needed) or an installed `argus` package — a plugin cache can't reach outside its own directory. Run **`/argus-doctor`** after installing: it checks Python packages, Node + Appium server + drivers, adb + connected devices, simulators, and (runner) the LLM key and `tests/` directory, printing the exact fix for anything missing.
+
 ## `/argus-drive` — Claude Code as the brain
 
-Besides the built-in engine, Argus ships an alternate driver: **your Claude Code session is the brain**, `adb` is the platform layer, and each conversation turn is one iteration of the main loop. No LLM API key needed — the model you're already chatting with does the seeing and the deciding.
+Besides the built-in engine, Argus ships an alternate driver: **your Claude Code session is the brain**, the `argus device` CLI (Appium) is the platform layer, and each conversation turn is one iteration of the main loop. No LLM API key needed — the model you're already chatting with does the seeing and the deciding.
 
 ```
 /argus-drive tests/my-app/cases/login.feature TC-LOGIN-001   # single case (debug)
@@ -197,7 +217,7 @@ What the skill implements (full protocol in [`.claude/skills/argus-drive/SKILL.m
 |---|---|---|
 | Main loop | `agent.py` (Python) | Claude Code conversation turns |
 | Brain | LLM API (key in `.env`) | the current Claude session |
-| Platform layer | `argus.platforms.*` | Bash + adb |
+| Platform layer | `argus.platforms.*` (in-process Appium) | `argus device` CLI (same Appium platform, reconnects across processes) |
 | Concurrency | multi-device / `-j N` | single-threaded |
 | Resume | no (CI-style full runs) | yes (`state.json` + per-feature journals) |
 | Best for | batch regression / CI | prompt & case debugging, small-batch regression |

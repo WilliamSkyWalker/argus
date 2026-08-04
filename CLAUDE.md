@@ -47,6 +47,16 @@ Argus = 视觉驱动 AI QA agent，替代人工测试。喂 `.feature`(Gherkin) 
 
 ## MCP（`argus/mcp/`，给 MCP-native agent 的可选适配器）
 `server.py` FastMCP stdio，把上面同一套能力也暴露为 MCP tool(list/run/device_*；device_* 与 `argus device` CLI **共享同一 session 状态文件**，可互相接管)。根目录 `.mcp.json` 让 Claude Code 自动挂载。`client.py` 让 brain 调外部 server(如 Figma MCP)，配置 `.argus/mcp_clients.json`(gitignored)。`/argus-drive` skill = Claude 当 brain、`argus device` CLI 当 platform 跑用例出 HTML 报告。
+**tool profile**：`--profile device` / `ARGUS_MCP_PROFILE=device` 只留 device_*+设备管理(11 个，摘掉跑测/报告 8 个)，这一档不需要 LLM key/tests/。新增跑测类 tool 必须登记进 `_RUN_PROFILE_ONLY`，否则启动自检报错。
+
+## Claude Code 插件（`plugins/`，本仓同时是 marketplace）
+根 `.claude-plugin/marketplace.json` + `plugins/argus-{device,runner}/`。装法 `/plugin marketplace add WilliamSkyWalker/argus`。
+- `argus-device`：MCP profile=device + skill `argus-device` + `/argus-doctor`。无 LLM key 也能用，卖点是"Claude 自己当 brain 手动操设备"。
+- `argus-runner`：profile=full + skill `argus-drive`(拷贝自 `.claude/skills/`，**改一份要同步另一份**) + `/argus-doctor --profile full`。
+- **插件缓存只拷插件目录自身**(`../..` 引用不到 argus 包)，所以 `scripts/argus_mcp.py` 运行时按 `ARGUS_HOME` → cwd 往上找 → 已装包 三级解析；两个插件的 `scripts/*.py` **内容必须逐字节一致**。
+- 对外文案(plugin.json/README/argus-device skill/命令)一律**英文**(插件目录面向全球用户)；`.claude-plugin/marketplace.json` 的 plugin `source` 必须写显式 `./plugins/<name>`(`metadata.pluginRoot`+裸 source 当前 CC 版本不支持，装不上)。
+- 改完必跑 `claude plugin validate .` + `plugins/argus-device` + `plugins/argus-runner`(它连 SKILL.md frontmatter 一起校验：**英文 description 里有 `: ` 必须加引号**，否则 YAML 解析失败、metadata 静默丢空)。
+- 提交到 Anthropic 官方目录**不走 PR**(`claude-plugins-community` 的 PR 自动关)，走表单 `clau.de/plugin-directory-submission`。
 
 ## 用例格式
 **`.feature`(Gherkin，推荐)**：Feature/Background/Scenario(Outline)+Examples 全解析。Tag：
