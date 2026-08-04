@@ -134,7 +134,7 @@ def list_cases(target: str, limit: int = 100, offset: int = 0) -> dict:
 
     target 接受三种形式:
       - target 名: "my-app" / "web-demo"
-      - 子目录: "my-app/mobile/02-feed"
+      - 子目录: "my-app/mobile/02-home"
       - 单文件: 任意 .feature 路径（绝对 / 相对 cwd / TESTS_DIR 相对）
 
     返回每个 scenario 的 tc_id / feature / file / priority / automation /

@@ -4,10 +4,10 @@ journal 由 Claude 在跑测过程中用 Write 工具维护，结构如下：
 
     {
       "started_at": "2026-06-06T17:55:00",
-      "feature": "tests/my-app/mobile/02-feed/04-feed-foryou.feature",
+      "feature": "tests/my-app/mobile/02-home/01-home-list.feature",
       "scenarios": [
         {
-          "case": "TC-FEED-001b｜Top Bar 元素齐全",
+          "case": "TC-HOME-001｜首页顶栏元素齐全",
           "result": "pass" | "fail" | "skipped" | "timeout",
           "reason": "<short why for non-pass>",
           "duration": 12.3,

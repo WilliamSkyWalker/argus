@@ -382,19 +382,19 @@ def render_case(feature: Feature, scenario: Scenario) -> str:
     - `open_url https://...` 出现在 step 里 → cli._extract_target_url 识别（browser 场景）
 
     格式示例：
-        ### TC-FEED-002  For You Tab 下拉刷新替换推荐内容
+        ### TC-LIST-002  列表页下拉刷新替换内容
         - **Priority**: P0
         - **Automation**: auto
         - **Platform**: both
         - **Reset before**: relaunch
-        - **Feature**: Feed 流 - For You Tab 核心交互
+        - **Feature**: 列表页 - 核心交互
         - **Background**:
           Given 测试账号 testuser 已登录
           ...
         - **When**:
-          Given For You 列表首屏已加载完成
+          Given 列表首屏已加载完成
           When 用户从屏幕顶部向下拖拽约屏幕高度的 1/4
-          Then 顶部 Tab Bar 下方出现一个圆形旋转 spinner
+          Then 顶部导航栏下方出现一个圆形旋转 spinner
     """
     tc_id = scenario.tc_id or _fallback_id(feature, scenario)
     reset = scenario.reset_mode or feature.reset_default

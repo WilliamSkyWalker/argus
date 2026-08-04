@@ -369,7 +369,7 @@ class Agent:
                 steps_detail.append(step_record)
                 # 截图持续失败也消耗 sub-action 配额，否则 platform 异常会让
                 # 该 step 无限刷 turn 直到外层 max_steps 用完才退出
-                # （实测 07-engage 终局有 1.9s 跑完 20 turn 的 case 就是这种死循环）
+                # （实测见过 1.9s 跑完 20 turn 的 case，就是这种死循环）
                 sub_actions_in_step += 1
                 continue
 

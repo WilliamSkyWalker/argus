@@ -34,7 +34,7 @@ _PLANNER_PROMPT = """你是一个测试 Planner Agent。下面给你一个 BDD S
    - text: step 原文（去掉 Given/When 等关键字前缀后的主体描述也可以保留完整）
    - intent: 用户/测试系统在这一步**意图**是什么（不是 UI 实现细节）
    - expected_state: 执行/验证后屏幕应处于什么状态（用户视角，1 句话）
-   - action_hint: 若 kind 是 when/and 类的 action step，告诉 executor 具体怎么在屏幕上触发（如"在 Tab Bar 找 Latest 单击"）；若是 then 类的 assertion step，告诉 executor 怎么从当前截图判断（如"观察列表前几条标题是否与刷新前不同"）
+   - action_hint: 若 kind 是 when/and 类的 action step，告诉 executor 具体怎么在屏幕上触发（如"在顶部导航栏找目标 Tab 单击"）；若是 then 类的 assertion step，告诉 executor 怎么从当前截图判断（如"观察列表前几条标题是否与刷新前不同"）
    - act: **仅 when/given/and 这类"动作步"输出**，把这一步要执行的操作拆成一个结构化动作，供框架直接执行（框架会用视觉定位模型按 target 描述找坐标，不必临场决策）：
        {"type": "tap|input|swipe|scroll_up|scroll_down|press_key|open_app|back",
         "target": "要点击/要输入的元素的简短视觉描述（tap/input 必填，如'右上角设置齿轮图标'、'底部搜索输入框'）",

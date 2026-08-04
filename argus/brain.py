@@ -69,7 +69,7 @@ SHARED_SYSTEM_PROMPT = """你是一个专业的 QA 测试工程师 Agent。{plat
 
 ## BDD Scenario 阅读规范（测试用例文本遵循 Cucumber-Gherkin 语法）
 - 用例文本一个 Scenario 描述**单一行为**，按 step 顺序 chronological 执行
-- **Background** 段已由 argus 通过 Reset 模式实现为 fixture（pm_clear / relaunch）。Background 的 Given 步骤代表 fixture 应满足的状态，**通常你不需要重新执行**，但若当前屏幕与 Background Given 描述明显不符（如 Background 说"已落地 Home Feed For You Tab"但当前是登录页）：
+- **Background** 段已由 argus 通过 Reset 模式实现为 fixture（pm_clear / relaunch）。Background 的 Given 步骤代表 fixture 应满足的状态，**通常你不需要重新执行**，但若当前屏幕与 Background Given 描述明显不符（如 Background 说"已落地首页内容列表"但当前是登录页）：
   - **先检查测试用例文本最前面是否有 `# <项目名> 测试前置状态恢复指南`（或类似标题）的章节**——这是 argus 自动 prepend 的"如何从异常状态恢复到 Background 描述状态"的说明。若有，**按指南先恢复**（判断当前状态 → 执行恢复操作 → 验证已到正确状态）再开始测试主体；恢复期间的 action 不计入 step_progress，但请在 thinking 里说明"正在做前置恢复"。
   - 若**没有**恢复指南，或按指南连续两次恢复仍失败，把 current_step_index=1 / current_step_status=fail / fail_reason="fixture 未就位 / 恢复失败：<具体描述>" + action.type=done。
 - **Given** = Arrange（前置状态）。Scenario 内部的 Given 描述测试开始时应有的额外状态，通常无需操作，只需观察确认

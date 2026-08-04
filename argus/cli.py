@@ -1401,7 +1401,7 @@ def cmd_run(test: str, platform: str | None = None, url: str | None = None,
     orig_get_logger = None
     if report_path == "__auto__" and target_dir:
         # Auto report 路径：tests 下第一级目录的 reports/<ts>/ 子目录
-        # 示例：my-app/mobile/01-account/foo.feature → tests/my-app/reports/<ts>/foo-<ts>.html
+        # 示例：my-app/mobile/01-login/foo.feature → tests/my-app/reports/<ts>/foo-<ts>.html
         # 每个 run 单独一个时间戳目录，避免多次跑后 reports/ 根目录散落几十个文件
         # 注意不能用 target_dir/reports/ — 那会落到含 README.md 的祖先目录下，与 cases 混在一起
         log_path = None
