@@ -2,7 +2,8 @@
 
 from .base import Platform
 
-AVAILABLE_PLATFORMS = ("ios", "android", "browser", "appium", "mac", "macos", "desktop")
+AVAILABLE_PLATFORMS = ("ios", "android", "browser", "appium",
+                       "mac", "macos", "windows", "win", "desktop")
 
 
 def create_platform(platform_name: str, config: dict) -> Platform:
@@ -17,8 +18,21 @@ def create_platform(platform_name: str, config: dict) -> Platform:
     elif platform_name == "browser":
         from .browser import BrowserPlatform
         return BrowserPlatform()
-    elif platform_name in ("mac", "macos", "desktop"):
-        # macOS 桌面原生驱动（pyautogui，纯视觉）。desktop 暂等价 mac；以后 win/linux 再分流。
+    elif platform_name in ("mac", "macos"):
+        # macOS 桌面原生驱动（pyautogui，纯视觉，窗口级前台方案）。
+        from .desktop_mac import DesktopMacPlatform
+        return DesktopMacPlatform()
+    elif platform_name in ("windows", "win"):
+        # Windows 桌面原生驱动（pyautogui + pywin32，纯视觉，窗口级前台方案）。
+        from .desktop_win import DesktopWinPlatform
+        return DesktopWinPlatform()
+    elif platform_name == "desktop":
+        # 泛桌面：按运行 argus 的 OS 自动分流到 mac / windows。
+        import platform as _p
+        sysname = _p.system()
+        if sysname == "Windows":
+            from .desktop_win import DesktopWinPlatform
+            return DesktopWinPlatform()
         from .desktop_mac import DesktopMacPlatform
         return DesktopMacPlatform()
     else:

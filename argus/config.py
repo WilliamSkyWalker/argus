@@ -59,6 +59,13 @@ DEFAULT_CONFIG = {
     # 被测 App 名（= 菜单栏显示名 / CGWindowOwnerName，如 Calculator / 备忘录）。
     # 跑 mac 平台必填；为空 → 直接报错（同 ANDROID_PACKAGE 的防误测策略）。
     "MAC_APP": "",
+    # Windows 桌面（前台窗口级驱动，平移 mac 方案）
+    # 被测窗口标题子串（= 任务栏/标题栏文字，如 "计算器" / "记事本" / "Calculator"）。
+    # 跑 windows 平台必填；为空 → 直接报错（同上防误测）。大小写不敏感、按子串匹配。
+    "WIN_APP": "",
+    # 可选：被测 App 的可执行文件路径 / 启动名（如 notepad / "C:\\Path\\app.exe"）。
+    # 填了则 setup 时先启动它再找窗口；空则只在已开的窗口里按 WIN_APP 找。
+    "WIN_LAUNCH": "",
     # Appium（iOS + Android 统一后端）
     "APPIUM_SERVER_URL": "",          # 空 → 默认 http://127.0.0.1:4723（server 由 argus 自动起）
     "APPIUM_DEVICE": "",              # udid / adb serial；空 → android 用 ANDROID_SERIAL，ios 用 SIMULATOR_UDID
@@ -235,6 +242,10 @@ def load_config() -> dict:
         },
         "mac": {
             "app": values["MAC_APP"],
+        },
+        "win": {
+            "app": values["WIN_APP"],
+            "launch": values["WIN_LAUNCH"],
         },
         "appium": {
             # os 由 create_platform 按平台名权威覆盖；这里给个合理默认
