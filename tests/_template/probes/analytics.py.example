@@ -1,0 +1,86 @@
+"""示例：埋点断言 probe（Python 型）。
+
+拷成 `tests/<target>/probes/analytics.py` 后按你的实际链路改 `_query`。
+注册到 `.argus/probes.json`（见 .argus/probes.json.example），用例里这么写：
+
+    Then 上报首页曝光埋点
+    # argus-probe: analytics check=首页曝光
+
+**用例只写意图**（`check=首页曝光`），真实事件名 / 表名 / 期望属性都在下面的
+config 里映射 —— 换埋点方案（改事件名、从查库改成查日志）时用例一个字不用动。
+
+关键约定（照抄，别自己发挥）：
+- 查不到就返回 `ProbeResult.pending(...)`，**不要**返回 fail —— 埋点上报普遍
+  有批量延迟（分钟级），查太早的 0 行不是漏报证据。argus 会按 retry_after_s
+  重查到预算耗尽才判 fail。
+- evidence 写**具体查到了什么**（条数 / 时间戳 / 关键属性值），它会进 HTML
+  报告并作为后续 step 的 evidence 锚点。别写「验证通过」。
+- 时间窗用 ctx.case_started_at ~ ctx.now，身份锚点用 ctx.account / ctx.device
+  —— 否则会把别人（或上一次跑测）的数据当成本次的。
+"""
+
+from argus.probes.base import Probe, ProbeResult
+
+
+class AnalyticsProbe(Probe):
+    name = "analytics"
+
+    def check(self, ctx, args):
+        intent = args.get("check")
+        mapping = (self.config.get("events") or {}).get(intent)
+        if not mapping:
+            # 用例写了个没映射的意图 —— 直接 fail，别静默放过一条断言
+            return ProbeResult.no(
+                f"config.events 里没有意图「{intent}」的映射，"
+                f"已配置: {sorted((self.config.get('events') or {}))}")
+
+        event = mapping["event"]
+        want_props = mapping.get("props") or {}
+        min_count = int(mapping.get("min_count", 1))
+        # 用例 directive 里的额外 k=v 可以覆盖期望属性，如
+        #   # argus-probe: analytics check=首页曝光 tab=recommend
+        want_props = {**want_props,
+                      **{k: v for k, v in args.items() if k != "check"}}
+
+        rows = self._query(
+            event=event,
+            since=ctx.case_started_at,
+            until=ctx.now,
+            user=ctx.account.get("email") or "",
+            device=ctx.device,
+        )
+        hits = [r for r in rows
+                if all(str(r.get(k)) == str(v) for k, v in want_props.items())]
+
+        if len(hits) >= min_count:
+            return ProbeResult.ok(
+                f"查到 {len(hits)} 条 {event}"
+                + (f"（属性 {want_props} 全部匹配）" if want_props else "")
+                + f"，首条 ts={hits[0].get('ts')}",
+                data={"event": event, "want_props": want_props,
+                      "matched": hits[:20], "total_scanned": len(rows)})
+
+        if rows and not hits:
+            # 事件到了但属性不对 —— 这是确定性结论，不用再等
+            return ProbeResult.no(
+                f"{event} 上报了 {len(rows)} 条，但没有一条满足 {want_props}；"
+                f"实际首条属性: { {k: rows[0].get(k) for k in want_props} }",
+                data={"event": event, "want_props": want_props, "rows": rows[:20]})
+
+        return ProbeResult.pending(
+            f"{ctx.case_started_at:.0f}~{ctx.now:.0f} 窗口内还没查到 {event}"
+            f"（上报可能未 flush）",
+            retry_after_s=30)
+
+    # ── 下面是「怎么查」，按你的实际链路实现 ──
+
+    def _query(self, event, since, until, user, device):
+        """返回 [{'ts':…, 'event':…, <属性>:…}, …]。
+
+        换成你自己的通道即可，argus 不关心实现：
+          - 查数据仓库落库表: SQL where event=%s and time between … and 用户/设备过滤
+          - 查上报日志服务: HTTP 查询接口
+          - 查抓包 dump: 解析本地 har/pcap
+        """
+        raise NotImplementedError(
+            "把 _query 换成你的实现（SQL / 日志 API / 抓包解析）")

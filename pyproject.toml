@@ -1,0 +1,25 @@
+[project]
+name = "argus"
+version = "0.1.0"
+description = "Vision-based AI Agent that replaces human testers"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.0.0",
+    "Pillow>=10.0.0",
+    "uiautomator2>=3.5,<4",
+]
+
+[project.optional-dependencies]
+browser = ["selenium>=4.0.0"]
+# 移动端（Appium 统一驱动 iOS + Android）。Appium server / driver 是 Node 侧依赖，另装：
+#   npm i -g appium@3 && appium driver install uiautomator2 xcuitest@latest
+mobile = ["Appium-Python-Client>=4.0.0", "selenium>=4.0.0"]
+# MCP server（Claude Code 插件 argus-device 走这条）。1.x 用 FastMCP、2.x 改名
+# MCPServer，server.py 两版都兼容；3.x 未知故先排除。
+mcp = ["mcp>=1.2,<3"]
+
+[tool.setuptools.packages.find]
+include = ["argus*"]
+
+[project.scripts]
+argus = "argus.cli:main"

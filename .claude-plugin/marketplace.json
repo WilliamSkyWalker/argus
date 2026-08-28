@@ -1,0 +1,28 @@
+{
+  "name": "argus-plugins",
+  "owner": {
+    "name": "argus",
+    "url": "https://github.com/WilliamSkyWalker/argus"
+  },
+  "metadata": {
+    "description": "Vision-driven mobile QA for Claude Code: drive real devices, emulators and simulators by screenshot — Claude itself is the brain."
+  },
+  "plugins": [
+    {
+      "name": "argus-device",
+      "source": "./plugins/argus-device",
+      "description": "Let Claude drive Android/iOS devices, emulators and simulators purely by sight: screenshot, look, tap/swipe/type/press. Appium under the hood, no UI tree, no LLM key needed.",
+      "category": "testing",
+      "tags": [
+        "android",
+        "ios",
+        "appium",
+        "emulator",
+        "simulator",
+        "mobile",
+        "vision",
+        "qa"
+      ]
+    }
+  ]
+}

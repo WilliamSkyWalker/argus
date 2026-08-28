@@ -1,0 +1,34 @@
+{
+  "name": "argus-device",
+  "version": "0.1.0",
+  "description": "Let Claude drive Android/iOS devices, emulators and simulators purely by sight: screenshot, look, tap/swipe/type/press. Appium under the hood, no UI tree, no LLM key needed.",
+  "author": {
+    "name": "argus",
+    "url": "https://github.com/WilliamSkyWalker/argus"
+  },
+  "homepage": "https://github.com/WilliamSkyWalker/argus/tree/main/plugins/argus-device",
+  "repository": "https://github.com/WilliamSkyWalker/argus",
+  "keywords": [
+    "testing",
+    "qa",
+    "android",
+    "ios",
+    "appium",
+    "emulator",
+    "simulator",
+    "mobile",
+    "vision"
+  ],
+  "mcpServers": {
+    "argus": {
+      "command": "python3",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/argus_mcp.py"
+      ],
+      "env": {
+        "ARGUS_MCP_PROFILE": "device",
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}

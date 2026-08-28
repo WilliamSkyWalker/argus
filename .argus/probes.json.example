@@ -1,0 +1,45 @@
+{
+  "_comment": [
+    "非视觉断言插件（probe）注册表。拷成 .argus/probes.json 后填真值 —— 该文件已 gitignored。",
+    "用例侧：在某个 Then 下面挂一行 `# argus-probe: <这里的 key> check=<意图名>`，",
+    "那个 step 就不进 LLM，直接跑插件拿 verdict。详见 docs/probes.md。"
+  ],
+
+  "defaults": {
+    "timeout_s": 300,
+    "poll_interval_s": 20
+  },
+
+  "probes": {
+    "analytics": {
+      "_comment": "Python 型：最短路径，一个类 + 一个 check() 方法",
+      "type": "python",
+      "module": "tests/<target>/probes/analytics.py",
+      "class": "AnalyticsProbe",
+      "timeout_s": 300,
+      "poll_interval_s": 30,
+      "config": {
+        "dsn": "${ANALYTICS_DSN}",
+        "table": "<你的埋点落库表>",
+        "events": {
+          "<意图名，用例里 check= 写这个>": {
+            "event": "<真实事件名>",
+            "props": {"<属性名>": "<期望值>"},
+            "min_count": 1
+          }
+        }
+      }
+    },
+
+    "applog": {
+      "_comment": "subprocess 型：任何语言都行，stdin 收 JSON / stdout 出 JSON",
+      "type": "subprocess",
+      "command": ["node", "tests/<target>/probes/applog.js"],
+      "call_timeout_s": 60,
+      "env": {"LOG_API_TOKEN": "${LOG_API_TOKEN}"},
+      "config": {
+        "endpoint": "${LOG_API_ENDPOINT}"
+      }
+    }
+  }
+}

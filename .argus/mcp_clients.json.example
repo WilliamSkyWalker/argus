@@ -1,0 +1,12 @@
+{
+  "_comment": "argus.mcp.client 的外部 MCP server 配置。复制为 mcp_clients.json 并填实值。",
+  "servers": {
+    "figma": {
+      "command": "npx",
+      "args": ["-y", "@figma/mcp-server"],
+      "env": {
+        "FIGMA_TOKEN": "${FIGMA_TOKEN}"
+      }
+    }
+  }
+}

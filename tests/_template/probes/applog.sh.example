@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# 示例：subprocess 型 probe —— 用任何语言（这里是 shell + jq）实现「怎么查」。
+#
+# 协议：stdin 收一个 JSON 请求，stdout 出一个 JSON verdict。调试信息写 stderr。
+# 注册到 .argus/probes.json：
+#   "applog": {"type": "subprocess", "command": ["bash", "tests/<target>/probes/applog.sh"]}
+#
+# 请求里能用的字段（完整列表见 argus/probes/subprocess_probe.py 的 docstring）：
+#   .action                    setup | check | teardown
+#   .args.check                用例 directive 里的意图名
+#   .config                    注册表里该 probe 的 config 块（${VAR} 已展开）
+#   .context.case_started_at   本 case 开跑时刻（epoch 秒）→ 查询时间窗下界
+#   .context.now               现在
+#   .context.account.email     本 case 绑的账号（多设备并行时区分数据）
+#   .context.device            udid / adb serial
+set -euo pipefail
+
+REQ=$(cat)
+ACTION=$(printf '%s' "$REQ" | jq -r '.action')
+if [ "$ACTION" != "check" ]; then
+  echo '{"verdict":"pass"}'   # setup / teardown 不需要做事
+  exit 0
+fi
+
+INTENT=$(printf '%s' "$REQ" | jq -r '.args.check // ""')
+SINCE=$(printf '%s' "$REQ" | jq -r '.context.case_started_at')
+USER=$(printf '%s' "$REQ" | jq -r '.context.account.email // ""')
+
+echo "查 intent=$INTENT since=$SINCE user=$USER" >&2   # stderr 进 argus 日志
+
+# ← 换成你的实际查询（curl 日志服务 / psql / grep 落盘日志 …）
+COUNT=0
+
+if [ "$COUNT" -gt 0 ]; then
+  jq -cn --arg i "$INTENT" --argjson c "$COUNT" \
+    '{verdict:"pass", evidence:("查到 \($c) 条 " + $i), data:{count:$c}}'
+else
+  # 查不到 → inconclusive（不是 fail）：上报可能还没 flush，argus 会重查
+  jq -cn --arg i "$INTENT" \
+    '{verdict:"inconclusive", evidence:("暂未查到 " + $i + "，可能还没上报"),
+      retry_after_s:30}'
+fi
