@@ -10,7 +10,7 @@ ENV_FILE = PROJECT_ROOT / ".env"
 DEFAULT_CONFIG = {
     "PLATFORM": "ios",
     # LLM — OpenRouter 默认（聚合多家供应商，OpenAI 兼容协议）
-    # 配 .env 时设 LLM_API_KEY=sk-or-v1-... + LLM_MODEL=<provider/model>，例如：
+    # 配 .env 时设 LLM_API_KEY=${LLM_API_KEY} + LLM_MODEL=<provider/model>，例如：
     #   google/gemini-2.5-flash / anthropic/claude-sonnet-4.5 / openai/gpt-4o
     # 也可改 LLM_BASE_URL 指回其他 OpenAI 兼容端点
     "LLM_PROVIDER": "openrouter",
@@ -79,7 +79,7 @@ DEFAULT_CONFIG = {
     # iOS 真机 WDA 签名（`argus run --platform ios` 必填 team_id）：
     "IOS_TEAM_ID": "",               # Apple 开发者 team id（xcodeOrgId，10 位，在开发者后台查）
     "IOS_SIGNING_ID": "Apple Development",
-    "IOS_WDA_BUNDLE_ID": "",         # WDA bundle id，用你 team 名下前缀，如 com.yourco.wda
+    "IOS_WDA_BUNDLE_ID": "",         # WDA bundle id，用你的 team 前缀，如 com.example.wda
     "IOS_BUNDLE_ID": "",             # 被测 App 的 bundle id（可选，不填则附着当前前台）
     # Browser
     "BROWSER_TYPE": "chrome",

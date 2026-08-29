@@ -1,17 +1,17 @@
 [
   {
-    "email": "test1@example.com",
-    "password": "your-password-1",
-    "username": "tester_one"
+    "email": "${EMAIL_1}",
+    "password": "${PASSWORD_1}",
+    "username": "${USERNAME_1}"
   },
   {
-    "email": "test2@example.com",
-    "password": "your-password-2",
-    "username": "tester_two"
+    "email": "${EMAIL_2}",
+    "password": "${PASSWORD_2}",
+    "username": "${USERNAME_2}"
   },
   {
-    "email": "test3@example.com",
-    "password": "your-password-3",
-    "username": "tester_three"
+    "email": "${EMAIL_3}",
+    "password": "${PASSWORD_3}",
+    "username": "${USERNAME_3}"
   }
 ]

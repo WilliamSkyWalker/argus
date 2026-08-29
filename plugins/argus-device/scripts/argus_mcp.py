@@ -8,7 +8,6 @@ starting the MCP server we have to locate argus and put it on ``sys.path``:
 
   1. ``ARGUS_HOME=/path/to/argus`` — repo cloned but not pip-installed (argus's normal usage)
   2. the current working directory (or a parent) being an argus checkout
-  3. an installed ``argus`` package
 
 If none of those hold, print a copy-pasteable install hint to stderr and exit; the MCP
 client will show the server as failed and surface this text in its logs.
@@ -25,16 +24,11 @@ from pathlib import Path
 
 REPO_URL = "https://github.com/WilliamSkyWalker/argus"
 
-_HINT = f"""[argus-mcp] Cannot find the argus package — the MCP server cannot start. Pick one:
+_HINT = f"""[argus-mcp] Cannot find the argus repository — the MCP server cannot start:
 
-  A. Clone the repo and point at it (recommended; argus itself needs no pip install):
        git clone {REPO_URL}.git
-       # then, in your shell profile or the plugin's env:
        export ARGUS_HOME=/absolute/path/to/argus
-       pip3 install openai Pillow uiautomator2 selenium Appium-Python-Client mcp
-
-  B. Install it as a package:
-       pip3 install "argus[mobile,mcp] @ git+{REPO_URL}.git"
+       pip3 install -r "$ARGUS_HOME/requirements.txt"
 
 Afterwards run /argus-device:doctor in Claude Code for a full check (Appium server, drivers and
 connected devices included).

@@ -114,7 +114,8 @@ class AppiumServerManager:
         if not appium_bin:
             raise RuntimeError(
                 "找不到 appium 可执行文件。装法：\n"
-                "  npm install -g appium && appium driver install uiautomator2 xcuitest\n"
+                "  python3 -m argus.cli mcp init --skip-ios  # Android；iOS 去掉 --skip-ios\n"
+                "  或 npm install -g appium@3 && appium driver install uiautomator2 xcuitest\n"
                 "  或在 config appium.binary / 环境变量 APPIUM_BIN 指定路径")
 
         parsed = urlparse(self._url)

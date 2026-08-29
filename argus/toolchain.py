@@ -4,7 +4,7 @@
 的 node / npm / 全局包**（多语言/多版本共存的开发机是有意配置，动它会连累别的项目）。
 
 策略：一切装进沙盒 `~/.argus/runtime/`，与系统隔离——
-  - Node：系统已有可用 node(≥18) 就复用（只读不改）；没有才下载 Node LTS 便携版
+  - Node：系统已有满足 Appium 3 要求的 node(20.19+/22.12+/24+) 就复用（只读不改）；没有才下载 Node LTS 便携版
           解压进沙盒。永不 nvm/brew/改 PATH/改 shebang。
   - Appium：`npm install appium@3` **本地**装进沙盒（不是 -g，不污染全局）。
   - Drivers：uiautomator2（安卓）+ xcuitest（iOS，仅 macOS），装进沙盒 APPIUM_HOME。

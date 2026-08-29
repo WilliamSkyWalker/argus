@@ -14,14 +14,11 @@ Then set up argus itself plus the system dependencies (a plugin cannot install t
 ```bash
 git clone https://github.com/WilliamSkyWalker/argus.git
 export ARGUS_HOME=/absolute/path/to/argus          # put this in your shell profile
-pip3 install openai Pillow uiautomator2 selenium Appium-Python-Client mcp
-npm i -g appium@3                                   # Node LTS
-appium driver install uiautomator2                  # Android
-appium driver install xcuitest@latest               # iOS (optional)
+pip3 install -r "$ARGUS_HOME/requirements.txt"
+python3 -m argus.cli mcp init                       # sandboxed Appium + drivers + adb
+# Android-only setup can use: python3 -m argus.cli mcp init --skip-ios
 ```
 Then run **`/argus-device:doctor`** in Claude Code — it checks every link in the chain and prints the exact fix for whatever is missing.
-
-> Alternatively: `pip3 install "argus[mobile,mcp] @ git+https://github.com/WilliamSkyWalker/argus.git"` instead of cloning and setting `ARGUS_HOME`.
 
 ## Use
 Just ask in plain language — the skill walks Claude through the screenshot→decide loop:

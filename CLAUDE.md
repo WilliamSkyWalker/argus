@@ -86,8 +86,8 @@ Argus = 视觉驱动 AI QA agent，替代人工测试。喂 `.feature`(Gherkin) 
 
 ## Setup / CLI
 ```bash
-pip3 install openai Pillow uiautomator2 selenium        # 依赖(不装 argus 本身)
-# Appium(移动端): npm i -g appium@3 && appium driver install uiautomator2 xcuitest@latest  (用 Node LTS)
+pip3 install -r requirements.txt                        # Python 3.11+ 依赖
+python3 -m argus.cli mcp init --skip-ios                # Android 沙盒工具链；iOS 去掉 --skip-ios
 python3 -m argus.cli init        # 生成 .env，填 LLM_API_KEY
 alias argus="python3 -m argus.cli"
 
@@ -97,7 +97,7 @@ argus run <target> --device s1 s2 --apk app.apk --report   # 多设备调度(共
 argus run <target> --shard 0/3           # 手动分片
 argus run <target> --bg ; argus status [run_id]            # 后台+查
 argus run "打开X验证Y" --platform ios    # inline
-argus new <t> --platform android --package com.x.y         # 脚手架
+argus new <t> --platform android --package com.example.app # 脚手架
 argus list --json / devices --json / setup                 # 发现(机读)
 # 设备驱动原语(任何 agent 可调，输出 JSON，跨进程复用 session：Appium 移动端 / Selenium 浏览器)
 argus device start --serial s1                              # 建/复用 session

@@ -3,7 +3,7 @@
 argus 的移动端统一走 Appium：一套 W3C WebDriver 协议同时驱动本地 Android/iOS
 真机、模拟器，以及云真机农场（云上 iOS 唯一通路就是 Appium）。brain/agent 不感知
 Appium —— 本类实现 base.Platform 接口，纯视觉：截图 + 坐标 tap（不取 UI 树），与
-android.py / ios.py 行为对齐。
+agent 的平台抽象保持一致。
 
 config["appium"]:
   os:          "android" | "ios"          （必填，选 driver）
@@ -46,7 +46,7 @@ tap/long_press 的 `target` 字段：一句话描述你要点的元素（如「�
 「登录按钮」「第二条列表项的心形图标」）。点空(无变化)时框架据此换专用定位模型重定位。
 
 注意：
-- 原生 UI 元素优先用 UI 树里的 bounds 坐标点中心；网页/自绘内容按视觉估算坐标
+- 只根据截图视觉定位，不读取 UI 树；所有坐标都由百分比换算
 - Android 三个导航键：back / home / recent"""
 
 _IOS_PROMPT_SEGMENT = """你正在操作一个 iOS 设备来执行测试用例。
@@ -260,7 +260,7 @@ class AppiumPlatform(Platform):
     # --- Observation ---
 
     def _note_screenshot_size(self, width: int, height: int) -> None:
-        """记录截图像素尺寸（供 scale 换算），并检测横竖屏旋转（同 android.py）。"""
+        """记录截图像素尺寸（供 scale 换算），并检测横竖屏旋转。"""
         self._last_shot_size = (width, height)
         w, h = self._screen_width, self._screen_height
         if w and h and w != h and width != height and (width > height) != (w > h):

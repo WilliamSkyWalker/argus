@@ -51,9 +51,8 @@ class SkillContext:
     # Results accumulated from earlier skills in the pipeline
     skill_results: dict[str, SkillResult] = field(default_factory=dict)
 
-    # Authoritative IME visibility from the platform driver (e.g. Android
-    # dumpsys input_method). Set by agent.py before pipeline run. UI tree
-    # cannot reliably reveal this on Android — IME is a system window.
+    # Authoritative IME visibility from the platform driver (Appium uses
+    # is_keyboard_shown). Set by agent.py before the vision pipeline runs.
     ime_visible: bool = False
 
 
