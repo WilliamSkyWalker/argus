@@ -49,7 +49,7 @@ def _require_android_package() -> str:
     if not pkg:
         raise RuntimeError(
             "ANDROID_PACKAGE 未配置：请在 .env 里写 `ANDROID_PACKAGE=<你的包名>`，"
-            "或跑测时 `ANDROID_PACKAGE=com.your.app python3 -m argus.cli run …` 覆盖。"
+            "或跑测时 `ANDROID_PACKAGE=com.example.app python3 -m argus.cli run …` 覆盖。"
             "（不设默认值，防止静默测错 App。）"
         )
     return pkg
@@ -207,7 +207,8 @@ def _android_launch(platform, package: str) -> None:
             "shell", "cmd", "package", "resolve-activity",
             "--brief", "-c", "android.intent.category.LAUNCHER", package,
         )
-        # Last non-empty line is the component name (e.g. "com.x/com.x.MainActivity")
+        # Last non-empty line is the component name
+        # (e.g. "com.example.app/com.example.app.MainActivity")
         component = ""
         for line in reversed(out.strip().splitlines()):
             line = line.strip()
@@ -251,7 +252,7 @@ def main():
     new_p.add_argument("--platform", choices=["ios", "android", "browser"],
                        required=True, help="Target platform")
     new_p.add_argument("--package", default=None, metavar="PKG",
-                       help="Android package name (e.g. com.x.y); android only")
+                       help="Android package name (e.g. com.example.app); android only")
     new_p.add_argument("--url", default=None, metavar="URL",
                        help="Site URL for browser targets (written into README)")
     new_p.add_argument("--force", action="store_true",
@@ -972,7 +973,7 @@ def cmd_new(name: str, platform: str, package: str | None = None,
                 # reset-default 仅 android 有意义，非 android 丢掉
             elif s.startswith("@") and "@android" in s:
                 # scenario 平台 tag：android 保留；ios 换成 @ios；browser 去掉
-                # （平台 tag 只有 @ios/@android/@both，browser case 不带平台 tag）
+                # （平台标签是可扩展集合；模板当前以 @android 为起点）
                 if platform == "ios":
                     out.append(ln.replace("@android", "@ios"))
                 elif platform == "browser":
@@ -1301,8 +1302,8 @@ def _load_accounts(target_dir: Path | None) -> list[dict]:
 
     文件格式（JSON list）：
         [
-          {"email": "test1@example.com", "password": "pwd1"},
-          {"email": "test2@example.com", "password": "pwd2"}
+          {"email": "${EMAIL_1}", "password": "${PASSWORD_1}"},
+          {"email": "${EMAIL_2}", "password": "${PASSWORD_2}"}
         ]
 
     每个 dict 的所有键会被翻译成 `${KEY_UPPER}` 占位符在 case 文本里替换

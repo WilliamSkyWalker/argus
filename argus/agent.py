@@ -219,7 +219,7 @@ class Agent:
         self.settle_stable_frames = int(cfg["agent"].get("settle_stable_frames", 2))
         # wait_for（Phase 2）：per-step 墙钟等待预算；等待轮不计入 no-progress，超预算才收敛。
         self.wait_max_s = float(cfg["agent"].get("wait_max_s", 45.0))
-        # 连续断言合并（Phase 3，默认关）：连续同屏 Then/And 合成 1 次调用逐条判。
+        # 连续断言合并（Phase 3，默认开）：连续同屏 Then/And 合成 1 次调用逐条判。
         self.merge_asserts = bool(cfg["agent"].get("merge_asserts", False))
         if self.merge_asserts:
             log.info("连续断言合并已启用（Phase 3）")

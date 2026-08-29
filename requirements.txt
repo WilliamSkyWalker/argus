@@ -1,0 +1,6 @@
+openai>=1.0.0
+Pillow>=10.0.0
+uiautomator2>=3.5,<4
+Appium-Python-Client>=4.0.0
+selenium>=4.0.0
+mcp>=1.2,<3

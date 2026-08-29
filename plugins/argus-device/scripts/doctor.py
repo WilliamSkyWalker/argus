@@ -37,9 +37,10 @@ def add(status: str, name: str, detail: str = "", hint: str = "") -> None:
     results.append({"status": status, "name": name, "detail": detail, "hint": hint})
 
 
-def run(cmd: list[str], timeout: int = 20) -> tuple[int, str]:
+def run(cmd: list[str], timeout: int = 20,
+        env: dict[str, str] | None = None) -> tuple[int, str]:
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except FileNotFoundError:
         return 127, "not found"
@@ -91,7 +92,7 @@ def check_argus() -> Path | None:
         add(OK, "argus package", "pip-installed")
         return None
     add(MISS, "argus package", "not found",
-        f'set ARGUS_HOME=/path/to/argus, or: pip3 install "argus[mobile,mcp] @ git+{REPO_URL}.git"')
+        f"git clone {REPO_URL}.git && set ARGUS_HOME to the cloned repository")
     return None
 
 
@@ -114,25 +115,47 @@ def check_py_deps() -> None:
 
 
 def check_appium() -> None:
-    if not shutil.which("node"):
+    runtime = Path(os.environ.get("ARGUS_HOME_DIR", Path.home() / ".argus")) / "runtime"
+    sandbox_appium = runtime / "node_modules" / ".bin" / "appium"
+    sandbox_node = runtime / "node" / "bin" / "node"
+    node_marker = runtime / "node_path.txt"
+
+    appium = str(sandbox_appium) if sandbox_appium.is_file() else shutil.which("appium")
+    node = str(sandbox_node) if sandbox_node.is_file() else shutil.which("node")
+    if not sandbox_node.is_file() and node_marker.is_file():
+        recorded = node_marker.read_text(errors="ignore").strip()
+        if recorded and Path(recorded).is_file():
+            node = recorded
+
+    if not node:
         add(MISS, "node", "not on PATH", "install Node LTS (the Appium server runs on Node)")
     else:
-        _, out = run(["node", "-v"])
+        _, out = run([node, "-v"])
         add(OK, "node", out.strip().splitlines()[0] if out.strip() else "")
 
-    if not shutil.which("appium"):
-        add(MISS, "appium server", "not on PATH",
-            "npm i -g appium@3   # argus starts the server itself, but the binary must exist")
+    if not appium:
+        add(MISS, "appium server", "not found on PATH or in ~/.argus/runtime",
+            "python3 -m argus.cli mcp init --skip-ios   # omit --skip-ios when iOS is needed")
         return
-    code, out = run(["appium", "-v"])
-    add(OK if code == 0 else WARN, "appium server",
-        out.strip().splitlines()[0] if out.strip() else "")
 
-    code, out = run(["appium", "driver", "list", "--installed"], timeout=60)
+    appium_env = os.environ.copy()
+    if node:
+        appium_env["PATH"] = str(Path(node).parent) + os.pathsep + appium_env.get("PATH", "")
+    sandbox_home = runtime / "appium_home"
+    if sandbox_appium.is_file():
+        appium_env["APPIUM_HOME"] = str(sandbox_home)
+
+    code, out = run([appium, "-v"], env=appium_env)
+    add(OK if code == 0 else WARN, "appium server",
+        (out.strip().splitlines()[0] if out.strip() else "")
+        + (" (~/.argus/runtime)" if sandbox_appium.is_file() else " (PATH)"))
+
+    code, out = run([appium, "driver", "list", "--installed"],
+                    timeout=60, env=appium_env)
     low = out.lower()
     for drv, plat_name, install in (
-        ("uiautomator2", "Android", "appium driver install uiautomator2"),
-        ("xcuitest", "iOS", "appium driver install xcuitest@latest"),
+        ("uiautomator2", "Android", "python3 -m argus.cli mcp init --skip-ios"),
+        ("xcuitest", "iOS", "python3 -m argus.cli mcp init"),
     ):
         if drv in low:
             add(OK, f"appium driver:{drv}", plat_name)
@@ -142,14 +165,17 @@ def check_appium() -> None:
 
 def check_android() -> None:
     adb = shutil.which("adb")
+    sandbox_adb = (Path(os.environ.get("ARGUS_HOME_DIR", Path.home() / ".argus"))
+                   / "runtime" / "platform-tools" / "adb")
+    if not adb and sandbox_adb.is_file():
+        adb = str(sandbox_adb)
     home = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
     if not adb and home:
         cand = Path(home) / "platform-tools" / "adb"
         adb = str(cand) if cand.exists() else None
     if not adb:
-        add(WARN, "adb", "not on PATH and ANDROID_HOME has no usable SDK",
-            "install Android platform-tools and set ANDROID_HOME (argus never drives via adb, "
-            "but APK installs and device discovery need it)")
+        add(WARN, "adb", "not on PATH, in ANDROID_HOME, or in ~/.argus/runtime",
+            "python3 -m argus.cli mcp init --skip-ios")
         return
     add(OK, "adb", adb)
     code, out = run([adb, "devices"])

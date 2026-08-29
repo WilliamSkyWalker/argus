@@ -59,17 +59,16 @@ BDD .feature test case (hand-written, or Figma-generated)
 ### 1. Prerequisites
 
 ```bash
-# Python deps (Argus runs as a module — you do NOT install argus itself)
-pip3 install openai Pillow uiautomator2 selenium fb-idb
+# Python 3.11+ dependencies (Argus runs as a module)
+pip3 install -r requirements.txt
 
-# Android
-brew install android-platform-tools        # adb
-#   uiautomator2 auto-pushes its server apk on first device connect
+# Android: install Appium, the UiAutomator2 driver and adb into ~/.argus/runtime
+python3 -m argus.cli mcp init --skip-ios
 
-# iOS (only if testing iOS)
-brew install idb-companion
+# iOS (macOS only): also install the XCUITest driver and prepare WDA
+python3 -m argus.cli mcp init
 
-# Browser (only if testing web) — install a WebDriver / use Selenium Grid
+# Browser (only if testing web) — install Chrome/Chromium or use Selenium Grid
 ```
 
 > Note: invoke everything as `python3 -m argus.cli <command>` from the repo root.
@@ -85,10 +84,10 @@ Then edit `.env` and set your LLM key. The default provider is **OpenRouter** (O
 
 ```env
 PLATFORM=android
-LLM_PROVIDER=openai
-LLM_API_BASE=https://openrouter.ai/api/v1
-LLM_API_KEY=sk-or-v1-...
-LLM_MODEL=gemini-2.5-flash      # any vision model: google/gemini-2.5-flash, anthropic/claude-sonnet-4.5, ...
+LLM_PROVIDER=openrouter
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_API_KEY=${LLM_API_KEY}
+LLM_MODEL=google/gemini-3.5-flash
 ```
 
 ### 3. Run your first test
@@ -126,7 +125,7 @@ Feature: Login
     Then the home screen is shown with a bottom navigation bar
 ```
 
-Tags Argus understands: `@P0/@P1/@P2` (priority) · `@auto/@partial/@manual` (automation; partial/manual are auto-skipped) · `@ios/@android/@both` (platform gate) · `@TC-XXX` (case id) · `@reset:pm_clear|relaunch|none` (Android state reset) · `@skip/@wip`.
+Tags Argus understands: `@P0/@P1/@P2` (priority) · `@auto/@partial/@manual` (automation; partial/manual are auto-skipped) · platform tags such as `@android/@ios/@browser` (a set: `@android @ios` runs on both; legacy `@both` is still accepted) · `@TC-XXX` (case id) · `@reset:pm_clear|relaunch|none` (Android state reset) · `@skip/@wip`.
 
 ### Non-visual assertions (`probe` plugins)
 
@@ -223,7 +222,7 @@ This repo is also a **plugin marketplace** named `argus-plugins` (`.claude-plugi
 - **command `/argus-device:doctor`** — checks Python packages, Node + Appium server + drivers, adb + connected devices and simulators, printing the exact fix for anything missing
 - **MCP server** — 11 tools: `device_screenshot` `device_tap` `device_swipe` `device_input` `device_type_send` `device_key` `device_launch` `list_devices` `install_apk` `adb_reconnect` `setup_simulator`
 
-**No `LLM_API_KEY` needed** — the model you're already chatting with does the seeing and deciding (`ARGUS_MCP_PROFILE=device` trims the MCP surface to exactly that). The plugin locates Argus at runtime via `ARGUS_HOME` (a clone, no `pip install` needed) or an installed `argus` package, because a plugin cache can't reach outside its own directory.
+**No `LLM_API_KEY` needed** — the model you're already chatting with does the seeing and deciding (`ARGUS_MCP_PROFILE=device` trims the MCP surface to exactly that). The plugin locates the cloned repository at runtime via `ARGUS_HOME`, because a plugin cache can't reach outside its own directory.
 
 Running whole suites with reports is *not* in the plugin — that's `argus run` (LLM key, own agent loop) and the `/argus-drive` skill below, both driven from a clone of this repo.
 
@@ -257,13 +256,15 @@ What the skill implements (full protocol in [`.claude/skills/argus-drive/SKILL.m
 | Var | Meaning |
 |-----|---------|
 | `PLATFORM` | `ios` \| `android` \| `browser` |
-| `LLM_PROVIDER` / `LLM_API_BASE` / `LLM_API_KEY` / `LLM_MODEL` | LLM (OpenAI-compatible; OpenRouter by default) |
+| `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | LLM (OpenAI-compatible; OpenRouter by default; legacy `LLM_API_BASE` is accepted) |
 | `ANDROID_SERIAL` / `ANDROID_PACKAGE` | single-device serial / **app package under test (required for Android — no default; configure in `.env`)** |
 | `LLM_MAX_TOKENS` | output token cap shared by brain + planner (default 8192) |
 | `AGENT_MAX_STEPS` | backstop step cap (normal path uses per-step sub-action limit of 10) |
+| `AGENT_SETTLE_ENABLED` / `AGENT_WAIT_MAX_S` | wait for stable frames / per-step asynchronous wait budget |
+| `AGENT_MERGE_ASSERTS` | merge consecutive same-screen assertions into one verified batch (default true) |
 | `SKILLS_ENABLED` | preprocessing pipeline (loading/keyboard/scroll/diff/toast) |
 
-> ⚠️ **Upgrade note (breaking, Android only):** `ANDROID_PACKAGE` no longer has a hard-coded default — **set it in `.env`** (`ANDROID_PACKAGE=com.your.app`) or override per-run via the env var (`ANDROID_PACKAGE=com.your.app python3 -m argus.cli run …`). If unset, Android state-reset raises a clear error instead of silently testing the wrong app. `_accounts.json` is unchanged — `git pull` upgrade needs no data migration; browser/iOS unaffected.
+> ⚠️ **Upgrade note (breaking, Android only):** `ANDROID_PACKAGE` no longer has a hard-coded default — **set it in `.env`** (`ANDROID_PACKAGE=com.example.app`) or override per-run via the env var (`ANDROID_PACKAGE=com.example.app python3 -m argus.cli run …`). If unset, Android state-reset raises a clear error instead of silently testing the wrong app. `_accounts.json` is unchanged — `git pull` upgrade needs no data migration; browser/iOS unaffected.
 
 ### Model tiering & split execution
 
@@ -286,7 +287,7 @@ The **element locator** serves two roles: a **fallback** (when the brain's tap p
 
 Effect: the reasoning model is spent on *"is the page correct?"* instead of *"how do I tap this"* — a large cost/latency cut on action-heavy flows, with verdict quality preserved. Requires `LLM_MODEL_LOCATOR`.
 
-Related knobs: `AGENT_LOCATE_RETRY` (consecutive no-effect taps before the locator fallback), `AGENT_ASSERT_BURST_FRAMES` (frames captured on assertion steps for transient-UI checks), `APPIUM_MJPEG_ENABLED` (frame-stream screenshots). See **[`.env.example`](./.env.example)** for the full annotated list.
+Related knobs: `AGENT_LOCATE_RETRY` (consecutive no-effect taps before the locator fallback), `AGENT_SETTLE_*` (stable-frame sampling), `AGENT_WAIT_MAX_S` (wait budget), `AGENT_MERGE_ASSERTS` (same-screen assertion batching), `AGENT_ASSERT_BURST_FRAMES` (fallback burst count when settle is disabled), and `APPIUM_MJPEG_ENABLED` (frame-stream screenshots). See **[`.env.example`](./.env.example)** for the full annotated list.
 
 ## Project layout
 
@@ -357,14 +358,14 @@ BDD .feature 测试用例（手写，或 Figma 生成）
 ### 1. 装依赖
 
 ```bash
-# Python 依赖（不安装 argus 本身，直接以 module 形式跑）
-pip3 install openai Pillow uiautomator2 selenium fb-idb
+# Python 3.11+ 依赖（直接以 module 形式跑）
+pip3 install -r requirements.txt
 
-# Android
-brew install android-platform-tools        # adb（首次连设备 uiautomator2 自动推 server apk）
+# Android：把 Appium、UiAutomator2 driver 和 adb 装进 ~/.argus/runtime
+python3 -m argus.cli mcp init --skip-ios
 
-# iOS（只测 iOS 才装）
-brew install idb-companion
+# iOS（仅 macOS）：同时安装 XCUITest driver 并准备 WDA
+python3 -m argus.cli mcp init
 ```
 
 > 在仓库根目录用 `python3 -m argus.cli <command>` 调用。建议 `alias argus="python3 -m argus.cli"`。
@@ -379,14 +380,14 @@ python3 -m argus.cli init      # 生成默认 .env
 
 ```env
 PLATFORM=android
-LLM_PROVIDER=openai
-LLM_API_BASE=https://openrouter.ai/api/v1
-LLM_API_KEY=sk-or-v1-...
-LLM_MODEL=gemini-2.5-flash      # 任意视觉模型：google/gemini-2.5-flash、anthropic/claude-sonnet-4.5 …
-ANDROID_PACKAGE=com.your.app    # 被测包名：跑 Android 必填，在这里配好（无默认，缺则报错）
+LLM_PROVIDER=openrouter
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_API_KEY=${LLM_API_KEY}
+LLM_MODEL=google/gemini-3.5-flash
+ANDROID_PACKAGE=com.example.app # 被测包名：跑 Android 必填，在这里配好（无默认，缺则报错）
 ```
 
-> ⚠️ **升级提示（破坏性，仅 Android）**：`ANDROID_PACKAGE` 不再有写死的默认值 —— **请在 `.env` 里配** `ANDROID_PACKAGE=com.your.app`，或跑测时用环境变量临时覆盖 `ANDROID_PACKAGE=com.your.app python3 -m argus.cli run …`。不配的话跑 Android 会**直接报错**（而不是静默测错 App）。`_accounts.json` 格式不变，`git pull` 升级无需迁移数据；Browser / iOS 不受影响。
+> ⚠️ **升级提示（破坏性，仅 Android）**：`ANDROID_PACKAGE` 不再有写死的默认值 —— **请在 `.env` 里配** `ANDROID_PACKAGE=com.example.app`，或跑测时用环境变量临时覆盖 `ANDROID_PACKAGE=com.example.app python3 -m argus.cli run …`。不配的话跑 Android 会**直接报错**（而不是静默测错 App）。`_accounts.json` 格式不变，`git pull` 升级无需迁移数据；Browser / iOS 不受影响。
 
 ### 3. 跑第一个测试
 
@@ -421,11 +422,11 @@ Argus 把不同子任务路由到不同模型，并可选地把"操作"与"检�
 
 效果：把推理模型花在**"页面对不对"**而非**"怎么点中"**，在操作密集流程上大幅降本提速，同时保住判定质量。依赖 `LLM_MODEL_LOCATOR`。
 
-相关可调项：`AGENT_LOCATE_RETRY`（连续点空几次触发元素定位兜底）、`AGENT_ASSERT_BURST_FRAMES`（断言步抓几帧做瞬态 UI 检查）、`APPIUM_MJPEG_ENABLED`（帧流截图）。完整带注释清单见 **[`.env.example`](./.env.example)**。
+相关可调项：`AGENT_LOCATE_RETRY`（连续点空几次触发元素定位兜底）、`AGENT_SETTLE_*`（稳定帧采样）、`AGENT_WAIT_MAX_S`（等待预算）、`AGENT_MERGE_ASSERTS`（同屏断言合并）、`AGENT_ASSERT_BURST_FRAMES`（关闭 settle 后的多帧兜底数量）、`APPIUM_MJPEG_ENABLED`（帧流截图）。完整带注释清单见 **[`.env.example`](./.env.example)**。
 
 ## 用例格式（BDD Gherkin）
 
-**`.feature`（Gherkin / Cucumber）** —— 见上方英文示例。Argus 识别的 tag：`@P0/@P1/@P2`（优先级）·`@auto/@partial/@manual`（自动化程度，partial/manual 自动跳过）·`@ios/@android/@both`（平台限制）·`@TC-XXX`（用例 ID）·`@reset:pm_clear|relaunch|none`（Android 状态重置）·`@skip/@wip`。
+**`.feature`（Gherkin / Cucumber）** —— 见上方英文示例。Argus 识别的 tag：`@P0/@P1/@P2`（优先级）·`@auto/@partial/@manual`（自动化程度，partial/manual 自动跳过）·`@android/@ios/@browser` 等平台标签（集合语义，`@android @ios` 表示两端都跑；兼容遗留 `@both`）·`@TC-XXX`（用例 ID）·`@reset:pm_clear|relaunch|none`（Android 状态重置）·`@skip/@wip`。
 
 **每个 target 目录约定**：`_preconditions.md`（自动 prepend，告诉 LLM 怎么从异常态恢复到 Background）、`_accounts.json`（账号池，多设备时 worker `i` 绑 `accounts[i]`，用例里 `${EMAIL}`/`${PASSWORD}` 占位符被替换）、`reports/`（报告，`latest.html` 软链最新）。
 
@@ -506,7 +507,7 @@ Skill 实现了什么（完整协议见 [`.claude/skills/argus-drive/SKILL.md`](
 |---|---|---|
 | 主循环 | `agent.py`（Python） | Claude Code 对话 turn |
 | Brain | LLM API（`.env` 配 key） | 当前 Claude 会话 |
-| 平台层 | `argus.platforms.*` | Bash + adb |
+| 平台层 | `argus.platforms.*`（进程内 Appium） | `argus device` CLI（同一 Appium 平台，跨进程重连） |
 | 并发 | 多设备 / `-j N` | 单线程 |
 | 断点续跑 | 不支持（CI 整跑） | 支持（`state.json` + per-feature journal） |
 | 适用 | 批量回归 / CI | 调 prompt / 单 case debug / 小批量回归 |

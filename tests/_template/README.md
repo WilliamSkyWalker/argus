@@ -26,7 +26,7 @@ tests/<target>/
 ```
 # argus-target: <target>           # 报告归类，一般同目录名
 # argus-platform: android|ios|browser
-# argus-package: com.x.y           # 仅 android 需要
+# argus-package: com.example.app   # 仅 android 需要
 # argus-reset-default: relaunch    # android 默认重置：pm_clear|relaunch|none
 ```
 

@@ -43,7 +43,8 @@ Feature: 示例功能 - 首页基本可用
 
   # Tag 约定（gherkin.py 识别）：
   #   @P0/@P1/@P2 优先级 · @auto/@partial/@manual 自动化程度（partial/manual 自动 skip）
-  #   @ios/@android/@both 平台 · @TC-XXX 用例ID · @reset:pm_clear|relaunch|none 覆盖默认重置
+  #   @android/@ios/@browser 等平台标签可多选（@android @ios = 两端）· @TC-XXX 用例ID
+  #   @reset:pm_clear|relaunch|none 覆盖默认重置
   #   @skip/@wip 整 scenario 跳过
   #
   # 书写约定：每 Scenario 自包含（前置写进 Background）；Then 写成可独立验证的列表；

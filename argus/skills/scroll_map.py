@@ -4,11 +4,9 @@ Tells the LLM where in the page the current viewport is, whether there's
 content above/below, and approximately how far scrolled. This prevents the
 agent from getting stuck when the target element is off-screen.
 
-Detection methods:
-1. UI tree: look for scroll view indicators (contentOffset, scrollable)
-2. Browser: inject JS to read scrollTop / scrollHeight (via platform)
-3. Visual: detect scrollbar position from the screenshot
-4. Edge analysis: check if top/bottom edges have content continuity
+Detection is pure visual:
+1. Detect scrollbar position from the screenshot
+2. Analyze top/bottom edges for content continuity
 """
 
 from __future__ import annotations
