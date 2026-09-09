@@ -2,12 +2,12 @@
 
 > A vision-based AI agent that replaces the human QA tester.
 
-Argus reads a **BDD `.feature` test case** (Gherkin / Cucumber), **looks at the screen** (iOS / Android / Browser), decides what to do, performs the action, and judges pass/fail on its own — the way a human tester would, but driven by a vision LLM.
+Argus reads a **BDD `.feature` test case** (Gherkin / Cucumber), **looks at the screen** (iOS / Android / Browser / desktop), decides what to do, performs the action, and judges pass/fail on its own — the way a human tester would, but driven by a vision LLM.
 
 - 👁️ **Pure vision** — sends the raw screenshot to the LLM and locates everything visually, with **no UI tree**. Coordinates are percentage-based (resolution-independent); on a missed tap a dedicated element-locator model can re-locate the target.
 - 🧭 **Step-driven** — iterates Gherkin steps one at a time; a hard validator forbids step-skipping and bans "PASS" on assertions that can't be visually verified (no self-deception).
 - 🤖 **Self-healing reports** — after a failure it runs a root-cause classifier (`case_outdated / app_bug / llm_misjudge / fixture_failure / flaky`) for human review.
-- 📱 **Multi-platform, multi-device** — iOS + Android via a unified **Appium** driver (UiAutomator2 / XCUITest, with mjpeg frame-stream screenshots), Browser via Selenium. Schedule many Android devices against a shared case queue.
+- 📱 **Multi-platform, multi-device** — iOS + Android via a unified **Appium** driver (UiAutomator2 / XCUITest, with mjpeg frame-stream screenshots), Browser via Selenium, and **macOS / Windows desktop apps** via a window-level `pyautogui` driver. Schedule many Android devices against a shared case queue.
 - 🎨 **Figma integration** — generate test cases from a design, or run a visual design-vs-screenshot review.
 - 🔌 **MCP** — exposes its capabilities as MCP tools (drive it from Claude Code / Cursor) and can itself call external MCP servers (e.g. Figma).
 - 🧑‍✈️ **Two driver modes** — the built-in engine (any vision LLM via API), or **`/argus-drive`**: a Claude Code session as the brain — no LLM API key needed.
@@ -40,7 +40,7 @@ BDD .feature test case (hand-written, or Figma-generated)
   healer.py  (only on fail/timeout)  ──►  verdict for human review
         │
         ▼
-  Platform abstraction (argus.platforms.*):  AppiumPlatform (iOS + Android) │ BrowserPlatform (Selenium)
+  Platform abstraction (argus.platforms.*):  AppiumPlatform (iOS + Android) │ BrowserPlatform (Selenium) │ DesktopMacPlatform / DesktopWinPlatform (window-level pyautogui)
 ```
 
 ## Supported platforms
@@ -50,8 +50,12 @@ BDD .feature test case (hand-written, or Figma-generated)
 | Android  | Appium + **UiAutomator2** driver (text input via `mobile: type`, routed through a Unicode IME to bypass the native IME — works on both native `EditText` and Flutter's self-drawn canvas) |
 | iOS      | Appium + **XCUITest** driver (auto-signs WDA via xcodebuild/CoreDevice; needs `IOS_TEAM_ID` + a Xcode-logged-in team) |
 | Browser  | Selenium WebDriver (local or Selenium Grid, optional headless) |
+| macOS desktop   | `DesktopMacPlatform` — **window-level** pure-vision driver (not full-screen): screenshots the target app's window only (`CGWindowListCreateImage`), keeps it foregrounded before every turn, and injects clicks/keys globally via `pyautogui` (percentage coordinates converted to the window's global points). Requires Screen Recording + Accessibility permissions; foreground-only (takes over mouse/keyboard focus). |
+| Windows desktop | `DesktopWinPlatform` — same window-level model ported to Windows (`SetForegroundWindow` + `pyautogui`); DPI-awareness is set at setup so window rect / screenshot / click all share one physical-pixel coordinate space. |
 
 `argus.platforms.appium.AppiumPlatform` is a single unified driver for both mobile OSes — `create_platform("ios"/"android"/"appium")` all resolve to it, switching XCUITest vs UiAutomator2 via `config["appium"]["os"]`. It manages its own Appium server (`AppiumServerManager`, auto-starts/reuses, injects `ANDROID_HOME`) and, when available, reads screenshots from a live **mjpeg frame stream** (`platforms/mjpeg.py`) instead of a screenshot HTTP round-trip, falling back to `get_screenshot_as_png` when the stream/port isn't exposed (e.g. some cloud device farms). No `adb`/`idb`/`simctl` calls are used for screenshots or input — everything goes through Appium.
+
+Desktop (`mac`/`macos`/`windows`/`win`/`desktop`) is selected via `PLATFORM=` in `.env` or a case's `@mac`/`@windows`/`@desktop` tag — not yet a `--platform` CLI choice (that flag still only accepts `ios`/`android`/`browser`). `PLATFORM=desktop` auto-picks mac vs Windows based on the OS Argus itself is running on. Set `MAC_APP` (app/menu-bar name) or `WIN_APP` (window-title substring, optionally with `WIN_LAUNCH` to start it) in `.env` — both are required with no default, same fail-fast policy as `ANDROID_PACKAGE`.
 
 ---
 
@@ -70,6 +74,10 @@ python3 -m argus.cli mcp init --skip-ios
 python3 -m argus.cli mcp init
 
 # Browser (only if testing web) — install Chrome/Chromium or use Selenium Grid
+
+# Desktop (only if testing a macOS/Windows app):
+#   macOS  → pip3 install pyautogui pyobjc-framework-Quartz; grant Screen Recording + Accessibility
+#   Windows → pip install pyautogui pywin32
 ```
 
 > Note: invoke everything as `python3 -m argus.cli <command>` from the repo root.
@@ -126,7 +134,7 @@ Feature: Login
     Then the home screen is shown with a bottom navigation bar
 ```
 
-Tags Argus understands: `@P0/@P1/@P2` (priority) · `@auto/@partial/@manual` (automation; partial/manual are auto-skipped) · platform tags such as `@android/@ios/@browser` (a set: `@android @ios` runs on both; legacy `@both` is still accepted) · `@TC-XXX` (case id) · `@reset:pm_clear|relaunch|none` (Android state reset) · `@skip/@wip`.
+Tags Argus understands: `@P0/@P1/@P2` (priority) · `@auto/@partial/@manual` (automation; partial/manual are auto-skipped) · platform tags such as `@android/@ios/@browser/@mac/@windows/@desktop` (a set: `@android @ios` runs on both; legacy `@both` is still accepted) · `@TC-XXX` (case id) · `@reset:pm_clear|relaunch|none` (Android state reset) · `@skip/@wip`.
 
 ### Non-visual assertions (`probe` plugins)
 
@@ -256,9 +264,10 @@ What the skill implements (full protocol in [`.claude/skills/argus-drive/SKILL.m
 
 | Var | Meaning |
 |-----|---------|
-| `PLATFORM` | `ios` \| `android` \| `browser` |
+| `PLATFORM` | `ios` \| `android` \| `browser` \| `mac`/`macos` \| `windows`/`win` \| `desktop` (auto mac/Windows by host OS) |
 | `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | LLM (OpenAI-compatible; OpenRouter by default; legacy `LLM_API_BASE` is accepted) |
 | `ANDROID_SERIAL` / `ANDROID_PACKAGE` | single-device serial / **app package under test (required for Android — no default; configure in `.env`)** |
+| `MAC_APP` / `WIN_APP` / `WIN_LAUNCH` | macOS: menu-bar/app name to foreground and window-capture. Windows: window-title substring (optional launch path/command). Both **required for their platform, no default** — same fail-fast policy as `ANDROID_PACKAGE`. |
 | `LLM_MAX_TOKENS` | output token cap shared by brain + planner (default 8192) |
 | `AGENT_MAX_STEPS` | backstop step cap (normal path uses per-step sub-action limit of 10) |
 | `AGENT_SETTLE_ENABLED` / `AGENT_WAIT_MAX_S` | wait for stable frames / per-step asynchronous wait budget |
@@ -303,6 +312,7 @@ CLAUDE.md         deep architecture & behavior notes (read this to contribute)
 
 - **Tap accuracy is a calibration problem, not a VLM bias.** If taps land off-target, first check the screenshot-px → device-px scale (`wm size` vs the actual `screencap` size — they differ on e.g. Samsung resolution-override devices). With calibration right, percentage-based visual coordinates land. Argus is **pure-vision (no UI tree)**: on repeated misses a dedicated element-locator model (`LLM_MODEL_LOCATOR`) re-locates the target, with a coordinate-grid overlay as a further fallback. Write hints as directions ("top-right"), not pixel coordinates.
 - **Self-drawn / canvas UIs (e.g. Flutter)** are handled exactly like everything else — Argus never reads a UI tree, so there is no special-casing or degradation for treeless apps.
+- **Desktop drivers are foreground-only** — they take over the real mouse/keyboard and keep the target app window frontmost every turn (no backgrounded/non-disruptive mode yet; that would need an isolated GUI session / VNC). Don't touch the input devices while a desktop run is in progress.
 - Assertions that can't be visually verified (analytics events, backend calls, system time, notification drawer, cross-app deep links) are intentionally **forced to fail** in the vision path — write them out, tag them out, or verify them for real with a [probe plugin](./docs/probes.md) (that step then skips the LLM).
 
 For the full architecture, module-by-module notes, and contribution guidance, see **[CLAUDE.md](./CLAUDE.md)**.
@@ -314,12 +324,12 @@ For the full architecture, module-by-module notes, and contribution guidance, se
 
 > 用视觉的 AI agent，替代人工 QA 测试员。
 
-Argus 读取 **BDD `.feature` 测试用例**（Gherkin / Cucumber），**直接看屏幕**（iOS / Android / 浏览器），自己决定怎么操作、执行动作，并自主判定通过/失败 —— 像人类测试员一样，但由视觉大模型驱动。
+Argus 读取 **BDD `.feature` 测试用例**（Gherkin / Cucumber），**直接看屏幕**（iOS / Android / 浏览器 / 桌面端），自己决定怎么操作、执行动作，并自主判定通过/失败 —— 像人类测试员一样，但由视觉大模型驱动。
 
 - 👁️ **纯视觉** —— 把原始截图发给 LLM，全靠视觉定位，**不读 UI 树**。坐标用百分比（与分辨率无关）；点空时可由专用元素定位模型重定位目标。
 - 🧭 **Step-driven** —— 逐个推进 Gherkin step；硬校验器禁止跳步，并禁止对"无法视觉验证的断言"判 PASS（杜绝自欺）。
 - 🤖 **自愈报告** —— 失败后跑根因分类（`case_outdated / app_bug / llm_misjudge / fixture_failure / flaky`）供人工复审。
-- 📱 **多平台多设备** —— iOS + Android 走统一的 **Appium** 驱动（UiAutomator2 / XCUITest，配 mjpeg 帧流截图），浏览器走 Selenium。多台 Android 可共享用例队列动态调度。
+- 📱 **多平台多设备** —— iOS + Android 走统一的 **Appium** 驱动（UiAutomator2 / XCUITest，配 mjpeg 帧流截图），浏览器走 Selenium，**macOS / Windows 桌面 App** 走窗口级 `pyautogui` 驱动。多台 Android 可共享用例队列动态调度。
 - 🎨 **Figma 集成** —— 从设计稿生成用例，或做"设计 vs 截图"视觉走查。
 - 🔌 **MCP** —— 把自身能力暴露为 MCP 工具（可被 Claude Code / Cursor 调用），也能调用外部 MCP server（如 Figma）。
 - 🧑‍✈️ **双驱动模式** —— 内置引擎（任意视觉 LLM API），或 **`/argus-drive`**：直接把 Claude Code 会话当 brain，不需要 LLM API key。
@@ -350,7 +360,7 @@ BDD .feature 测试用例（手写，或 Figma 生成）
   healer.py  (仅 fail/timeout)  ──►  根因 verdict
         │
         ▼
-  平台抽象（argus.platforms.*）：AppiumPlatform（iOS + Android）│ BrowserPlatform（Selenium）
+  平台抽象（argus.platforms.*）：AppiumPlatform（iOS + Android）│ BrowserPlatform（Selenium）│ DesktopMacPlatform / DesktopWinPlatform（窗口级 pyautogui）
 ```
 
 ## 支持平台
@@ -360,8 +370,12 @@ BDD .feature 测试用例（手写，或 Figma 生成）
 | Android | Appium + **UiAutomator2** driver（文字输入走 `mobile: type`，经 Unicode IME 绕开原生输入法——原生 `EditText` 和 Flutter 自绘 canvas 都通吃） |
 | iOS | Appium + **XCUITest** driver（走 xcodebuild/CoreDevice 自动签 WDA；需 `IOS_TEAM_ID` + Xcode 登录该 team） |
 | 浏览器 | Selenium WebDriver（本地或 Selenium Grid，可选无头） |
+| macOS 桌面 | `DesktopMacPlatform` —— **窗口级**纯视觉驱动（不是整屏）：只截**被测 App 窗口**画面（`CGWindowListCreateImage`），每 turn 截图前把它 activate 到前台，用 `pyautogui` 按全局坐标点击/输入（百分比坐标换算成窗口对应的全局坐标）。需要屏幕录制 + 辅助功能权限；**前台方案**（会占用鼠标/键盘焦点）。 |
+| Windows 桌面 | `DesktopWinPlatform` —— 同款窗口级方案平移到 Windows（`SetForegroundWindow` + `pyautogui`）；setup 时把进程设为 Per-Monitor DPI aware，令窗口坐标/截图/点击统一落在同一套物理像素坐标系。 |
 
 `argus.platforms.appium.AppiumPlatform` 是 iOS/Android 统一的一个驱动——`create_platform("ios"/"android"/"appium")` 全部落到它上面，由 `config["appium"]["os"]` 切换 XCUITest / UiAutomator2。它自带 Appium server 管理（`AppiumServerManager`，自动起/复用，自动注入 `ANDROID_HOME`），有条件时从常驻的 **mjpeg 帧流**（`platforms/mjpeg.py`）取最新帧代替一次 HTTP 截图往返，取不到（如部分云真机不暴露端口）就无条件回落 `get_screenshot_as_png`。截图和输入全程不碰 `adb`/`idb`/`simctl`，统一走 Appium。
+
+桌面端（`mac`/`macos`/`windows`/`win`/`desktop`）通过 `.env` 里的 `PLATFORM=` 或用例的 `@mac`/`@windows`/`@desktop` tag 选择——**还不是** `--platform` CLI 参数的可选值（该参数目前只接受 `ios`/`android`/`browser`）。`PLATFORM=desktop` 会按 Argus 自己运行所在的 OS 自动分流 mac/Windows。需在 `.env` 配 `MAC_APP`(App/菜单栏名) 或 `WIN_APP`(窗口标题子串，可配 `WIN_LAUNCH` 先启动它)——两者跑各自平台时必填、无默认值，防误测策略同 `ANDROID_PACKAGE`。
 
 ## 新手指引
 
@@ -376,6 +390,10 @@ python3 -m argus.cli mcp init --skip-ios
 
 # iOS（仅 macOS）：同时安装 XCUITest driver 并准备 WDA
 python3 -m argus.cli mcp init
+
+# 桌面端（只有测 macOS/Windows App 才需要）：
+#   macOS  → pip3 install pyautogui pyobjc-framework-Quartz；需授予屏幕录制 + 辅助功能权限
+#   Windows → pip install pyautogui pywin32
 ```
 
 > 在仓库根目录用 `python3 -m argus.cli <command>` 调用。建议 `alias argus="python3 -m argus.cli"`。
@@ -436,7 +454,7 @@ Argus 把不同子任务路由到不同模型，并可选地把"操作"与"检�
 
 ## 用例格式（BDD Gherkin）
 
-**`.feature`（Gherkin / Cucumber）** —— 见上方英文示例。Argus 识别的 tag：`@P0/@P1/@P2`（优先级）·`@auto/@partial/@manual`（自动化程度，partial/manual 自动跳过）·`@android/@ios/@browser` 等平台标签（集合语义，`@android @ios` 表示两端都跑；兼容遗留 `@both`）·`@TC-XXX`（用例 ID）·`@reset:pm_clear|relaunch|none`（Android 状态重置）·`@skip/@wip`。
+**`.feature`（Gherkin / Cucumber）** —— 见上方英文示例。Argus 识别的 tag：`@P0/@P1/@P2`（优先级）·`@auto/@partial/@manual`（自动化程度，partial/manual 自动跳过）·`@android/@ios/@browser/@mac/@windows/@desktop` 等平台标签（集合语义，`@android @ios` 表示两端都跑；兼容遗留 `@both`）·`@TC-XXX`（用例 ID）·`@reset:pm_clear|relaunch|none`（Android 状态重置）·`@skip/@wip`。
 
 **每个 target 目录约定**：`_preconditions.md`（自动 prepend，告诉 LLM 怎么从异常态恢复到 Background）、`_accounts.json`（账号池，多设备时 worker `i` 绑 `accounts[i]`，用例里 `${EMAIL}`/`${PASSWORD}` 占位符被替换）、`reports/`（报告，`latest.html` 软链最新）。
 
@@ -487,19 +505,20 @@ argus run <t> --only-probes                     # 只跑有埋点断言的 case�
 
 Argus 双向支持 MCP。
 
-**作为 server**：`argus/mcp/server.py`（FastMCP，stdio）暴露 12 个 tool，可在 Claude Code / Cursor / Claude Desktop 里用自然语言驱动 Argus（"列一下 my-app 的用例"、"跑 login.feature"）：
+**作为 server**：`argus/mcp/server.py`（FastMCP，stdio）暴露 19 个 tool，可在 Claude Code / Cursor / Claude Desktop 里用自然语言驱动 Argus（"列一下 my-app 的用例"、"跑 login.feature"）：
 
 - 只读：`list_targets` / `list_cases` / `list_runs` / `get_run_status` / `get_report`
 - 跑测：`run_target` / `run_case` / `cancel_run`（异步，返回 `run_id` 轮询）
-- 设备：`list_devices` / `install_apk` / `adb_reconnect` / `setup_simulator`
+- 设备管理：`list_devices` / `install_apk` / `adb_reconnect` / `setup_simulator`
+- 设备原语：`device_screenshot` / `device_tap` / `device_swipe` / `device_input` / `device_type_send` / `device_key` / `device_launch`
 
-启动：`python3 -m argus.mcp.server`。仓库自带 `.mcp.json`，clone 后 **Claude Code 自动挂载 `argus` server**，直接对话即可。
+启动：`python3 -m argus.mcp.server`。仓库自带 `.mcp.json`，clone 后 **Claude Code 自动挂载 `argus` server**，直接对话即可。`--profile device`（或 `ARGUS_MCP_PROFILE=device`）只留设备原语——不需要 LLM key、不需要 `tests/` 目录。
 
 **作为 client**：跑测时 brain 可调用外部 MCP server（如 Figma MCP）。在 `.argus/mcp_clients.json` 配置（入库的是 `.example`，真 token 被 gitignore）。注册了 server 后，brain 会拉取其 tool catalog 并在决策中按需调用（每次调用都记日志便于审计）。
 
 ## `/argus-drive` —— 让 Claude Code 当 brain
 
-内置引擎之外，Argus 还带一种替代驱动方式：**Claude Code 会话本身就是 brain**，`adb` 是平台层，每个对话 turn 就是主循环的一次迭代。不需要 LLM API key —— 你正在对话的模型直接负责看屏幕和做决策。
+内置引擎之外，Argus 还带一种替代驱动方式：**Claude Code 会话本身就是 brain**，`argus device` CLI（Appium）是平台层，每个对话 turn 就是主循环的一次迭代。不需要 LLM API key —— 你正在对话的模型直接负责看屏幕和做决策。
 
 ```
 /argus-drive tests/my-app/cases/login.feature TC-LOGIN-001   # 单 case（debug）
@@ -521,5 +540,11 @@ Skill 实现了什么（完整协议见 [`.claude/skills/argus-drive/SKILL.md`](
 | 并发 | 多设备 / `-j N` | 单线程 |
 | 断点续跑 | 不支持（CI 整跑） | 支持（`state.json` + per-feature journal） |
 | 适用 | 批量回归 / CI | 调 prompt / 单 case debug / 小批量回归 |
+
+## 已知限制
+
+- **点不准是标定问题，不是模型的锅。** 先核对截图 px → 设备 px 的换算比例（`wm size` vs 实际 `screencap` 尺寸——有些三星分辨率覆盖机型两者不一致）。标定对了，百分比坐标基本落中。Argus **纯视觉（不读 UI 树）**：连续点空由专用定位模型（`LLM_MODEL_LOCATOR`）重定位，网格兜底作为最后手段。Hint 写方位（"右上角"），别写像素坐标。
+- **桌面驱动是前台方案** —— 会占用真实鼠标/键盘，且每 turn 都把被测窗口切到最前（暂无后台不打扰模式，那需要独立 GUI 会话/VNC）。桌面跑测期间别手动碰键鼠。
+- 无法视觉验证的断言（埋点、后端调用、系统时间、通知抽屉、跨 App 深链）在纯视觉路径下**刻意判 fail**——要么改写用例、要么打 tag 跳过，要么挂 [probe 插件](./docs/probes.md) 真验证（该 step 会跳过 LLM）。
 
 完整架构、逐模块说明与贡献指引见 **[CLAUDE.md](./CLAUDE.md)**。
