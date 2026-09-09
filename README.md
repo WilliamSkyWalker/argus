@@ -7,7 +7,7 @@ Argus reads a **BDD `.feature` test case** (Gherkin / Cucumber), **looks at the 
 - 👁️ **Pure vision** — sends the raw screenshot to the LLM and locates everything visually, with **no UI tree**. Coordinates are percentage-based (resolution-independent); on a missed tap a dedicated element-locator model can re-locate the target.
 - 🧭 **Step-driven** — iterates Gherkin steps one at a time; a hard validator forbids step-skipping and bans "PASS" on assertions that can't be visually verified (no self-deception).
 - 🤖 **Self-healing reports** — after a failure it runs a root-cause classifier (`case_outdated / app_bug / llm_misjudge / fixture_failure / flaky`) for human review.
-- 📱 **Multi-platform, multi-device** — Android (adb + uiautomator2), iOS (idb + simctl), Browser (Selenium). Schedule many Android devices against a shared case queue.
+- 📱 **Multi-platform, multi-device** — iOS + Android via a unified **Appium** driver (UiAutomator2 / XCUITest, with mjpeg frame-stream screenshots), Browser via Selenium. Schedule many Android devices against a shared case queue.
 - 🎨 **Figma integration** — generate test cases from a design, or run a visual design-vs-screenshot review.
 - 🔌 **MCP** — exposes its capabilities as MCP tools (drive it from Claude Code / Cursor) and can itself call external MCP servers (e.g. Figma).
 - 🧑‍✈️ **Two driver modes** — the built-in engine (any vision LLM via API), or **`/argus-drive`**: a Claude Code session as the brain — no LLM API key needed.
@@ -29,7 +29,6 @@ BDD .feature test case (hand-written, or Figma-generated)
   agent.py  — step-driven main loop
      for each Gherkin step:
        for sub-action in 1..10:
-         dialog_dismisser.dismiss()        # auto-close known system popups
          screenshot + skills enhance       # loading / keyboard / scroll / diff / toast
          brain.decide() → JSON action      # vision LLM
          step_validator.validate()         # monotonic step index, evidence, no blind PASS
@@ -41,16 +40,18 @@ BDD .feature test case (hand-written, or Figma-generated)
   healer.py  (only on fail/timeout)  ──►  verdict for human review
         │
         ▼
-  Platform abstraction:  iOS │ Android │ Browser
+  Platform abstraction (argus.platforms.*):  AppiumPlatform (iOS + Android) │ BrowserPlatform (Selenium)
 ```
 
 ## Supported platforms
 
 | Platform | Driver |
 |----------|--------|
-| Android  | `adb` + `uiautomator2` (text input via `ACTION_SET_TEXT`, bypassing the IME) |
-| iOS      | `idb` + `xcrun simctl` (auto-detects simulator vs real device) |
+| Android  | Appium + **UiAutomator2** driver (text input via `mobile: type`, routed through a Unicode IME to bypass the native IME — works on both native `EditText` and Flutter's self-drawn canvas) |
+| iOS      | Appium + **XCUITest** driver (auto-signs WDA via xcodebuild/CoreDevice; needs `IOS_TEAM_ID` + a Xcode-logged-in team) |
 | Browser  | Selenium WebDriver (local or Selenium Grid, optional headless) |
+
+`argus.platforms.appium.AppiumPlatform` is a single unified driver for both mobile OSes — `create_platform("ios"/"android"/"appium")` all resolve to it, switching XCUITest vs UiAutomator2 via `config["appium"]["os"]`. It manages its own Appium server (`AppiumServerManager`, auto-starts/reuses, injects `ANDROID_HOME`) and, when available, reads screenshots from a live **mjpeg frame stream** (`platforms/mjpeg.py`) instead of a screenshot HTTP round-trip, falling back to `get_screenshot_as_png` when the stream/port isn't exposed (e.g. some cloud device farms). No `adb`/`idb`/`simctl` calls are used for screenshots or input — everything goes through Appium.
 
 ---
 
@@ -318,7 +319,7 @@ Argus 读取 **BDD `.feature` 测试用例**（Gherkin / Cucumber），**直接�
 - 👁️ **纯视觉** —— 把原始截图发给 LLM，全靠视觉定位，**不读 UI 树**。坐标用百分比（与分辨率无关）；点空时可由专用元素定位模型重定位目标。
 - 🧭 **Step-driven** —— 逐个推进 Gherkin step；硬校验器禁止跳步，并禁止对"无法视觉验证的断言"判 PASS（杜绝自欺）。
 - 🤖 **自愈报告** —— 失败后跑根因分类（`case_outdated / app_bug / llm_misjudge / fixture_failure / flaky`）供人工复审。
-- 📱 **多平台多设备** —— Android（adb + uiautomator2）、iOS（idb + simctl）、浏览器（Selenium）。多台 Android 可共享用例队列动态调度。
+- 📱 **多平台多设备** —— iOS + Android 走统一的 **Appium** 驱动（UiAutomator2 / XCUITest，配 mjpeg 帧流截图），浏览器走 Selenium。多台 Android 可共享用例队列动态调度。
 - 🎨 **Figma 集成** —— 从设计稿生成用例，或做"设计 vs 截图"视觉走查。
 - 🔌 **MCP** —— 把自身能力暴露为 MCP 工具（可被 Claude Code / Cursor 调用），也能调用外部 MCP server（如 Figma）。
 - 🧑‍✈️ **双驱动模式** —— 内置引擎（任意视觉 LLM API），或 **`/argus-drive`**：直接把 Claude Code 会话当 brain，不需要 LLM API key。
@@ -338,8 +339,7 @@ BDD .feature 测试用例（手写，或 Figma 生成）
   agent.py  — step-driven 主循环
      对每个 Gherkin step：
        sub-action 循环 1..10：
-         dialog_dismisser.dismiss()        # 自动关已知系统弹窗
-         截图 + skills 增强                 # 加载/键盘/滚动/元素标注/变化检测
+         截图 + skills 增强                 # 加载/键盘/滚动/变化检测/toast
          brain.decide() → JSON 动作         # 视觉 LLM
          step_validator.validate()         # step 单调、evidence、不许盲目 PASS
            ├─ reject → 把理由喂回 LLM 自纠
@@ -350,8 +350,18 @@ BDD .feature 测试用例（手写，或 Figma 生成）
   healer.py  (仅 fail/timeout)  ──►  根因 verdict
         │
         ▼
-  平台抽象：iOS │ Android │ 浏览器
+  平台抽象（argus.platforms.*）：AppiumPlatform（iOS + Android）│ BrowserPlatform（Selenium）
 ```
+
+## 支持平台
+
+| 平台 | 驱动 |
+|------|------|
+| Android | Appium + **UiAutomator2** driver（文字输入走 `mobile: type`，经 Unicode IME 绕开原生输入法——原生 `EditText` 和 Flutter 自绘 canvas 都通吃） |
+| iOS | Appium + **XCUITest** driver（走 xcodebuild/CoreDevice 自动签 WDA；需 `IOS_TEAM_ID` + Xcode 登录该 team） |
+| 浏览器 | Selenium WebDriver（本地或 Selenium Grid，可选无头） |
+
+`argus.platforms.appium.AppiumPlatform` 是 iOS/Android 统一的一个驱动——`create_platform("ios"/"android"/"appium")` 全部落到它上面，由 `config["appium"]["os"]` 切换 XCUITest / UiAutomator2。它自带 Appium server 管理（`AppiumServerManager`，自动起/复用，自动注入 `ANDROID_HOME`），有条件时从常驻的 **mjpeg 帧流**（`platforms/mjpeg.py`）取最新帧代替一次 HTTP 截图往返，取不到（如部分云真机不暴露端口）就无条件回落 `get_screenshot_as_png`。截图和输入全程不碰 `adb`/`idb`/`simctl`，统一走 Appium。
 
 ## 新手指引
 
