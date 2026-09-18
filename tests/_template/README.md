@@ -3,7 +3,7 @@
 被测项目简要描述（`argus list` 会取本文件第一段非标题行做说明）。
 
 - **URL**: https://example.com         （browser target 用）
-- **平台**: browser | ios | android
+- **平台**: browser | ios | android | rdp
 - **包名**: com.example.app            （android target 用；跑测/重置要用）
 - **备注**: 其他信息（测试账号、特殊前置等）
 
@@ -25,7 +25,7 @@ tests/<target>/
 
 ```
 # argus-target: <target>           # 报告归类，一般同目录名
-# argus-platform: android|ios|browser
+# argus-platform: android|ios|browser|rdp
 # argus-package: com.example.app   # 仅 android 需要
 # argus-reset-default: relaunch    # android 默认重置：pm_clear|relaunch|none
 ```

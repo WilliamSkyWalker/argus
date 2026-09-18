@@ -10,13 +10,13 @@
 #
 # 字段含义：
 #   argus-target   报告归类用，一般同目录名
-#   argus-platform ios | android | browser（限定本文件用例跑的平台）
+#   argus-platform ios | android | browser | rdp（限定本文件用例跑的平台）
 #   argus-package  仅 android 需要：被测包名（reset/relaunch 用）
 #   argus-reset-default  android 每 scenario 前默认重置：pm_clear | relaunch | none
 #
 # 说明：
 #   - 这是 .feature（Gherkin/Cucumber）样例，argus 主推 & 默认格式（gherkin.py 全套解析）。
-#   - browser target 去掉 argus-package；platform 写 browser。
+#   - browser / rdp target 去掉 argus-package；platform 分别写 browser / rdp。
 #   - argus 也兼容旧的 TDD 三段式 .md（### TC- 切块），但新 target 一律用 .feature。
 
 Feature: 示例功能 - 首页基本可用
@@ -43,7 +43,7 @@ Feature: 示例功能 - 首页基本可用
 
   # Tag 约定（gherkin.py 识别）：
   #   @P0/@P1/@P2 优先级 · @auto/@partial/@manual 自动化程度（partial/manual 自动 skip）
-  #   @android/@ios/@browser 等平台标签可多选（@android @ios = 两端）· @TC-XXX 用例ID
+  #   @android/@ios/@browser/@rdp 等平台标签可多选（@android @ios = 两端）· @TC-XXX 用例ID
   #   @reset:pm_clear|relaunch|none 覆盖默认重置
   #   @skip/@wip 整 scenario 跳过
   #

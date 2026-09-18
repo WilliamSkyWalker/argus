@@ -249,8 +249,8 @@ def main():
     # argus new <target>
     new_p = sub.add_parser("new", help="Scaffold a new test target under tests/")
     new_p.add_argument("name", help="Target name (becomes tests/<name>/)")
-    new_p.add_argument("--platform", choices=["ios", "android", "browser"],
-                       required=True, help="Target platform")
+    new_p.add_argument("--platform", choices=["ios", "android", "browser", "rdp"],
+                       required=True, help="Target platform (rdp is experimental)")
     new_p.add_argument("--package", default=None, metavar="PKG",
                        help="Android package name (e.g. com.example.app); android only")
     new_p.add_argument("--url", default=None, metavar="URL",
@@ -270,8 +270,8 @@ def main():
     # argus run <test case file or inline text>
     run_p = sub.add_parser("run", help="Run test case(s)")
     run_p.add_argument("test", help="Test case text or path to .md/.txt file")
-    run_p.add_argument("--platform", choices=["ios", "android", "browser"], default=None,
-                       help="Platform to test on (default: from config)")
+    run_p.add_argument("--platform", choices=["ios", "android", "browser", "rdp"], default=None,
+                       help="Platform to test on (default: from config; rdp is experimental)")
     run_p.add_argument("--url", default=None,
                        help="Open this URL before running (browser platform)")
     run_p.add_argument("--max-steps", type=int, default=None,
@@ -415,7 +415,7 @@ def main():
     # argus figma review <url>
     review_p = figma_sub.add_parser("review", help="Visual review: Figma vs actual screenshot")
     review_p.add_argument("url", help="Figma URL (with node-id for specific frame)")
-    review_p.add_argument("--platform", choices=["ios", "android", "browser"], default=None)
+    review_p.add_argument("--platform", choices=["ios", "android", "browser", "rdp"], default=None)
     review_p.add_argument("--screenshot", default=None,
                           help="Path to screenshot PNG (instead of live capture)")
     review_p.add_argument("-o", "--output", default=None,
@@ -972,10 +972,12 @@ def cmd_new(name: str, platform: str, package: str | None = None,
                     out.append(ln)
                 # reset-default 仅 android 有意义，非 android 丢掉
             elif s.startswith("@") and "@android" in s:
-                # scenario 平台 tag：android 保留；ios 换成 @ios；browser 去掉
+                # scenario 平台 tag：android 保留；ios/rdp 换标签；browser 不加平台标签
                 # （平台标签是可扩展集合；模板当前以 @android 为起点）
                 if platform == "ios":
                     out.append(ln.replace("@android", "@ios"))
+                elif platform == "rdp":
+                    out.append(ln.replace("@android", "@rdp"))
                 elif platform == "browser":
                     out.append(re.sub(r"\s*@android\b", "", ln))
                 else:
