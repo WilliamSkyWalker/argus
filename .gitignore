@@ -176,6 +176,9 @@ __marimo__/
 .claude/*
 !.claude/skills/
 
+# Qoder local settings
+.qoder/settings.local.json
+
 # Test cases (各项目独立 repo 或本地数据，不进 argus repo)
 # 注意：用 `tests/*` 而不是 `tests/` —— 后者会让 git 不再递归进入该目录，
 # 导致下面的 `!tests/_template/` 例外失效。
