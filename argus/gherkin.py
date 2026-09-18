@@ -34,7 +34,7 @@ KEYWORD_SCENARIO = re.compile(r'^\s*(Scenario|Example|场景|例子):\s*(.*)$')
 KEYWORD_EXAMPLES = re.compile(r'^\s*(Examples|Scenarios|例子|场景):\s*(.*)$')
 
 # 已知平台标签(可扩展)。scenario 每挂一个即在该平台跑；不再用二元 both。
-_KNOWN_PLATFORMS = ('android', 'ios', 'browser', 'web', 'desktop', 'mac', 'windows')
+_KNOWN_PLATFORMS = ('android', 'ios', 'browser', 'web', 'desktop', 'mac', 'windows', 'rdp')
 
 # Step 关键字（开头匹配，支持英文 + 常见中文）
 STEP_PREFIXES = (

@@ -7,7 +7,7 @@ Argus reads a **BDD `.feature` test case** (Gherkin / Cucumber), **looks at the 
 - 👁️ **Pure vision** — sends the raw screenshot to the LLM and locates everything visually, with **no UI tree**. Coordinates are percentage-based (resolution-independent); on a missed tap a dedicated element-locator model can re-locate the target.
 - 🧭 **Step-driven** — iterates Gherkin steps one at a time; a hard validator forbids step-skipping and bans "PASS" on assertions that can't be visually verified (no self-deception).
 - 🤖 **Self-healing reports** — after a failure it runs a root-cause classifier (`case_outdated / app_bug / llm_misjudge / fixture_failure / flaky`) for human review.
-- 📱 **Multi-platform, multi-device** — iOS + Android via a unified **Appium** driver (UiAutomator2 / XCUITest, with mjpeg frame-stream screenshots), Browser via Selenium, and **macOS / Windows desktop apps** via a window-level `pyautogui` driver. Schedule many Android devices against a shared case queue.
+- 📱 **Multi-platform, multi-device** — iOS + Android via a unified **Appium** driver (UiAutomator2 / XCUITest, with mjpeg frame-stream screenshots), Browser via Selenium, and **macOS / Windows desktop apps** via window-level visual drivers. WSL can operate its Windows host through a bundled PowerShell/Win32 runner, with no Windows Python install. Schedule many Android devices against a shared case queue.
 - 🎨 **Figma integration** — generate test cases from a design, or run a visual design-vs-screenshot review.
 - 🔌 **MCP** — exposes its capabilities as MCP tools (drive it from Claude Code / Cursor) and can itself call external MCP servers (e.g. Figma).
 - 🧑‍✈️ **Two driver modes** — the built-in engine (any vision LLM via API), or **`/argus-drive`**: a Claude Code session as the brain — no LLM API key needed.
@@ -40,7 +40,7 @@ BDD .feature test case (hand-written, or Figma-generated)
   healer.py  (only on fail/timeout)  ──►  verdict for human review
         │
         ▼
-  Platform abstraction (argus.platforms.*):  AppiumPlatform (iOS + Android) │ BrowserPlatform (Selenium) │ DesktopMacPlatform / DesktopWinPlatform (window-level pyautogui)
+  Platform abstraction (argus.platforms.*):  AppiumPlatform (iOS + Android) │ BrowserPlatform (Selenium) │ DesktopMacPlatform / DesktopWinPlatform / WindowsRunnerPlatform
 ```
 
 ## Supported platforms
@@ -51,11 +51,16 @@ BDD .feature test case (hand-written, or Figma-generated)
 | iOS      | Appium + **XCUITest** driver (auto-signs WDA via xcodebuild/CoreDevice; needs `IOS_TEAM_ID` + a Xcode-logged-in team) |
 | Browser  | Selenium WebDriver (local or Selenium Grid, optional headless) |
 | macOS desktop   | `DesktopMacPlatform` — **window-level** pure-vision driver (not full-screen): screenshots the target app's window only (`CGWindowListCreateImage`), keeps it foregrounded before every turn, and injects clicks/keys globally via `pyautogui` (percentage coordinates converted to the window's global points). Requires Screen Recording + Accessibility permissions; foreground-only (takes over mouse/keyboard focus). |
-| Windows desktop | `DesktopWinPlatform` — same window-level model ported to Windows (`SetForegroundWindow` + `pyautogui`); DPI-awareness is set at setup so window rect / screenshot / click all share one physical-pixel coordinate space. |
+| Windows desktop | From WSL, `WindowsRunnerPlatform` automatically launches the bundled PowerShell/Win32 JSONL runner on the Windows host: no Windows Python, packages, service, or RDP login. Native Windows Python uses `DesktopWinPlatform` (`pyautogui` + `pywin32`). Both capture only the target window and operate the current foreground desktop. |
+| Remote desktop (experimental) | `RDPPlatform` is **under development**. Its current prototype connects from Linux/WSL to Windows through FreeRDP in Xvfb. It is retained as the foundation for future remote Windows/macOS support, but its API and behavior are not yet stable. |
 
 `argus.platforms.appium.AppiumPlatform` is a single unified driver for both mobile OSes — `create_platform("ios"/"android"/"appium")` all resolve to it, switching XCUITest vs UiAutomator2 via `config["appium"]["os"]`. It manages its own Appium server (`AppiumServerManager`, auto-starts/reuses, injects `ANDROID_HOME`) and, when available, reads screenshots from a live **mjpeg frame stream** (`platforms/mjpeg.py`) instead of a screenshot HTTP round-trip, falling back to `get_screenshot_as_png` when the stream/port isn't exposed (e.g. some cloud device farms). No `adb`/`idb`/`simctl` calls are used for screenshots or input — everything goes through Appium.
 
 Desktop (`mac`/`macos`/`windows`/`win`/`desktop`) is selected via `PLATFORM=` in `.env` or a case's `@mac`/`@windows`/`@desktop` tag — not yet a `--platform` CLI choice (that flag still only accepts `ios`/`android`/`browser`). `PLATFORM=desktop` auto-picks mac vs Windows based on the OS Argus itself is running on. Set `MAC_APP` (app/menu-bar name) or `WIN_APP` (window-title substring, optionally with `WIN_LAUNCH` to start it) in `.env` — both are required with no default, same fail-fast policy as `ANDROID_PACKAGE`.
+
+When Argus runs under WSL, choosing `windows` automatically uses `WindowsRunnerPlatform`. It invokes the repository's `windows_runner.ps1` through WSL interop and exchanges JSON over stdin/stdout. Screenshots, Win32 mouse/keyboard input, Unicode clipboard paste, DPI setup, and target-window selection all execute in the current Windows console session. `WIN_LAUNCH` locks the runner to the launched process ID, preventing another window with the same title from receiving input. The runner is foreground-only and takes over the real mouse/keyboard while a case runs.
+
+`rdp` is an **experimental, under-development** remote desktop platform. The current prototype may be selected with `PLATFORM=rdp`, `@rdp`, or `argus run ... --platform rdp`; it connects to Windows through FreeRDP, while remote macOS support remains future work. On Linux/WSL, install `freerdp2-x11` (or `freerdp3-x11`), `xvfb`, and `xdotool`; set `RDP_HOST`, `RDP_USERNAME`, and `RDP_PASSWORD`. Credentials are sent to FreeRDP over stdin rather than exposed in process arguments. Do not depend on this interface for stable automation yet.
 
 ---
 
@@ -77,7 +82,11 @@ python3 -m argus.cli mcp init
 
 # Desktop (only if testing a macOS/Windows app):
 #   macOS  → pip3 install pyautogui pyobjc-framework-Quartz; grant Screen Recording + Accessibility
-#   Windows → pip install pyautogui pywin32
+#   Windows native Python → pip install pyautogui pywin32
+#   Windows from WSL → no Windows install; requires normal WSL interop (powershell.exe)
+
+# Remote Windows desktop from Linux/WSL (no Windows Python or Argus install required):
+sudo apt install freerdp2-x11 xvfb xdotool
 ```
 
 > Note: invoke everything as `python3 -m argus.cli <command>` from the repo root.
@@ -264,10 +273,11 @@ What the skill implements (full protocol in [`.claude/skills/argus-drive/SKILL.m
 
 | Var | Meaning |
 |-----|---------|
-| `PLATFORM` | `ios` \| `android` \| `browser` \| `mac`/`macos` \| `windows`/`win` \| `desktop` (auto mac/Windows by host OS) |
+| `PLATFORM` | `ios` \| `android` \| `browser` \| `mac`/`macos` \| `windows`/`win` \| `desktop` (auto mac/Windows by host OS) \| `rdp` (**experimental**, remote Windows prototype) |
 | `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | LLM (OpenAI-compatible; OpenRouter by default; legacy `LLM_API_BASE` is accepted) |
 | `ANDROID_SERIAL` / `ANDROID_PACKAGE` | single-device serial / **app package under test (required for Android — no default; configure in `.env`)** |
-| `MAC_APP` / `WIN_APP` / `WIN_LAUNCH` | macOS: menu-bar/app name to foreground and window-capture. Windows: window-title substring (optional launch path/command). Both **required for their platform, no default** — same fail-fast policy as `ANDROID_PACKAGE`. |
+| `MAC_APP` / `WIN_APP` / `WIN_LAUNCH` | macOS: menu-bar/app name to foreground and window-capture. Windows: window-title substring (optional launch path/command). Under WSL the bundled lightweight PowerShell runner starts automatically; no Windows Python is required. |
+| `RDP_HOST` / `RDP_USERNAME` / `RDP_PASSWORD` | **Experimental/developing:** remote Windows RDP endpoint and account. The interface may change; remote macOS is future work. |
 | `LLM_MAX_TOKENS` | output token cap shared by brain + planner (default 8192) |
 | `AGENT_MAX_STEPS` | backstop step cap (normal path uses per-step sub-action limit of 10) |
 | `AGENT_SETTLE_ENABLED` / `AGENT_WAIT_MAX_S` | wait for stable frames / per-step asynchronous wait budget |
@@ -329,7 +339,7 @@ Argus 读取 **BDD `.feature` 测试用例**（Gherkin / Cucumber），**直接�
 - 👁️ **纯视觉** —— 把原始截图发给 LLM，全靠视觉定位，**不读 UI 树**。坐标用百分比（与分辨率无关）；点空时可由专用元素定位模型重定位目标。
 - 🧭 **Step-driven** —— 逐个推进 Gherkin step；硬校验器禁止跳步，并禁止对"无法视觉验证的断言"判 PASS（杜绝自欺）。
 - 🤖 **自愈报告** —— 失败后跑根因分类（`case_outdated / app_bug / llm_misjudge / fixture_failure / flaky`）供人工复审。
-- 📱 **多平台多设备** —— iOS + Android 走统一的 **Appium** 驱动（UiAutomator2 / XCUITest，配 mjpeg 帧流截图），浏览器走 Selenium，**macOS / Windows 桌面 App** 走窗口级 `pyautogui` 驱动。多台 Android 可共享用例队列动态调度。
+- 📱 **多平台多设备** —— iOS + Android 走统一的 **Appium** 驱动（UiAutomator2 / XCUITest，配 mjpeg 帧流截图），浏览器走 Selenium，**macOS / Windows 桌面 App** 走窗口级视觉驱动。WSL 可通过仓库内置 PowerShell/Win32 runner 操作宿主 Windows，无需安装 Windows Python。多台 Android 可共享用例队列动态调度。
 - 🎨 **Figma 集成** —— 从设计稿生成用例，或做"设计 vs 截图"视觉走查。
 - 🔌 **MCP** —— 把自身能力暴露为 MCP 工具（可被 Claude Code / Cursor 调用），也能调用外部 MCP server（如 Figma）。
 - 🧑‍✈️ **双驱动模式** —— 内置引擎（任意视觉 LLM API），或 **`/argus-drive`**：直接把 Claude Code 会话当 brain，不需要 LLM API key。
@@ -360,7 +370,7 @@ BDD .feature 测试用例（手写，或 Figma 生成）
   healer.py  (仅 fail/timeout)  ──►  根因 verdict
         │
         ▼
-  平台抽象（argus.platforms.*）：AppiumPlatform（iOS + Android）│ BrowserPlatform（Selenium）│ DesktopMacPlatform / DesktopWinPlatform（窗口级 pyautogui）
+  平台抽象（argus.platforms.*）：AppiumPlatform（iOS + Android）│ BrowserPlatform（Selenium）│ DesktopMacPlatform / DesktopWinPlatform / WindowsRunnerPlatform
 ```
 
 ## 支持平台
@@ -371,11 +381,16 @@ BDD .feature 测试用例（手写，或 Figma 生成）
 | iOS | Appium + **XCUITest** driver（走 xcodebuild/CoreDevice 自动签 WDA；需 `IOS_TEAM_ID` + Xcode 登录该 team） |
 | 浏览器 | Selenium WebDriver（本地或 Selenium Grid，可选无头） |
 | macOS 桌面 | `DesktopMacPlatform` —— **窗口级**纯视觉驱动（不是整屏）：只截**被测 App 窗口**画面（`CGWindowListCreateImage`），每 turn 截图前把它 activate 到前台，用 `pyautogui` 按全局坐标点击/输入（百分比坐标换算成窗口对应的全局坐标）。需要屏幕录制 + 辅助功能权限；**前台方案**（会占用鼠标/键盘焦点）。 |
-| Windows 桌面 | `DesktopWinPlatform` —— 同款窗口级方案平移到 Windows（`SetForegroundWindow` + `pyautogui`）；setup 时把进程设为 Per-Monitor DPI aware，令窗口坐标/截图/点击统一落在同一套物理像素坐标系。 |
+| Windows 桌面 | WSL 下自动使用 `WindowsRunnerPlatform`，通过内置 PowerShell/Win32 JSONL runner 操作宿主 Windows，不需安装 Windows Python、依赖或服务；原生 Windows Python 环境仍使用 `DesktopWinPlatform`（`pyautogui + pywin32`）。两者均只截目标窗口并操作当前前台桌面。 |
+| 远程桌面（实验性） | `RDPPlatform` **仍在开发中**。当前原型通过 Xvfb + FreeRDP 从 Linux/WSL 连接 Windows；保留它作为未来远程 Windows/macOS 支持的基础，但 API 与行为尚不稳定。 |
 
 `argus.platforms.appium.AppiumPlatform` 是 iOS/Android 统一的一个驱动——`create_platform("ios"/"android"/"appium")` 全部落到它上面，由 `config["appium"]["os"]` 切换 XCUITest / UiAutomator2。它自带 Appium server 管理（`AppiumServerManager`，自动起/复用，自动注入 `ANDROID_HOME`），有条件时从常驻的 **mjpeg 帧流**（`platforms/mjpeg.py`）取最新帧代替一次 HTTP 截图往返，取不到（如部分云真机不暴露端口）就无条件回落 `get_screenshot_as_png`。截图和输入全程不碰 `adb`/`idb`/`simctl`，统一走 Appium。
 
 桌面端（`mac`/`macos`/`windows`/`win`/`desktop`）通过 `.env` 里的 `PLATFORM=` 或用例的 `@mac`/`@windows`/`@desktop` tag 选择——**还不是** `--platform` CLI 参数的可选值（该参数目前只接受 `ios`/`android`/`browser`）。`PLATFORM=desktop` 会按 Argus 自己运行所在的 OS 自动分流 mac/Windows。需在 `.env` 配 `MAC_APP`(App/菜单栏名) 或 `WIN_APP`(窗口标题子串，可配 `WIN_LAUNCH` 先启动它)——两者跑各自平台时必填、无默认值，防误测策略同 `ANDROID_PACKAGE`。
+
+Argus 在 WSL 中选择 `windows` 时会自动使用 `WindowsRunnerPlatform`：经 WSL interop 调仓库自带的 `windows_runner.ps1`，通过 stdin/stdout 交换 JSON；窗口截图、Win32 鼠标键盘、Unicode 剪贴板粘贴、DPI 设置和窗口选择都在当前 Windows 控制台会话执行。设置 `WIN_LAUNCH` 后 runner 会锁定新进程 PID，避免同标题窗口串台。该方案仍是前台自动化，跑测时会占用真实鼠标键盘。
+
+`rdp` 是**实验性、开发中**的远程桌面平台。当前原型可通过 `PLATFORM=rdp`、`@rdp` 或 `argus run … --platform rdp` 连接 Windows；远程 macOS 尚属后续规划。Linux/WSL 端需安装 `freerdp2-x11`（或 `freerdp3-x11`）、`xvfb`、`xdotool`，并配置 RDP 参数。密码经 stdin 传给 FreeRDP，不出现在进程参数中。现阶段不要将其视为稳定接口。
 
 ## 新手指引
 
@@ -393,7 +408,8 @@ python3 -m argus.cli mcp init
 
 # 桌面端（只有测 macOS/Windows App 才需要）：
 #   macOS  → pip3 install pyautogui pyobjc-framework-Quartz；需授予屏幕录制 + 辅助功能权限
-#   Windows → pip install pyautogui pywin32
+#   Windows 原生 Python → pip install pyautogui pywin32
+#   WSL 操作宿主 Windows → 无需在 Windows 安装；只需正常启用 WSL interop（powershell.exe）
 ```
 
 > 在仓库根目录用 `python3 -m argus.cli <command>` 调用。建议 `alias argus="python3 -m argus.cli"`。

@@ -66,6 +66,18 @@ DEFAULT_CONFIG = {
     # 可选：被测 App 的可执行文件路径 / 启动名（如 notepad / "C:\\Path\\app.exe"）。
     # 填了则 setup 时先启动它再找窗口；空则只在已开的窗口里按 WIN_APP 找。
     "WIN_LAUNCH": "",
+    # 实验性 / 开发中：Windows RDP（未来也用于统一远程桌面能力）
+    # RDP_PASSWORD 是敏感值，只应存在 gitignored 的 .env 或环境变量中。
+    "RDP_HOST": "",
+    "RDP_PORT": "3389",
+    "RDP_USERNAME": "",
+    "RDP_PASSWORD": "",
+    # 连接后在远程交互会话启动的程序（Windows demo 可设 notepad.exe）。
+    "RDP_START_PROGRAM": "",
+    "RDP_WIDTH": "1280",
+    "RDP_HEIGHT": "720",
+    # 非交互会话无法回答证书确认；tofu 会首次信任并保存指纹，后续发现变更即失败。
+    "RDP_CERTIFICATE": "tofu",
     # Appium（iOS + Android 统一后端）
     "APPIUM_SERVER_URL": "",          # 空 → 默认 http://127.0.0.1:4723（server 由 argus 自动起）
     "APPIUM_DEVICE": "",              # udid / adb serial；空 → android 用 ANDROID_SERIAL，ios 用 SIMULATOR_UDID
@@ -269,6 +281,16 @@ def load_config() -> dict:
         "win": {
             "app": values["WIN_APP"],
             "launch": values["WIN_LAUNCH"],
+        },
+        "rdp": {
+            "host": values["RDP_HOST"],
+            "port": int(values.get("RDP_PORT") or 3389),
+            "username": values["RDP_USERNAME"],
+            "password": values["RDP_PASSWORD"],
+            "start_program": values["RDP_START_PROGRAM"],
+            "width": int(values.get("RDP_WIDTH") or 1280),
+            "height": int(values.get("RDP_HEIGHT") or 720),
+            "certificate": values.get("RDP_CERTIFICATE") or "tofu",
         },
         "appium": {
             # os 由 create_platform 按平台名权威覆盖；这里给个合理默认
