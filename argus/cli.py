@@ -164,6 +164,11 @@ def _reset_android_state(platform, mode: str, package: str | None = None) -> Non
 
     No-op for non-Android platforms or unrecognized mode.
     """
+    # 非 Android 平台直接 no-op（docstring 承诺过，但之前 _require_android_package
+    # 会先抛错，导致 windows/desktop 上带 `Reset before` 的 case 整个 run 崩掉）。
+    if getattr(platform, "platform_name", "") != "android":
+        return
+
     # 包名取不到即报错（在 try 之外，确保不被下方 except 吞成 warning）
     package = package or _require_android_package()
 

@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import shutil
 import subprocess
 import threading
 from pathlib import Path
 
+from PIL import Image
+
 from ..logger import get_logger
 from .base import Platform
 from .desktop_win import _PROMPT_SEGMENT
 
 log = get_logger("desktop.winrunner")
+
+# 桌面截图动辄 2560x1440（PNG ~400KB），直发视觉模型又慢又贵；缩到这个宽度上限。
+# 只影响发给 LLM 的图，screen_size 仍报真实窗口尺寸 → x_pct 映射与 tap 坐标空间不变。
+_MAX_IMAGE_WIDTH = 1280
 
 
 class WindowsRunnerPlatform(Platform):
@@ -24,6 +31,7 @@ class WindowsRunnerPlatform(Platform):
         self._lock = threading.Lock()
         self._request_id = 0
         self._size = (0, 0)
+        self._desktop_path = ""
 
     def setup(self, config: dict) -> None:
         powershell = shutil.which("powershell.exe")
@@ -49,6 +57,7 @@ class WindowsRunnerPlatform(Platform):
             "setup", app=str(win.get("app") or ""), launch=str(win.get("launch") or ""),
         )
         self._size = int(result["width"]), int(result["height"])
+        self._desktop_path = str(result.get("desktop_path") or "")
         log.info(
             "Windows runner ready: title=%r size=%dx%d",
             result.get("title"), self._size[0], self._size[1],
@@ -97,7 +106,17 @@ class WindowsRunnerPlatform(Platform):
     def screenshot_raw(self) -> bytes:
         result = self._call("screenshot")
         self._size = int(result["width"]), int(result["height"])
-        return base64.b64decode(result["png"], validate=True)
+        return self._shrink(base64.b64decode(result["png"], validate=True))
+
+    def _shrink(self, png: bytes) -> bytes:
+        img = Image.open(io.BytesIO(png))
+        if img.width <= _MAX_IMAGE_WIDTH:
+            return png
+        height = max(1, round(img.height * _MAX_IMAGE_WIDTH / img.width))
+        img = img.resize((_MAX_IMAGE_WIDTH, height), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        return buf.getvalue()
 
     def screenshot_png(self) -> bytes:
         return self.screenshot_raw()
@@ -132,4 +151,17 @@ class WindowsRunnerPlatform(Platform):
         return "windows"
 
     def get_system_prompt_segment(self) -> str:
-        return _PROMPT_SEGMENT
+        extra = (
+            "\n\nWSL 后台 runner 补充说明：\n"
+            "- press_key 支持组合键：{\"key\": \"ctrl+s\"} / {\"key\": \"ctrl+shift+s\"} / "
+            "{\"key\": \"alt+f4\"}，修饰键为 ctrl/shift/alt。\n"
+            "- 本机桌面路径：{desktop}\n"
+            "- 窗口在后台运行，Windows 不会为它绘制输入光标、焦点框或选中高亮：点击输入框后"
+            "截图里看不到光标是正常现象，不代表点击未生效；input 的文字是否出现才是唯一判据。\n"
+            "- x_pct/y_pct 必须在 0-100 之间（超出会被钳到窗口边缘，点错位置）。\n"
+            "- 截屏是被测窗口自身画面，窗口被遮挡或失去焦点也正确，无需把窗口切到前台。\n"
+            "- 被测窗口一旦关闭，截屏会自动切换为整个 Windows 桌面（可能出现其他程序/任务栏，"
+            "画面比例也随之变化）；此时 tap/press_key 会返回 \"Target window ... was not found\"，"
+            "该错误本身即说明被测窗口已不存在。"
+        ).replace("{desktop}", self._desktop_path or "（未知，用 桌面 图标可见路径推断）")
+        return _PROMPT_SEGMENT + extra

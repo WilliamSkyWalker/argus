@@ -176,10 +176,10 @@ def save_html(results: list[dict], output_path: str) -> str:
                 last_obs = last_step.get("observation", "")
                 last_think = last_step.get("thinking", "")
                 last_action = last_step.get("action") or {}
-                last_n = last_step.get("step", "?")
+                last_n = last_step.get("turn", last_step.get("step", "?"))
                 if last_obs:
                     parts.append(
-                        f"<div><b>最后一步 (Step {last_n}) 观察:</b> {_esc(last_obs)}</div>"
+                        f"<div><b>最后一步 (Turn {last_n}) 观察:</b> {_esc(last_obs)}</div>"
                     )
                 if last_think:
                     parts.append(
@@ -198,7 +198,9 @@ def save_html(results: list[dict], output_path: str) -> str:
         # Build steps detail
         steps_html = ""
         for s in r.get("steps_detail", []):
-            step_num = s.get("step", "?")
+            step_num = s.get("turn", s.get("step", "?"))
+            g_idx = s.get("gherkin_step_index")
+            step_label = f"Turn {step_num}" + (f" · Step {g_idx}" if g_idx else "")
             obs = _esc(s.get("observation", ""))
             think = _esc(s.get("thinking", ""))
             action = _esc(json.dumps(s.get("action") or {}, ensure_ascii=False))
@@ -289,7 +291,7 @@ def save_html(results: list[dict], output_path: str) -> str:
 
             steps_html += f"""
             <div class="step">
-              <div class="step-header">Step {step_num}</div>
+              <div class="step-header">{step_label}</div>
               <div class="step-body">
                 {sp_html}
                 {probe_html}
