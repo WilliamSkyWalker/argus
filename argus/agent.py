@@ -913,6 +913,9 @@ class Agent:
             if last_err:
                 log.error("[Turn %d] 执行最终失败: %s", turn, last_err)
                 step_record["error"] = str(last_err)
+                # 让模型在下一轮历史里看到平台报错，而不是只能靠猜"为何画面没变"
+                if self.brain.history:
+                    self.brain.history[-1]["exec_error"] = str(last_err)
 
             step_record["duration"] = time.time() - turn_start
             steps_detail.append(step_record)

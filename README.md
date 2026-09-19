@@ -321,6 +321,7 @@ CLAUDE.md         deep architecture & behavior notes (read this to contribute)
 ## Known limitations
 
 - **Tap accuracy is a calibration problem, not a VLM bias.** If taps land off-target, first check the screenshot-px → device-px scale (`wm size` vs the actual `screencap` size — they differ on e.g. Samsung resolution-override devices). With calibration right, percentage-based visual coordinates land. Argus is **pure-vision (no UI tree)**: on repeated misses a dedicated element-locator model (`LLM_MODEL_LOCATOR`) re-locates the target, with a coordinate-grid overlay as a further fallback. Write hints as directions ("top-right"), not pixel coordinates.
+- **Some VLM brains (observed with `qwen3-vl-flash`) occasionally emit 0-1000 normalized coordinates** (their native grounding convention) instead of the 0-100 percentages the protocol asks for — typically on a single axis (`x_pct: 85, y_pct: 947`). `brain._pct_to_px` treats any value in `(100, 1000]` as per-mille, since a value >100 would otherwise be clamped to the window edge and always miss. Stop-gap only; not needed once the brain is switched to Gemini.
 - **Self-drawn / canvas UIs (e.g. Flutter)** are handled exactly like everything else — Argus never reads a UI tree, so there is no special-casing or degradation for treeless apps.
 - **Desktop drivers are foreground-only** — they take over the real mouse/keyboard and keep the target app window frontmost every turn (no backgrounded/non-disruptive mode yet; that would need an isolated GUI session / VNC). Don't touch the input devices while a desktop run is in progress.
 - Assertions that can't be visually verified (analytics events, backend calls, system time, notification drawer, cross-app deep links) are intentionally **forced to fail** in the vision path — write them out, tag them out, or verify them for real with a [probe plugin](./docs/probes.md) (that step then skips the LLM).
@@ -560,6 +561,7 @@ Skill 实现了什么（完整协议见 [`.claude/skills/argus-drive/SKILL.md`](
 ## 已知限制
 
 - **桌面驱动是前台方案** —— 会占用真实鼠标/键盘，且每 turn 都把被测窗口切到最前（暂无后台不打扰模式，那需要独立 GUI 会话/VNC）。桌面跑测期间别手动碰键鼠。
+- **部分 VLM brain（实测 `qwen3-vl-flash`）偶发输出 0-1000 归一化坐标**（其原生 grounding 约定），而非协议要求的 0-100 百分比——通常只在一个轴上（`x_pct: 85, y_pct: 947`）。`brain._pct_to_px` 把 `(100, 1000]` 区间的值按千分比处理（>100 原本会被钳到窗口边缘、必然点空）。仅为过渡兼容，后续 brain 换成 Gemini 后无此问题。
 - 无法视觉验证的断言（埋点、后端调用、系统时间、通知抽屉、跨 App 深链）在纯视觉路径下**刻意判 fail**——要么改写用例、要么打 tag 跳过，要么挂 [probe 插件](./docs/probes.md) 真验证（该 step 会跳过 LLM）。
 
 完整架构、逐模块说明与贡献指引见 **[CLAUDE.md](./CLAUDE.md)**。

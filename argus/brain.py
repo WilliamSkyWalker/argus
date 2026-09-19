@@ -274,6 +274,8 @@ def _pct_to_px(action: dict, w: int, h: int) -> None:
         v = float(pct)
         if 0 < v <= 1:          # 少数模型给 0-1 小数
             v *= 100
+        elif 100 < v <= 1000:   # 部分 VLM(实测 qwen3-vl)原生 0-1000 归一化坐标偶发漏出(>100 钳边必点空)
+            v /= 10
         return max(0, min(int(round(v / 100.0 * dim)), dim - 1))
 
     for px_key, py_key, dx, dy, dw, dh in (
@@ -729,6 +731,8 @@ class Brain:
                          "**不要再点别处/重复点**，下一步直接用 input 动作输入文字）")
             elif h.get("no_effect"):
                 line += "  ⚠️ 该动作未产生任何可见变化（点击可能落空/被遮挡/坐标偏差，请勿重复同一坐标）"
+            if h.get("exec_error"):
+                line += f"  ❌ 该动作执行失败，平台报错：{h['exec_error']}"
             lines.append(line)
         return "\n".join(lines)
 
