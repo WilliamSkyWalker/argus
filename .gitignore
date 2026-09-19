@@ -187,6 +187,10 @@ tests/*
 # 供其他人 clone 后参考（_accounts.json.example / README 写法等）
 !tests/_template/
 !tests/_template/**
+# 例外：*_demo 是只用系统自带 App（计算器/设置/example.com）的公开演示用例
+!tests/*_demo/
+!tests/*_demo/**
+tests/*_demo/reports/
 
 # Argus run artifacts (报告/截图/缓存)
 .argus_runs/
