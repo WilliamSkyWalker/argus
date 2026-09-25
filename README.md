@@ -4,9 +4,9 @@
 
 Argus reads a **BDD `.feature` test case** (Gherkin / Cucumber), **looks at the screen** (iOS / Android / Browser / desktop), decides what to do, performs the action, and judges pass/fail on its own — the way a human tester would, but driven by a vision LLM.
 
-- 👁️ **Pure vision** — sends the raw screenshot to the LLM and locates everything visually, with **no UI tree**. Coordinates are percentage-based (resolution-independent); on a missed tap a dedicated element-locator model can re-locate the target.
-- 🧭 **Step-driven** — iterates Gherkin steps one at a time; a hard validator forbids step-skipping and bans "PASS" on assertions that can't be visually verified (no self-deception).
-- 🤖 **Self-healing reports** — after a failure it runs a root-cause classifier (`case_outdated / app_bug / llm_misjudge / fixture_failure / flaky`) for human review.
+- 👁️ **Pure vision** — sends the raw screenshot to the LLM and locates everything visually, with **no UI tree**. Coordinates are percentage-based (resolution-independent); when configured, a dedicated element-locator model locates tap/long-press targets before execution.
+- 🧭 **Step-driven** — iterates Gherkin steps one at a time; a validator enforces the current step index and evidence fields. Non-visual assertions require probe plugins for code-level verification.
+- 🤖 **Failure analysis reports** — after a failure it runs a root-cause classifier (`case_outdated / app_bug / llm_misjudge / fixture_failure / flaky`) for human review.
 - 📱 **Multi-platform, multi-device** — iOS + Android via a unified **Appium** driver (UiAutomator2 / XCUITest, with mjpeg frame-stream screenshots), Browser via Selenium, and **macOS / Windows desktop apps** via window-level visual drivers. WSL can operate its Windows host through a bundled PowerShell/Win32 runner, with no Windows Python install. Schedule many Android devices against a shared case queue.
 - 🎨 **Figma integration** — generate test cases from a design, or run a visual design-vs-screenshot review.
 - 🔌 **MCP** — exposes its capabilities as MCP tools (drive it from Claude Code / Cursor) and can itself call external MCP servers (e.g. Figma).
@@ -28,20 +28,32 @@ BDD .feature test case (hand-written, or Figma-generated)
         ▼
   agent.py  — step-driven main loop
      for each Gherkin step:
-       for sub-action in 1..10:
+       repeat until pass/fail or a guard limit:
          screenshot + skills enhance       # loading / keyboard / scroll / diff / toast
          brain.decide() → JSON action      # vision LLM
-         step_validator.validate()         # monotonic step index, evidence, no blind PASS
+         validate_step_progress()          # exact pending step index + evidence checks
            ├─ reject → feed reason back to the LLM
            ├─ pass   → advance to next step
+           ├─ in_progress → platform executes action, then repeat
            └─ fail   → abort scenario
         │
         ▼
-  healer.py  (only on fail/timeout)  ──►  verdict for human review
+  healer.py  (on fail/timeout/error)  ──►  verdict for human review
         │
         ▼
-  Platform abstraction (argus.platforms.*):  AppiumPlatform (iOS + Android) │ BrowserPlatform (Selenium) │ DesktopMacPlatform / DesktopWinPlatform / WindowsRunnerPlatform
+  report.py  ──►  HTML report with screenshots, evidence and failure analysis
 ```
+
+The diagram shows the ordinary visual-decision path. Platform drivers execute actions inside the loop. Probe steps take their verdict directly from plugins, and consecutive visual assertions can be checked as a batch with per-assertion evidence. Healer adds a root-cause report after failure; it does not repair the application or case, or change the original verdict.
+
+Execution guards and defaults (from `argus/config.py` and `argus/agent.py`):
+
+- The main guard is **15 counted turns without step progress**. The old per-step action cap is disabled (`PER_STEP_SUB_ACTION_LIMIT=-1`); the scenario loop-turn cap is also disabled by default (`AGENT_MAX_STEPS=0`, positive values enable it).
+- Ordinary decisions must report the **exact pending step index**. Three consecutive validator rejections fail the step. Rejected decisions execute no action but still count toward loop/no-progress limits.
+- Active waits have a separate accumulated budget (`AGENT_WAIT_MAX_S=45` seconds). Within that budget, wait turns do not count as no-progress; after it is spent, counting resumes. Probe retries use their own timeout and do not count as no-progress.
+- Stable-frame sampling and consecutive assertion merging are enabled by default. Split execution is opt-in. Defaults are overridden by `.env`, then environment variables; model names in `.env.example` are examples, not the built-in default.
+
+The validator checks evidence text and response structure, not whether the claimed elements actually exist in the image. The prompt forbids unsupported non-visual PASS judgments, but visual verdicts can still be wrong; use probes for code-level verification of non-visual facts.
 
 ## Supported platforms
 
@@ -56,11 +68,11 @@ BDD .feature test case (hand-written, or Figma-generated)
 
 `argus.platforms.appium.AppiumPlatform` is a single unified driver for both mobile OSes — `create_platform("ios"/"android"/"appium")` all resolve to it, switching XCUITest vs UiAutomator2 via `config["appium"]["os"]`. It manages its own Appium server (`AppiumServerManager`, auto-starts/reuses, injects `ANDROID_HOME`) and, when available, reads screenshots from a live **mjpeg frame stream** (`platforms/mjpeg.py`) instead of a screenshot HTTP round-trip, falling back to `get_screenshot_as_png` when the stream/port isn't exposed (e.g. some cloud device farms). No `adb`/`idb`/`simctl` calls are used for screenshots or input — everything goes through Appium.
 
-Desktop (`mac`/`macos`/`windows`/`win`/`desktop`) is selected via `PLATFORM=` in `.env` or a case's `@mac`/`@windows`/`@desktop` tag — not yet a `--platform` CLI choice (that flag still only accepts `ios`/`android`/`browser`). `PLATFORM=desktop` auto-picks mac vs Windows based on the OS Argus itself is running on. Set `MAC_APP` (app/menu-bar name) or `WIN_APP` (window-title substring, optionally with `WIN_LAUNCH` to start it) in `.env` — both are required with no default, same fail-fast policy as `ANDROID_PACKAGE`.
+Desktop (`mac`/`macos`/`windows`/`win`/`desktop`) is selected via `PLATFORM=` in `.env` or the environment. Case platform tags filter cases against the selected platform; they do not select a driver. Desktop is not yet a `run --platform` choice (that flag accepts `ios`/`android`/`browser`/`rdp`). `PLATFORM=desktop` selects the native Windows driver on Windows and the macOS driver otherwise; under WSL, use `PLATFORM=windows` explicitly. Set `MAC_APP` (app/menu-bar name) or `WIN_APP` (window-title substring, optionally with `WIN_LAUNCH` to start it) in `.env` — both are required with no default, same fail-fast policy as `ANDROID_PACKAGE`.
 
 When Argus runs under WSL, choosing `windows` automatically uses `WindowsRunnerPlatform`. It invokes the repository's `windows_runner.ps1` through WSL interop and exchanges JSON over stdin/stdout. Screenshots, Win32 mouse/keyboard input, Unicode clipboard paste, DPI setup, and target-window selection all execute in the current Windows console session. `WIN_LAUNCH` locks the runner to the launched process ID, preventing another window with the same title from receiving input. The runner is foreground-only and takes over the real mouse/keyboard while a case runs.
 
-`rdp` is an **experimental, under-development** remote desktop platform. The current prototype may be selected with `PLATFORM=rdp`, `@rdp`, or `argus run ... --platform rdp`; it connects to Windows through FreeRDP, while remote macOS support remains future work. On Linux/WSL, install `freerdp2-x11` (or `freerdp3-x11`), `xvfb`, and `xdotool`; set `RDP_HOST`, `RDP_USERNAME`, and `RDP_PASSWORD`. Credentials are sent to FreeRDP over stdin rather than exposed in process arguments. Do not depend on this interface for stable automation yet.
+`rdp` is an **experimental, under-development** remote desktop platform. The current prototype may be selected with `PLATFORM=rdp` or `argus run ... --platform rdp`; it connects to Windows through FreeRDP, while remote macOS support remains future work. On Linux/WSL, install `freerdp2-x11` (or `freerdp3-x11`), `xvfb`, and `xdotool`; set `RDP_HOST`, `RDP_USERNAME`, and `RDP_PASSWORD`. Credentials are sent to FreeRDP over stdin rather than exposed in process arguments. Do not depend on this interface for stable automation yet.
 
 ---
 
@@ -143,15 +155,14 @@ Feature: Login
     Then the home screen is shown with a bottom navigation bar
 ```
 
-Tags Argus understands: `@P0/@P1/@P2` (priority) · `@auto/@partial/@manual` (automation; partial/manual are auto-skipped) · platform tags such as `@android/@ios/@browser/@mac/@windows/@desktop` (a set: `@android @ios` runs on both; legacy `@both` is still accepted) · `@TC-XXX` (case id) · `@reset:pm_clear|relaunch|none` (Android state reset) · `@skip/@wip`.
+Tags Argus understands: `@P0/@P1/@P2` (priority) · `@auto/@partial/@manual` (automation; partial/manual are auto-skipped) · platform tags such as `@android/@ios/@browser/@mac/@windows/@desktop` (a set: `@android @ios` allows runs on either platform; it does not launch both; legacy `@both` is still accepted) · `@TC-XXX` (case id) · `@reset:pm_clear|relaunch|none` (Android state reset) · `@skip/@wip`.
 
 ### Non-visual assertions (`probe` plugins)
 
 Argus is **vision-only**, so assertions about things that never appear on screen —
 analytics events, backend writes, upload logs — can't be judged by looking. The hard
 rule is that the LLM must **fail** them rather than assume they passed. Probes are the
-code-level channel for those: attach one to a `Then` and that step **skips the LLM
-entirely**.
+code-level channel for those: attach one to a `Then` and that step **takes its verdict from the probe, not the LLM**. The full case and step list can still appear in planner/brain context; this is a verdict-routing boundary, not a data-isolation boundary.
 
 ```gherkin
   Then the home-screen impression event is reported
@@ -279,8 +290,8 @@ What the skill implements (full protocol in [`.claude/skills/argus-drive/SKILL.m
 | `MAC_APP` / `WIN_APP` / `WIN_LAUNCH` | macOS: menu-bar/app name to foreground and window-capture. Windows: window-title substring (optional launch path/command). Under WSL the bundled lightweight PowerShell runner starts automatically; no Windows Python is required. |
 | `RDP_HOST` / `RDP_USERNAME` / `RDP_PASSWORD` | **Experimental/developing:** remote Windows RDP endpoint and account. The interface may change; remote macOS is future work. |
 | `LLM_MAX_TOKENS` | output token cap shared by brain + planner (default 8192) |
-| `AGENT_MAX_STEPS` | backstop step cap (normal path uses per-step sub-action limit of 10) |
-| `AGENT_SETTLE_ENABLED` / `AGENT_WAIT_MAX_S` | wait for stable frames / per-step asynchronous wait budget |
+| `AGENT_MAX_STEPS` | scenario loop-turn cap; default 0 disables it. The main guard is 15 counted turns without step progress |
+| `AGENT_SETTLE_ENABLED` / `AGENT_WAIT_MAX_S` | stable-frame sampling (default true) / accumulated active-wait budget per step (default 45s) |
 | `AGENT_MERGE_ASSERTS` | merge consecutive same-screen assertions into one verified batch (default true) |
 | `SKILLS_ENABLED` | preprocessing pipeline (loading/keyboard/scroll/diff/toast) |
 
@@ -288,24 +299,24 @@ What the skill implements (full protocol in [`.claude/skills/argus-drive/SKILL.m
 
 ### Model tiering & split execution
 
-Argus routes sub-tasks to different models, and can split "acting" from "checking" so the expensive reasoning model is spent only where it matters. Every tiering var defaults to `LLM_MODEL`, so nothing changes until you opt in.
+Argus routes sub-tasks to different models, and can split "acting" from "checking" so the expensive reasoning model is spent only where it matters. Empty brain/planner model settings fall back to `LLM_MODEL`; an empty locator model disables the locator.
 
 | Var | Used for | Notes |
 |-----|----------|-------|
-| `LLM_MODEL` | fallback for every role | main multimodal model |
+| `LLM_MODEL` | fallback for brain and planner | main multimodal model |
 | `LLM_MODEL_BRAIN` | per-step decision + visual verification | the "brain" — keep a strong reasoning VLM |
 | `LLM_MODEL_PLANNER` | one-shot scenario planning | can be a cheaper/faster model |
 | `LLM_MODEL_LOCATOR` | pixel-precise element location | a dedicated element-locator VLM (e.g. `bytedance/ui-tars-1.5-7b`, other UI-TARS, or a Claude/Gemini tier). **Empty = locator off.** |
 | `LLM_LOCATOR_BASE_URL` / `LLM_LOCATOR_API_KEY` | locator endpoint | optional; falls back to the main LLM |
 
-The **element locator** serves two roles: a **fallback** (when the brain's tap produces no visible effect, re-locate the target with the locator model instead of blindly retrying), and the executor for **split execution** below. ("Grounding" stays as the umbrella for this — a grid-overlay and a strong-model variant are planned.)
+The **element locator** runs before normal `tap`/`long_press` actions that include a `target`; if disabled or unable to locate the target, Argus uses the brain coordinates. It also locates targets during split execution. The old pixel-diff `no_effect` detector is disabled, so its retry escalation and `AGENT_LOCATE_RETRY` threshold are not active in the normal path.
 
 **Split execution** — `AGENT_SPLIT_ACT_CHECK=true` (default off), routed by Gherkin step type:
 
-- **Action steps** (When/Given) run *without* the big LLM: the planner pre-plans a structured action → the element-locator model locates the target → Argus executes and confirms the effect via visual-diff; on repeated failure it **escapes** back to the brain.
-- **Check steps** (Then/But) still go through the big LLM for deep visual verification (the anti-false-pass validator applies only here).
+- **Action steps** (When/Given, plus inherited And steps): the brain reads the current screenshot and plans an atomic action sequence; Argus executes it using the locator where needed, then returns to the brain on the next turn to verify the step. Two consecutive sequence failures fall back to ordinary step decisions. Pixel changes are not used to certify action success.
+- **Check steps** (Then/But) use the brain for visual verification, with consecutive assertions optionally merged. Ordinary step decisions remain subject to the step validator in either mode.
 
-Effect: the reasoning model is spent on *"is the page correct?"* instead of *"how do I tap this"* — a large cost/latency cut on action-heavy flows, with verdict quality preserved. Requires `LLM_MODEL_LOCATOR`.
+This can reduce per-action decision calls in multi-action steps, but still uses the brain for planning and verification. Tap/input/long-press sequence actions require `LLM_MODEL_LOCATOR`; measure speed and verdict quality on your own cases.
 
 Related knobs: `AGENT_LOCATE_RETRY` (consecutive no-effect taps before the locator fallback), `AGENT_SETTLE_*` (stable-frame sampling), `AGENT_WAIT_MAX_S` (wait budget), `AGENT_MERGE_ASSERTS` (same-screen assertion batching), `AGENT_ASSERT_BURST_FRAMES` (fallback burst count when settle is disabled), and `APPIUM_MJPEG_ENABLED` (frame-stream screenshots). See **[`.env.example`](./.env.example)** for the full annotated list.
 
@@ -324,7 +335,7 @@ CLAUDE.md         deep architecture & behavior notes (read this to contribute)
 - **Some VLM brains (observed with `qwen3-vl-flash`) occasionally emit 0-1000 normalized coordinates** (their native grounding convention) instead of the 0-100 percentages the protocol asks for — typically on a single axis (`x_pct: 85, y_pct: 947`). `brain._pct_to_px` treats any value in `(100, 1000]` as per-mille, since a value >100 would otherwise be clamped to the window edge and always miss. Stop-gap only; not needed once the brain is switched to Gemini.
 - **Self-drawn / canvas UIs (e.g. Flutter)** are handled exactly like everything else — Argus never reads a UI tree, so there is no special-casing or degradation for treeless apps.
 - **Desktop drivers are foreground-only** — they take over the real mouse/keyboard and keep the target app window frontmost every turn (no backgrounded/non-disruptive mode yet; that would need an isolated GUI session / VNC). Don't touch the input devices while a desktop run is in progress.
-- Assertions that can't be visually verified (analytics events, backend calls, system time, notification drawer, cross-app deep links) are intentionally **forced to fail** in the vision path — write them out, tag them out, or verify them for real with a [probe plugin](./docs/probes.md) (that step then skips the LLM).
+- Assertions that can't be visually verified (analytics events, backend calls, system time, notification drawer, cross-app deep links) are instructed to **fail** in the vision path — write them out, tag them out, or verify them for real with a [probe plugin](./docs/probes.md) (that step then skips the LLM).
 
 For the full architecture, module-by-module notes, and contribution guidance, see **[CLAUDE.md](./CLAUDE.md)**.
 
@@ -337,9 +348,9 @@ For the full architecture, module-by-module notes, and contribution guidance, se
 
 Argus 读取 **BDD `.feature` 测试用例**（Gherkin / Cucumber），**直接看屏幕**（iOS / Android / 浏览器 / 桌面端），自己决定怎么操作、执行动作，并自主判定通过/失败 —— 像人类测试员一样，但由视觉大模型驱动。
 
-- 👁️ **纯视觉** —— 把原始截图发给 LLM，全靠视觉定位，**不读 UI 树**。坐标用百分比（与分辨率无关）；点空时可由专用元素定位模型重定位目标。
-- 🧭 **Step-driven** —— 逐个推进 Gherkin step；硬校验器禁止跳步，并禁止对"无法视觉验证的断言"判 PASS（杜绝自欺）。
-- 🤖 **自愈报告** —— 失败后跑根因分类（`case_outdated / app_bug / llm_misjudge / fixture_failure / flaky`）供人工复审。
+- 👁️ **纯视觉** —— 把原始截图发给 LLM，全靠视觉定位，**不读 UI 树**。坐标用百分比（与分辨率无关）；配置定位模型后，带目标描述的点击/长按会在执行前重新定位。
+- 🧭 **Step-driven** —— 逐个推进 Gherkin step；校验器约束当前步骤序号与证据字段；非视觉断言通过 probe 插件做代码层验证。
+- 🤖 **失败分析报告** —— 失败后跑根因分类（`case_outdated / app_bug / llm_misjudge / fixture_failure / flaky`）供人工复审。
 - 📱 **多平台多设备** —— iOS + Android 走统一的 **Appium** 驱动（UiAutomator2 / XCUITest，配 mjpeg 帧流截图），浏览器走 Selenium，**macOS / Windows 桌面 App** 走窗口级视觉驱动。WSL 可通过仓库内置 PowerShell/Win32 runner 操作宿主 Windows，无需安装 Windows Python。多台 Android 可共享用例队列动态调度。
 - 🎨 **Figma 集成** —— 从设计稿生成用例，或做"设计 vs 截图"视觉走查。
 - 🔌 **MCP** —— 把自身能力暴露为 MCP 工具（可被 Claude Code / Cursor 调用），也能调用外部 MCP server（如 Figma）。
@@ -359,20 +370,32 @@ BDD .feature 测试用例（手写，或 Figma 生成）
         ▼
   agent.py  — step-driven 主循环
      对每个 Gherkin step：
-       sub-action 循环 1..10：
+       循环直到 pass/fail 或达到保护上限：
          截图 + skills 增强                 # 加载/键盘/滚动/变化检测/toast
          brain.decide() → JSON 动作         # 视觉 LLM
-         step_validator.validate()         # step 单调、evidence、不许盲目 PASS
+         validate_step_progress()          # 必须是当前待执行 step，并校验 evidence
            ├─ reject → 把理由喂回 LLM 自纠
            ├─ pass   → 推进下一步
+           ├─ in_progress → 平台驱动执行动作，继续循环
            └─ fail   → 终止 Scenario
         │
         ▼
-  healer.py  (仅 fail/timeout)  ──►  根因 verdict
+  healer.py  (fail/timeout/error 时)  ──►  根因 verdict
         │
         ▼
-  平台抽象（argus.platforms.*）：AppiumPlatform（iOS + Android）│ BrowserPlatform（Selenium）│ DesktopMacPlatform / DesktopWinPlatform / WindowsRunnerPlatform
+  report.py  ──►  HTML 报告（截图、证据、失败分析）
 ```
+
+上图展示普通视觉决策路径；平台驱动在循环内执行动作。Probe 步骤由插件裁决，连续视觉断言可合并调用并逐条检查证据。Healer 只附加失败根因分析，不自动修复应用或用例，也不改变原始测试结果。
+
+当前执行保护与默认值（以 `argus/config.py`、`argus/agent.py` 为准）：
+
+- 主要保护是**连续 15 个计数轮次未推进步骤**。旧的每步动作次数上限已禁用（`PER_STEP_SUB_ACTION_LIMIT=-1`）；scenario 总循环轮数上限默认也禁用（`AGENT_MAX_STEPS=0`，正数启用）。
+- 普通决策必须返回**当前待执行步骤序号**，由框架推进。连续 3 次校验拒绝判失败；拒绝不执行动作，但仍计入循环轮数和无进展计数。
+- 每步累计主动等待预算默认 45 秒（`AGENT_WAIT_MAX_S`），预算内 wait 轮不计无进展，耗尽后恢复计数；这不是整个步骤的 45 秒超时。Probe 轮询使用独立超时，也不计无进展。
+- 默认开启稳定帧采样、连续断言合并，关闭分层执行。配置优先级为内置默认值 → `.env` → 环境变量；`.env.example` 中的模型名是配置示例，不等于内置默认值。
+
+校验器检查证据文本与响应结构，不会独立确认截图里确实存在所述元素。不可视断言禁 PASS 是提示词约束，视觉判定仍可能出错；非视觉事实应通过 probe 做代码层验证。
 
 ## 支持平台
 
@@ -387,11 +410,11 @@ BDD .feature 测试用例（手写，或 Figma 生成）
 
 `argus.platforms.appium.AppiumPlatform` 是 iOS/Android 统一的一个驱动——`create_platform("ios"/"android"/"appium")` 全部落到它上面，由 `config["appium"]["os"]` 切换 XCUITest / UiAutomator2。它自带 Appium server 管理（`AppiumServerManager`，自动起/复用，自动注入 `ANDROID_HOME`），有条件时从常驻的 **mjpeg 帧流**（`platforms/mjpeg.py`）取最新帧代替一次 HTTP 截图往返，取不到（如部分云真机不暴露端口）就无条件回落 `get_screenshot_as_png`。截图和输入全程不碰 `adb`/`idb`/`simctl`，统一走 Appium。
 
-桌面端（`mac`/`macos`/`windows`/`win`/`desktop`）通过 `.env` 里的 `PLATFORM=` 或用例的 `@mac`/`@windows`/`@desktop` tag 选择——**还不是** `--platform` CLI 参数的可选值（该参数目前只接受 `ios`/`android`/`browser`）。`PLATFORM=desktop` 会按 Argus 自己运行所在的 OS 自动分流 mac/Windows。需在 `.env` 配 `MAC_APP`(App/菜单栏名) 或 `WIN_APP`(窗口标题子串，可配 `WIN_LAUNCH` 先启动它)——两者跑各自平台时必填、无默认值，防误测策略同 `ANDROID_PACKAGE`。
+桌面端（`mac`/`macos`/`windows`/`win`/`desktop`）通过 `.env` 或环境变量 `PLATFORM=` 选择。用例的平台 tag 只用于筛选，不会切换驱动。桌面端**还不是** `run --platform` 的可选值（目前接受 `ios`/`android`/`browser`/`rdp`）。`PLATFORM=desktop` 在原生 Windows 上选择 Windows 驱动，其余系统走 macOS 驱动；WSL 请显式使用 `PLATFORM=windows`。需在 `.env` 配 `MAC_APP`(App/菜单栏名) 或 `WIN_APP`(窗口标题子串，可配 `WIN_LAUNCH` 先启动它)——两者跑各自平台时必填、无默认值，防误测策略同 `ANDROID_PACKAGE`。
 
 Argus 在 WSL 中选择 `windows` 时会自动使用 `WindowsRunnerPlatform`：经 WSL interop 调仓库自带的 `windows_runner.ps1`，通过 stdin/stdout 交换 JSON；窗口截图、Win32 鼠标键盘、Unicode 剪贴板粘贴、DPI 设置和窗口选择都在当前 Windows 控制台会话执行。设置 `WIN_LAUNCH` 后 runner 会锁定新进程 PID，避免同标题窗口串台。该方案仍是前台自动化，跑测时会占用真实鼠标键盘。
 
-`rdp` 是**实验性、开发中**的远程桌面平台。当前原型可通过 `PLATFORM=rdp`、`@rdp` 或 `argus run … --platform rdp` 连接 Windows；远程 macOS 尚属后续规划。Linux/WSL 端需安装 `freerdp2-x11`（或 `freerdp3-x11`）、`xvfb`、`xdotool`，并配置 RDP 参数。密码经 stdin 传给 FreeRDP，不出现在进程参数中。现阶段不要将其视为稳定接口。
+`rdp` 是**实验性、开发中**的远程桌面平台。当前原型可通过 `PLATFORM=rdp` 或 `argus run … --platform rdp` 连接 Windows；远程 macOS 尚属后续规划。Linux/WSL 端需安装 `freerdp2-x11`（或 `freerdp3-x11`）、`xvfb`、`xdotool`，并配置 RDP 参数。密码经 stdin 传给 FreeRDP，不出现在进程参数中。现阶段不要将其视为稳定接口。
 
 ## 新手指引
 
@@ -448,30 +471,30 @@ python3 -m argus.cli run my-app --report
 
 ## 模型分层与分层执行
 
-Argus 把不同子任务路由到不同模型，并可选地把"操作"与"检查"分开，让贵的推理模型只花在刀刃上。所有分层变量留空即回落 `LLM_MODEL`，不配就零行为变化。
+Argus 把不同子任务路由到不同模型，并可选地把"操作"与"检查"分开，让贵的推理模型只花在刀刃上。Brain/Planner 模型留空时回落 `LLM_MODEL`；Locator 模型留空时关闭定位功能。
 
 | 变量 | 用途 | 说明 |
 |------|------|------|
-| `LLM_MODEL` | 所有角色缺省 | 主多模态模型 |
+| `LLM_MODEL` | Brain/Planner 缺省模型 | 主多模态模型 |
 | `LLM_MODEL_BRAIN` | 每步决策 + 视觉验证 | "大脑"，保持强推理 VLM |
 | `LLM_MODEL_PLANNER` | 开跑前一次性拆剧本 | 可用更便宜/快的模型 |
 | `LLM_MODEL_LOCATOR` | 像素级元素定位 | 专用视觉定位 VLM（如 `bytedance/ui-tars-1.5-7b`、其他 UI-TARS，或 Claude/Gemini 某档）。**留空 = 关闭元素定位。** |
 | `LLM_LOCATOR_BASE_URL` / `LLM_LOCATOR_API_KEY` | 定位模型独立端点 | 可选，留空复用主 LLM |
 
-元素定位有两个用途：**兜底**（brain 的 tap 点空时用它重定位，而非盲目重试）＋ 下面**分层执行**的执行器。（「grounding」保留指这套更大的定位兜底策略——网格版、强模型版规划中。）
+普通路径中，带 `target` 的 `tap`/`long_press` 会在执行前调用元素定位模型；未启用或定位失败时沿用 Brain 坐标。分层执行也使用它定位目标。旧的像素差 `no_effect` 检测已停用，因此对应的重试升级路径与 `AGENT_LOCATE_RETRY` 阈值在普通路径中不生效。
 
 **分层执行** —— `AGENT_SPLIT_ACT_CHECK=true`（默认关），按 Gherkin step 类型路由：
 
-- **操作步**（When/Given）**不调大 LLM**：planner 预规划结构化动作 → 元素定位目标 → 执行并用 visual-diff 确认生效；反复失败则**逃生**回大 LLM。
-- **检查步**（Then/But）仍走大 LLM 做深度视觉验证（反谎报硬校验只作用于此）。
+- **操作步**（When/Given 及继承其类型的 And）：Brain 根据当前截图拆解原子动作序列，框架按需调用 Locator 定位并批量执行，下一轮再由 Brain 验证当前步骤。连续两次序列执行失败后回退普通逐步决策；不再用像素变化认定动作成功。
+- **检查步**（Then/But）由 Brain 验证，可合并连续断言。两种模式中的普通步骤决策均受步骤校验器约束。
 
-效果：把推理模型花在**"页面对不对"**而非**"怎么点中"**，在操作密集流程上大幅降本提速，同时保住判定质量。依赖 `LLM_MODEL_LOCATOR`。
+该模式可能减少多动作步骤中的逐动作决策调用，但拆解和验证仍调用 Brain。序列中的点击、输入、长按需要 `LLM_MODEL_LOCATOR`；速度与判定质量需用实际用例对照验证。
 
-相关可调项：`AGENT_LOCATE_RETRY`（连续点空几次触发元素定位兜底）、`AGENT_SETTLE_*`（稳定帧采样）、`AGENT_WAIT_MAX_S`（等待预算）、`AGENT_MERGE_ASSERTS`（同屏断言合并）、`AGENT_ASSERT_BURST_FRAMES`（关闭 settle 后的多帧兜底数量）、`APPIUM_MJPEG_ENABLED`（帧流截图）。完整带注释清单见 **[`.env.example`](./.env.example)**。
+相关可调项：`AGENT_LOCATE_RETRY`（旧 no_effect 升级阈值，目前检测停用）、`AGENT_SETTLE_*`（稳定帧采样）、`AGENT_WAIT_MAX_S`（等待预算）、`AGENT_MERGE_ASSERTS`（同屏断言合并）、`AGENT_ASSERT_BURST_FRAMES`（关闭 settle 后的多帧兜底数量）、`APPIUM_MJPEG_ENABLED`（帧流截图）。完整带注释清单见 **[`.env.example`](./.env.example)**。
 
 ## 用例格式（BDD Gherkin）
 
-**`.feature`（Gherkin / Cucumber）** —— 见上方英文示例。Argus 识别的 tag：`@P0/@P1/@P2`（优先级）·`@auto/@partial/@manual`（自动化程度，partial/manual 自动跳过）·`@android/@ios/@browser/@mac/@windows/@desktop` 等平台标签（集合语义，`@android @ios` 表示两端都跑；兼容遗留 `@both`）·`@TC-XXX`（用例 ID）·`@reset:pm_clear|relaunch|none`（Android 状态重置）·`@skip/@wip`。
+**`.feature`（Gherkin / Cucumber）** —— 见上方英文示例。Argus 识别的 tag：`@P0/@P1/@P2`（优先级）·`@auto/@partial/@manual`（自动化程度，partial/manual 自动跳过）·`@android/@ios/@browser/@mac/@windows/@desktop` 等平台标签（集合语义，`@android @ios` 表示允许两端运行，不会自动启动双端跑测；兼容遗留 `@both`）·`@TC-XXX`（用例 ID）·`@reset:pm_clear|relaunch|none`（Android 状态重置）·`@skip/@wip`。
 
 **每个 target 目录约定**：`_preconditions.md`（自动 prepend，告诉 LLM 怎么从异常态恢复到 Background）、`_accounts.json`（账号池，多设备时 worker `i` 绑 `accounts[i]`，用例里 `${EMAIL}`/`${PASSWORD}` 占位符被替换）、`reports/`（报告，`latest.html` 软链最新）。
 
@@ -479,7 +502,7 @@ Argus 把不同子任务路由到不同模型，并可选地把"操作"与"检�
 
 Argus 是**纯视觉**的，所以「屏幕上永远看不见」的断言 —— 埋点上报、后端落库、上报日志
 —— 视觉层判不了，铁律是 LLM 必须判 **fail**，不许「推断成立」。probe 就是给这类断言开的
-代码层通道：挂到某个 `Then` 上，那个 step **完全不进 LLM**。
+代码层通道：挂到某个 `Then` 上，那个 step **由插件返回 verdict，不交给 LLM 裁决**。完整用例和步骤列表仍可能进入 Planner/Brain 上下文，这不构成数据隔离。
 
 ```gherkin
   Then 上报首页曝光埋点
@@ -562,6 +585,6 @@ Skill 实现了什么（完整协议见 [`.claude/skills/argus-drive/SKILL.md`](
 
 - **桌面驱动是前台方案** —— 会占用真实鼠标/键盘，且每 turn 都把被测窗口切到最前（暂无后台不打扰模式，那需要独立 GUI 会话/VNC）。桌面跑测期间别手动碰键鼠。
 - **部分 VLM brain（实测 `qwen3-vl-flash`）偶发输出 0-1000 归一化坐标**（其原生 grounding 约定），而非协议要求的 0-100 百分比——通常只在一个轴上（`x_pct: 85, y_pct: 947`）。`brain._pct_to_px` 把 `(100, 1000]` 区间的值按千分比处理（>100 原本会被钳到窗口边缘、必然点空）。仅为过渡兼容，后续 brain 换成 Gemini 后无此问题。
-- 无法视觉验证的断言（埋点、后端调用、系统时间、通知抽屉、跨 App 深链）在纯视觉路径下**刻意判 fail**——要么改写用例、要么打 tag 跳过，要么挂 [probe 插件](./docs/probes.md) 真验证（该 step 会跳过 LLM）。
+- 无法视觉验证的断言（埋点、后端调用、系统时间、通知抽屉、跨 App 深链）在纯视觉路径下**刻意判 fail**——要么改写用例、要么打 tag 跳过，要么挂 [probe 插件](./docs/probes.md) 真验证（该 step 由插件裁决）。
 
 完整架构、逐模块说明与贡献指引见 **[CLAUDE.md](./CLAUDE.md)**。

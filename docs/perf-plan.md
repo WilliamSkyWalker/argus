@@ -4,7 +4,16 @@
 > 基准（baseline，一个含 25 scenario 的聊天类 feature / 3 台 Android 真机）：**墙钟 30m48s，聚合 76min，通过率 60%**。
 > 每阶段完成后用**同一 feature、同 3 台**对照这条基准。
 
-## 0. 现状与瓶颈（来自实测）
+## 当前实现与计划的区别
+
+本文保留优化基准和设计草案；当前行为以 `agent.py`、`settle.py` 和 `config.py` 为准：
+- Phase 1 已实现像素差稳定检测、状态栏 mask 与静态/动态采样；settle 内尚未集成 loading_detector/OCR/模板匹配。
+- 普通 tap/long_press 在配置 Locator 且有 target 时前置定位，失败回落 Brain 坐标。旧 no_effect 像素差检测已停用。
+- 分层执行仍由 Brain 看屏拆序列，批量执行后再由 Brain 验证；不是零大模型调用，也不以像素变化证明执行成功。
+- 普通步骤要求返回当前待执行序号；批量断言使用独立校验器，不放宽普通步骤索引限制。
+- 默认开启 settle、连续断言合并，关闭分层执行；默认禁用 sub-action 和 scenario 总轮数上限，主要以 15 个计数轮次未推进收敛，预算内 wait/probe 轮询除外。
+
+## 0. 基准时的现状与瓶颈（历史实测）
 - 聚合 76min 的大头 = ① 聊天类 case 等被测 App 自己的 AI 回复（每个十几二十 turn）；② 失败场景烧完 `MAX_TURNS_WITHOUT_PROGRESS=15` 预算才放弃（≈4min/个）；③ **每个 step 每 turn 都调大模型**（分层执行默认关）。
 - 分层执行开关 `AGENT_SPLIT_ACT_CHECK` 现为 `false` —— When/Then 每步都走 brain。
 - Then 上除了 brain 验证**没有别的 LLM 工作**（planner 不对 then 出 `act`），所以合并/异步只需动"验证"这一环。
@@ -64,7 +73,7 @@
 > **待办（红线 5/6，降优先级）**：OCR 确定性交叉核验、最弱条对抗复核。
 
 - 动机：连续断言步（Then + 继承的 And/But，中间无 When）几乎都在判同一屏 → 现状 K 步各跑一轮 brain。合并成 1 次调用（送 P1-B 采样帧 + K 条断言，逐条回 verdict+evidence）。
-- 依赖：P1-B 帧采样（同屏才合并）；需放开 `step_validator` 的 `+0/+1` 硬墙，允许一次推进 K 步（每步带各自 evidence）。
+- 依赖：P1-B 帧采样（同屏才合并）；当前通过独立的 `validate_assertion_batch()` 逐条检查后推进 K 步；普通 `validate_step_progress()` 仍要求严格等于当前待执行序号。
 
 ### 🚨 反偷懒红线（合并必须守，违反即回退单步）
 1. **逐条问责 schema**：每条断言各自回 `{id, verdict, evidence(≥15字, 引用该条独有元素), where(x_pct/y_pct 或 区域)}`。缺 evidence/where → reject。
@@ -92,7 +101,7 @@
 ---
 
 ## Phase 5. 配置级提速（可与上面并行，纯 config + 验证）
-- `AGENT_SPLIT_ACT_CHECK=true`：操作步（When/Given + 继承的 And）从"每步大模型"变"零大模型"（planner 预拆 + locator 执行）；检查步仍走大模型。
+- `AGENT_SPLIT_ACT_CHECK=true`：操作步（When/Given + 继承的 And）由 Brain 看屏拆序列 → Locator 按需定位、批量执行 → Brain 验证；检查步仍走 Brain。目标是减少逐动作决策调用，收益需对照测量。
 - `LLM_MODEL_PLANNER=google/gemini-2.5-flash-lite`：planner 降档（近乎纯文本推理，质量风险小）。
 - brain 检查步维持 `gemini-3.5-flash`（强 VQA + 快的甜点）。
 - **禁**给读屏 brain 换国产模型（被测为新闻类，政治内容有内容审查 → 拒答/误判）；locator 用 UI-TARS 无妨（只吐坐标不读内容）。

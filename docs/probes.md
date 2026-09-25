@@ -7,11 +7,12 @@ fail，不许 LLM「推断成立」蒙混**。
 Probe 是给这类断言开的一条**代码层**通道：
 
 - 用例在某个 Then 下面挂一行 `# argus-probe: <name> k=v`
-- 那个 step **完全不进 LLM**，argus 直接调插件，用返回的 verdict 定 pass/fail
+- 那个 step **不由 LLM 裁决**，argus 直接调插件，用返回的 verdict 定 pass/fail
 - 「具体怎么查」100% 由插件决定（查数据仓库 / 查上报日志 / 抓包 / 调后端 API）
 
-因为 verdict 来自代码层，brain 侧那套反谎报硬墙**一个字都不用改** —— 这些 step
-LLM 根本看不到，没有蒙混的余地。
+这些步骤的 verdict 来自代码层，不依赖 Brain 的视觉判断，也不参与连续视觉断言合并。
+完整用例仍用于 Planner 规划，步骤列表仍可能进入 Brain 上下文；probe 是裁决路由，
+**不是数据隔离机制**。敏感连接参数应留在插件注册表或环境变量中，不要写进用例。
 
 ## 30 秒上手
 

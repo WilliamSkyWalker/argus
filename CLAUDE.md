@@ -12,17 +12,27 @@ Argus = 视觉驱动 AI QA agent，替代人工测试。喂 `.feature`(Gherkin) 
 - argus 主仓：直接 commit 到 `main`，message 简洁；commit 尾 `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`。
 
 ## 架构（数据流）
-用例 → `gherkin.py` 解析 → `render_case()`(step + metadata) → `planner.py`(1 LLM call/case，拆 intent/expected/hint) → `agent.py` step 主循环 → fail/timeout 时 `healer.py`(根因五分类) → `report.py`(HTML+base64截图)。
+用例 → `gherkin.py` 解析 → `render_case()`(step + metadata) → `planner.py`(1 LLM call/case，拆 intent/expected/hint) → `agent.py` step 主循环 → fail/timeout/error 时 `healer.py`(根因五分类) → `report.py`(HTML+base64截图)。
 
-`agent.py` step-driven：外层迭代 Scenario step，内层每 step ≤ `PER_STEP_SUB_ACTION_LIMIT=10` 次 LLM sub-action，必须 LLM 出 `current_step_status=pass` 才推进。`step_validator.py` 硬墙：`current_step_index` 只能 +0/+1(禁跳/退)、pass/fail 必带 `evidence`(≥15 字+引用具体屏幕元素)、`in_progress` 必带 action；reject 不耗配额(连续 `MAX_REJECTS_PER_STEP=3` 判 fail)、reject 理由喂回 LLM 自纠。
+`agent.py` 按 Scenario step 推进。当前 `PER_STEP_SUB_ACTION_LIMIT=-1`（禁用动作次数上限），`AGENT_MAX_STEPS=0`（默认禁用整个 scenario 的循环轮数上限）；主要保护是 `MAX_TURNS_WITHOUT_PROGRESS=15`。预算内主动 wait 与 probe 轮询不计入该无进展计数。普通路径只有当前 step 判 pass 才由框架推进；`current_step_index` 必须严格等于待执行步骤，LLM 不得自行 +1。pass/fail 必带 evidence（≥15 字符且引用屏幕元素），fail 还需 fail_reason（≥10 字符），in_progress 必带 action。连续 3 次校验拒绝判 fail；拒绝不执行动作、不耗 sub-action 配额，但计入循环轮数和无进展计数。
+
+连续断言合并使用独立的 `validate_assertion_batch()`，逐条检查 verdict/evidence/where、重复证据和负向断言；整块通过才一次推进多步，probe 步不参与合并。证据校验是文本启发式检查，不会独立验证截图内容，不能保证模型没有误判。不可视断言禁 PASS 是模型提示约束；要做代码层验证需使用 probe。
+
+`healer.py` 在 fail/timeout/error 后提供根因分类与建议，附加到报告，不自动修复用例或应用，也不改写原测试结果。
 
 `brain.py` LLM 决策：发**原始截图** + 最近 1-3 张历史截图 + planner hint + step 列表 + 已过 step 的 evidence 锚点 + 上次 reject 理由 → 返回带 `step_progress` 的 JSON。**不可视觉验证的断言禁 PASS**(埋点/后端/系统时间/通知抽屉/跨App deeplink → 必须 fail，不许「假设通过/推断成立」蒙混)。
 
 **分级模型 / 元素定位 / 多帧断言 / 参考图**（借鉴 midscene）：
-- **分级模型**：`LLM_MODEL_BRAIN/PLANNER/LOCATOR` 各可覆盖，空→回落 `LLM_MODEL`(默认零变化)。planner 可挂更便宜模型。
-- **元素定位兜底**(`locator.py`，`ElementLocator`，默认关)：tap action 带 `target` 描述；连续 no_effect≥阈值时 agent **代码层**换定位小模型(`LLM_MODEL_LOCATOR`)重定位并重点击，不让 brain 盲猜同坐标；失败再降级到网格。配了模型才启用(可用 GUI 专用定位模型如 `bytedance/ui-tars-1.5-7b`，或 `anthropic/claude-sonnet-5` 这类通用 tier)。**注**：「grounding」在本项目保留指**更大的定位兜底策略**(网格版、强模型版规划中)，当前这个定位小模型只是它的一种实现——**别再把小模型叫 grounding**。
-- **多帧时间窗断言**(默认开，`AGENT_ASSERT_BURST_FRAMES=3`)：断言型 step(Then/But)抓一小段连续帧喂 brain，让「出现过又消失」的 toast/banner 可判(有 mjpeg 时近零成本)。
+- **分级模型**：`LLM_MODEL_BRAIN/PLANNER` 留空时回落 `LLM_MODEL`；`LLM_MODEL_LOCATOR` 留空时关闭定位。Locator 端点/密钥留空则复用主 LLM 配置。
+- **元素定位**(`locator.py`，默认关)：配置 `LLM_MODEL_LOCATOR` 后，普通路径中带 `target` 的 tap/long_press 在执行前定位，成功则替换 Brain 坐标，失败则沿用原坐标。也供分层执行定位目标。旧的像素差 no_effect 检测已停用，对应 `AGENT_LOCATE_RETRY` 与网格升级路径目前不会由该检测触发。「grounding」保留指更大的定位策略，不作为定位小模型的别名。
+- **稳定帧与多帧断言**：默认 `AGENT_SETTLE_ENABLED=true`，`settle.py` 用像素差、状态栏 mask 和超时采样；操作决策用末帧，断言按窗口变化量选择静态 1 帧或动态最多 3 帧。`AGENT_ASSERT_BURST_FRAMES=3` 用于关闭 settle 或缺少窗口帧时的回退路径；采样不保证捕获所有短暂提示。
 - **参考图断言**(默认关)：case 声明 `@ref:<path>` / `# argus-ref:` → 渲染成绝对路径 → brain 拿设计稿做视觉走查对比。供 Figma 走查。
+
+## 执行优化（当前实现）
+
+- `AGENT_WAIT_MAX_S=45`：每步累计主动等待预算；预算内 wait 轮不计无进展，耗尽后恢复计数，不是整个步骤的 45 秒超时。
+- `AGENT_MERGE_ASSERTS=true`：连续断言同步合并；失败时可在现场识别、关闭拦截弹窗并重新判定。
+- `AGENT_SPLIT_ACT_CHECK=false`：可选操作步批量执行。开启后 Brain 看截图拆原子动作序列，Locator 按需定位执行，下一轮 Brain 验证步骤；连续两次序列执行失败回退普通路径。不是零大模型调用，也不以 visual-diff 作为动作成功证明。
 
 ## 纯视觉（本次大改，记牢）
 - **不喂 UI 树给 LLM**。树逻辑全删(无 snap-to-clickable / element_marker / dialog_dismisser / _compact_xml)。决策只靠截图。
@@ -34,6 +44,8 @@ Argus = 视觉驱动 AI QA agent，替代人工测试。喂 `.feature`(Gherkin) 
 - `appium.py` **iOS+Android 统一驱动**：`AppiumServerManager` 自动起 server(带 ANDROID_HOME、锁定装了 appium 的 node)；os 由 `config["appium"]["os"]` 选 xcuitest/uiautomator2。`create_platform("ios"/"android"/"appium")` 全 → AppiumPlatform。
 - **mjpeg 帧流截图**(`platforms/mjpeg.py`，默认开)：起 session 时开 driver `mjpegServerPort`，`screenshot_raw` 从常驻流取最新帧(JPEG→PNG)省 HTTP 往返；取不到无条件 fallback 到 `get_screenshot_as_png`(故只快不错，云 appium 不暴露端口时自动降级)。`APPIUM_MJPEG_*` 控。
 - `browser.py` Selenium(local/Grid，回写实际 viewport 校正坐标)。
+- 桌面：`desktop_mac.py` / `desktop_win.py` 是前台窗口级驱动；WSL 显式选 `PLATFORM=windows`，由 `windows_runner.py` + PowerShell/Win32 runner 操作宿主。`PLATFORM=desktop` 仅在原生 Windows 选 Windows 驱动，其余系统选 macOS。桌面通过环境变量配置；`run --platform` 当前只接受 ios/android/browser/rdp。
+- `rdp.py` 为实验性远程 Windows 驱动，尚不应视为稳定接口。
 - **文字输入**：Android 走 `mobile: type`(经 UnicodeIME，cap `unicodeKeyboard:true`+`resetKeyboard:true`，`io.appium.settings` 提供)——原生 EditText 与 Flutter 自绘都通吃(ACTION_SET_TEXT 对 Flutter 无效)。iOS 聚焦元素 send_keys。
 - **iOS 签名**：Appium 走 xcodebuild/CoreDevice(非 go-ios 隧道)自动签 WDA，需 `IOS_TEAM_ID` + Xcode 登录该 team + 设备在其开发列表 + login 钥匙串解锁(codesign)。`android.py`/`ios.py`/`hands.py` 旧驱动已删。
 
@@ -42,7 +54,7 @@ Argus = 视觉驱动 AI QA agent，替代人工测试。喂 `.feature`(Gherkin) 
 
 ## Probes（`argus/probes/`，非视觉断言插件 —— 埋点/后端落库/上报日志）
 纯视觉判不了的断言开的**代码层**通道，铁律「不可视断言禁 PASS」由此有了正解（不是放宽）：
-- 用例在某 Then 下面挂 `# argus-probe: <name> k=v` → **该 step 完全不进 LLM**，agent 直接调插件拿 verdict 定 pass/fail。brain 反谎报硬墙一字不改（LLM 根本看不到这个 step）。
+- 用例在某 Then 下面挂 `# argus-probe: <name> k=v` → **该 step 的 verdict 由插件决定**，agent 不调用 Brain 对它做视觉裁决。完整用例和步骤列表仍可能传给 Planner/Brain，因此这不是数据隔离机制。
 - **用例只写意图**（`check=首页曝光`），真实事件名/表名/期望属性在插件 config 里映射 —— 改埋点方案时用例零改动。
 - **三态 verdict**：`pass`/`fail`/`inconclusive(+retry_after_s)`。埋点批量上报有分钟级延迟，**查太早的 0 行不算证据**（我据此造过假 bug），argus 按 probe 节奏轮询到 `PROBE_TIMEOUT_S`(默认 300s) 才判 fail；重试轮不计 no-progress（同 wait 语义）。插件抛异常/子进程崩 = inconclusive 继续重试，预算耗尽 fail 并把 error 写报告，**绝不因「查不了」放过断言**。
 - 两种形态：**Python 类**（继承 `probes.base.Probe`，实现 `check(ctx,args)`）/ **子进程**（stdin JSON → stdout JSON，任何语言、依赖不污染 argus 环境）。
@@ -74,7 +86,7 @@ Argus = 视觉驱动 AI QA agent，替代人工测试。喂 `.feature`(Gherkin) 
 ## 用例格式
 **`.feature`(Gherkin，推荐)**：Feature/Background/Scenario(Outline)+Examples 全解析。Tag：
 - `@P0/@P1/@P2` 优先级；`@auto/@partial/@manual`(后两个自动 skip)；`@skip/@wip` 跳过。
-- **平台标签是集合，可扩展，不用 both**：`@android`/`@ios`/`@browser`(以后 `@web`/`@desktop`)。挂哪个就在哪个平台跑，`@android @ios` = 两端都跑。跑测平台不在集合里则 skip。
+- **平台标签是集合，可扩展，不用 both**：`@android`/`@ios`/`@browser`/`@mac`/`@windows`/`@desktop`/`@rdp` 等；`@android @ios` 表示允许这两个平台。标签只筛选用例，不切换驱动、不自动发起双端运行。跑测平台不在集合里则 skip。
 - `@TC-XXX` case ID；`@reset:pm_clear|relaunch|none` Android 重置(覆盖 feature 级 `# argus-reset-default`)。
 - 文件头信息元数据：`# argus-target/platform/package/reset-default`(值行别写行内 `#` 注释)。
 
@@ -121,14 +133,17 @@ argus run <t> --only-probes    # 只跑有埋点断言的 case(UI 步照跑)
 
 ## .env 关键项（真值在此，勿入库）
 ```
-PLATFORM=android|ios|browser
+PLATFORM=android|ios|browser|mac|windows|desktop|rdp
 LLM_PROVIDER=openrouter  LLM_API_KEY=…  LLM_BASE_URL=https://openrouter.ai/api/v1  LLM_MODEL=google/gemini-2.5-flash
 LLM_MODEL_BRAIN=  LLM_MODEL_PLANNER=  LLM_MODEL_LOCATOR=   # 分级模型，空→回落 LLM_MODEL(locator 空=关)
 LLM_LOCATOR_BASE_URL=  LLM_LOCATOR_API_KEY=   # 定位模型独立端点(空→复用主 LLM)
 ANDROID_PACKAGE=com.example.app   # 被测包名(必填)；填真值别提交
 APPIUM_DEVICE=  APPIUM_SERVER_URL=  # 设备 udid/serial；空则默认
 APPIUM_MJPEG_ENABLED=true  APPIUM_MJPEG_PORT=  APPIUM_MJPEG_QUALITY=90   # mjpeg 帧流截图(多设备需各给端口)
-AGENT_ASSERT_BURST_FRAMES=3  AGENT_LOCATE_RETRY=2   # 断言多帧数 / 触发元素定位的连续 no_effect 数
+AGENT_MAX_STEPS=0   # scenario 循环轮数上限，<=0 禁用
+AGENT_SETTLE_ENABLED=true  AGENT_WAIT_MAX_S=45  AGENT_MERGE_ASSERTS=true
+AGENT_SPLIT_ACT_CHECK=false
+AGENT_ASSERT_BURST_FRAMES=3  AGENT_LOCATE_RETRY=2   # 回退路径多帧数 / 已停用 no_effect 检测的旧阈值
 IOS_TEAM_ID=  IOS_WDA_BUNDLE_ID=com.example.wda  IOS_BUNDLE_ID=   # iOS 真机签名
 PROBES_CONFIG=  PROBE_TIMEOUT_S=  PROBE_POLL_INTERVAL_S=   # 非视觉断言插件(空→注册表 defaults / 300s / 20s)
 PROBES_MODE=all|skip|only    # = argus run --skip-probes / --only-probes
@@ -137,6 +152,6 @@ BROWSER_HEADLESS / VIEWPORT_* / SELENIUM_GRID_URL ; FIGMA_TOKEN ; SKILLS_ENABLED
 
 ## 已知限制 / 行为
 - 坐标不准的头号真因是**分辨率标定**(截图px↔设备px 换算)；标定对了 + 用百分比协议基本落中。
-- 不可视断言(埋点/后端/系统时间/launcher badge/通知抽屉/跨App)**视觉层**一律 fail，不许蒙混；要真验证挂 probe 插件(见上)，那条 step 不进 LLM。
+- 不可视断言(埋点/后端/系统时间/launcher badge/通知抽屉/跨App)**视觉层**一律 fail，不许蒙混；要真验证挂 probe 插件(见上)，那条 step 由插件裁决。
 - iOS 真机若非专用设备(如私人手机)会反复 `unavailable`(锁屏/休眠/拔线)——按需插+解锁，规模化用专用设备或云真机(云上 iOS 只有 Appium 一条路，且免签名代管)。
 - 依赖：`openai`(OpenAI 兼容 LLM) / `Pillow` / `uiautomator2` / `selenium` / Appium(server+drivers)。
