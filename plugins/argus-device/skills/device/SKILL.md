@@ -9,6 +9,8 @@ Use the same named session in CLI and MCP. `serial` in legacy tools is a session
 
 Query `device_command(command="capabilities", session=...)` or `argus device capabilities --session ...` before relying on an optional action. Capabilities describe the backend; they do not prove the current application accepted input.
 
+Prefer visible buttons, menus and controls over keyboard shortcuts, especially in background mode. For example, save through File → Save when available. Use a shortcut only when the UI route is unavailable or clearly inefficient and the current backend and mode explicitly support that specific shortcut; support for `press_key` alone is not sufficient. If a shortcut fails, re-observe and look for a UI route instead of blindly retrying or switching to foreground mode without user authorization. Verify the result through a new observation; dispatched input does not establish success.
+
 Observe → decide one action → observe again:
 
 - MCP: `device_observe(session)` returns image content and metadata. `device_act(session, action, observation_id, observe_after=true)` executes a step with a fresh screenshot.
