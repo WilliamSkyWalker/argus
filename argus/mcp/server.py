@@ -7,7 +7,7 @@ MCP-aware 客户端不用每次 spawn ``python3 -m argus.cli`` 就能：
   - 设备：list_devices / install_apk / adb_reconnect / setup_simulator
   - 设备原语（/argus-drive 用，Claude 当 brain）：device_screenshot /
     device_tap / device_input / device_swipe / device_key /
-    device_launch —— 复用 argus.platforms.appium.AppiumPlatform（os=android）
+    device_launch —— 通过共享持久会话服务控制 Android/iOS、浏览器和桌面
 
 启动:
     python3 -m argus.mcp.server
@@ -687,179 +687,163 @@ def setup_simulator(name: str | None = None,
 
 
 # ──────────────────────────────────────────────────────────────────
-# Device control primitives (for /argus-drive — Claude Code as brain)
-#
-# argus-drive 让 Claude 当 brain、Appium 当 platform 跑用例。这些 tool 把
-# argus.platforms.appium.AppiumPlatform（os=android）的原语（screenshot / tap /
-# input / swipe / key）暴露成 MCP tool，让 driver 不用手搓脚本，直接复用平台层。
-#
-# 每个 serial 缓存一个 AppiumPlatform（持 Appium session），跨 tool call 复用。
+# Device control primitives: external agents decide; shared service performs input.
+# CLI and MCP reconnect the same persisted binding for every call. No per-server cache.
 # ──────────────────────────────────────────────────────────────────
 
-_ANDROID_PLATFORMS: dict[str, object] = {}
-_SHOTS_DIR = Path("/tmp/argus-mcp/shots")
+def _device(command, serial=None, **options):
+    from argus.devices.service import execute
+    with _silenced_stdout():
+        return execute(command, serial, **options)
 
 
-def _get_android(serial: str | None):
-    """Lazily build + cache an Appium (Android) platform for a serial (None = first device)."""
-    from ..platforms.appium import AppiumPlatform
-
-    key = serial or "__default__"
-    plat = _ANDROID_PLATFORMS.get(key)
-    if plat is None:
-        plat = AppiumPlatform()
-        plat.setup({"appium": {"os": "android", "device": serial or ""}})
-        _ANDROID_PLATFORMS[key] = plat
-        # 落状态文件，让 `argus device` CLI（及其它 agent）能重连同一 session
-        try:
-            from ..platforms import device_session as _ds
-            _ds.save_state(serial, {
-                "server_url": plat._server_url, "session_id": plat._driver.session_id,
-                "os": plat._os, "screen_width": plat._screen_width,
-                "screen_height": plat._screen_height, "serial": serial or "",
-            })
-        except Exception:
-            pass
-    return plat
+@mcp.tool()
+def device_sessions() -> dict:
+    """List persisted mobile, browser and desktop sessions shared with CLI."""
+    from argus.devices.control import sessions
+    return {"sessions": sessions()}
 
 
-def _type_text(plat, text: str) -> None:
-    """向聚焦输入框写文字（走 AppiumPlatform.input_text）。"""
-    plat.input_text(text)
+@mcp.tool()
+def device_command(command: str, session: str, options: dict | None = None) -> dict:
+    """Shared CLI commands: start, stop, pages, select-page, new-page, close-page,
+    open, navigate, capabilities, wait. Use device_connect for a new binding.
+    """
+    return _device(command, session, **(options or {}))
+
+
+@mcp.tool()
+def device_connect(platform: str, session: str, options: dict | None = None) -> dict:
+    """Bind Android/iOS, browser, or a desktop window to a persistent named session."""
+    from argparse import Namespace
+    from argus.devices.control import connect
+    defaults = dict(device=None, server_url=None, team_id=None, app=None, backend=None,
+                    bridge_directory=None, page_id=None)
+    defaults.update(options or {})
+    try:
+        with _silenced_stdout():
+            return connect(Namespace(platform=platform, session=session, **defaults))
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "error_type": type(exc).__name__}
 
 
 @mcp.tool()
 def device_screenshot(serial: str | None = None, out_path: str | None = None) -> dict:
-    """截屏（无 grid 覆盖）落盘并返回路径 + 尺寸标定信息。
+    """Capture a named session. Returns observation ID, target and coordinate mappings."""
+    return _device("screenshot", serial, out=out_path)
 
-    返回:
-      - path: PNG 路径（客户端自行读图）
-      - width / height: 截图像素尺寸
-      - screen_size: [w, h] 设备逻辑分辨率（wm size / Override）
-      - scale: 截图px / 屏幕px 比例（≠1 说明 screencap 被系统缩放，
-        tap 坐标要按此换算；这是 tap 点不中的根因，先看这里）
-    缺省 out_path 落 /tmp/argus-mcp/shots/<serial>-<ts>.png。
+
+def _image_result(result, observations):
+    from mcp.types import TextContent, ImageContent
+    import base64
+    content = [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+    for observation in observations:
+        path = observation.get("crop", {}).get("path", observation.get("path"))
+        if path:
+            content.append(ImageContent(type="image", data=base64.b64encode(Path(path).read_bytes()).decode(), mimeType="image/png"))
+    return content
+
+
+@mcp.tool()
+def device_observe(session: str, crop: list[int] | None = None):
+    """Return PNG image content plus observation metadata. Optional crop is image-pixel LTRB, magnified 2x."""
+    result = _device("screenshot", session, crop=crop)
+    return _image_result(result, [result] if result.get("ok") else [])
+
+
+@mcp.tool()
+def device_act(session: str, action: dict, observation_id: str | None = None,
+               observe_after: bool = True, timeout: float = 5):
+    """Dispatch one action, optionally wait for stability and return a new observation.
+    coordinate_space: screen, percent, image, crop. Image/crop require observation_id.
+    dispatched means input was sent; business_success remains unverified.
     """
-    plat = _get_android(serial)
-    png = plat.screenshot_raw()
-    if not out_path:
-        _SHOTS_DIR.mkdir(parents=True, exist_ok=True)
-        out_path = str(_SHOTS_DIR / f"{(serial or 'dev')}-{int(time.time() * 1000)}.png")
-    Path(out_path).write_bytes(png)
-    from PIL import Image
-    with Image.open(io.BytesIO(png)) as im:
-        w, h = im.size
-    sw, sh = plat.screen_size
-    return {"path": out_path, "width": w, "height": h,
-            "screen_size": [sw, sh], "scale": plat.scale}
+    result = _device("act", session, action=action, observation_id=observation_id,
+                     observe_after=observe_after, timeout=timeout)
+    return _image_result(result, [result["observation"]] if result.get("observation") else [])
 
 
 @mcp.tool()
 def device_tap(x: int, y: int, serial: str | None = None) -> dict:
-    """在设备坐标 (x, y) 点击（走 Appium 平台层，纯坐标注入）。
-
-    坐标是设备像素（= screen_size 空间）。若 device_screenshot 的 scale≠1，
-    先把截图坐标 × (1/scale) 换算成设备坐标再传入。
-    """
-    plat = _get_android(serial)
-    plat.tap(int(x), int(y))
-    return {"ok": True, "tapped": [int(x), int(y)]}
+    """Click in screen coordinates on the saved session, regardless of platform."""
+    return _device("tap", serial, x=x, y=y)
 
 
 @mcp.tool()
 def device_input(text: str, serial: str | None = None) -> dict:
-    """向当前聚焦的输入框写文字（u2 ACTION_SET_TEXT，绕过 IME，CJK 安全）。
-
-    需先 device_tap 聚焦目标输入框。不发送 —— 发送另点发送键 / device_key enter。
-    """
-    plat = _get_android(serial)
-    _type_text(plat, text)
-    return {"ok": True, "len": len(text)}
+    """Type into the focused field without submitting."""
+    return _device("input", serial, text=text)
 
 
 @mcp.tool()
-def device_type_send(text: str,
-                     input_x: int, input_y: int,
-                     send_x: int, send_y: int,
-                     wait_s: float = 12.0,
-                     serial: str | None = None,
-                     out_path: str | None = None) -> dict:
-    """一次搞定「聚焦输入框 → 写文字 → 点提交 → 等 wait_s → 截屏」。
-
-    给需要跑很多轮「填字段+提交+观察」的场景（如 chat 压测）省往返：
-    否则 tap→input→tap 三个有序 call + 截屏要 4+ 个 round-trip。
-
-    - (input_x,input_y): 输入框坐标，先 tap 聚焦
-    - (send_x,send_y): 提交键坐标
-    - wait_s: 提交后等回复生成的秒数
-    - 返回 device_screenshot 同款 {path,width,height,screen_size,scale}
-    """
-    plat = _get_android(serial)
-    plat.tap(int(input_x), int(input_y))
-    time.sleep(0.7)
-    _type_text(plat, text)
-    time.sleep(0.4)
-    plat.tap(int(send_x), int(send_y))
-    time.sleep(max(0.0, float(wait_s)))
-    png = plat.screenshot_raw()
-    if not out_path:
-        _SHOTS_DIR.mkdir(parents=True, exist_ok=True)
-        out_path = str(_SHOTS_DIR / f"{(serial or 'dev')}-{int(time.time() * 1000)}.png")
-    Path(out_path).write_bytes(png)
-    from PIL import Image
-    with Image.open(io.BytesIO(png)) as im:
-        w, h = im.size
-    sw, sh = plat.screen_size
-    return {"path": out_path, "width": w, "height": h,
-            "screen_size": [sw, sh], "scale": plat.scale, "sent": text}
+def device_type_send(text: str, input_x: int, input_y: int, send_x: int, send_y: int,
+                     wait_s: float = 12, serial: str | None = None, out_path: str | None = None) -> dict:
+    """Focus, type, submit and capture. On uncertain results observe before retrying."""
+    return _device("type-send", serial, text=text, input_x=input_x, input_y=input_y,
+                   send_x=send_x, send_y=send_y, wait_s=wait_s, out=out_path)
 
 
 @mcp.tool()
-def device_swipe(x1: int, y1: int, x2: int, y2: int,
-                 duration_ms: int = 300, serial: str | None = None) -> dict:
-    """从 (x1,y1) 滑到 (x2,y2)，duration_ms 控制时长（惯性滚动调大）。"""
-    plat = _get_android(serial)
-    plat.swipe(int(x1), int(y1), int(x2), int(y2))
-    return {"ok": True, "from": [int(x1), int(y1)], "to": [int(x2), int(y2)]}
-
-
-# 支持的键名（Android；与 platforms/appium.py 的 key_map 同步）。纯数字 = 原始 keycode。
-_DEVICE_KEYS = ("enter", "delete", "tab", "space", "escape", "back", "home",
-                "recent", "wakeup", "power", "sleep", "menu")
+def device_swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300,
+                 serial: str | None = None) -> dict:
+    """Swipe on a saved session; custom duration requires a supporting backend."""
+    return _device("swipe", serial, x1=x1, y1=y1, x2=x2, y2=y2, duration_ms=duration_ms)
 
 
 @mcp.tool()
 def device_key(key: str, serial: str | None = None) -> dict:
-    """按键：enter / delete / tab / space / escape / back / home / recent /
-    wakeup / power / sleep / menu，或直接给 Android keycode 数字（如 "24"）。
-
-    息屏时截图是全黑的（FLAG_SECURE），先 ``wakeup`` 再操作。
-    注意：部分 Flutter App 里 back 会直接退出 App，关闭浮层/弹层优先用界面上的关闭控件。
-
-    不认识的键名**不会**假报成功 —— 直接返回 ``ok=False`` 并列出可用键名，
-    免得调用方把「按了但没反应」误判成「按到了但界面没变」。
-    """
-    k = str(key).strip().lower()
-    if k not in _DEVICE_KEYS and not k.isdigit():
-        return {"ok": False, "key": key,
-                "error": f"unsupported key {key!r}",
-                "supported": list(_DEVICE_KEYS) + ["<android keycode digits>"]}
-    plat = _get_android(serial)
-    plat.press_key(k)
-    return {"ok": True, "key": k}
+    """Press a platform key; unsupported input returns an error."""
+    return _device("key", serial, key=key)
 
 
 @mcp.tool()
 def device_launch(package: str, activity: str | None = None,
                   serial: str | None = None, force_stop: bool = False) -> dict:
-    """把被测包切到前台。force_stop=True 先杀再起（relaunch）。
+    """Activate a mobile package on the saved Android or iOS session."""
+    return _device("launch", serial, package=package, force_stop=force_stop)
 
-    走 Appium 原语（activate_app / terminate_app），**不碰 adb**（云真机无 adb）。
-    activity 参数保留兼容，Appium 按包名激活，无需显式 activity。
+
+@mcp.tool()
+def device_handoff(session: str, instructions: str, reason: str = "login") -> dict:
+    """Pause a session for human control. All automatic input is blocked until resume."""
+    from argparse import Namespace
+    from argus.devices.control import handoff
+    try:
+        return handoff(Namespace(session=session, instructions=instructions, reason=reason))
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "error_type": type(exc).__name__}
+
+
+@mcp.tool()
+def device_resume(session: str, note: str) -> dict:
+    """Return control after human work; capture a fresh observation, without claiming login success."""
+    from argparse import Namespace
+    from argus.devices.control import resume
+    try:
+        return resume(Namespace(session=session, note=note))
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "error_type": type(exc).__name__}
+
+
+@mcp.tool()
+def agent_task(command: str, task_id: str | None = None, options: dict | None = None):
+    """Incremental durable task: create(bindings), observe(resource), submit(resource, action,
+    observation_id, request_id, note), status, events, timeline, recover, resolve(outcome,note),
+    handoff(instructions), resume(note), finish(note), cancel(note), export(out), list.
+    Requests are never replayed automatically. needs_review requires evidence and explicit resolution.
     """
-    plat = _get_android(serial)
-    plat.reset_app(package, "relaunch" if force_stop else "none")
-    return {"ok": True, "package": package, "force_stop": force_stop}
+    from argus.runtime.interactive import call
+    try:
+        with _silenced_stdout():
+            result = call(command, task_id, **(options or {}))
+        if command in {"observe", "submit", "resume", "recover"}:
+            observed = result.get("observations", {})
+            resource = (options or {}).get("resource")
+            images = [observed[resource]] if resource in observed else list(observed.values())
+            return _image_result(result, images)
+        return result
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "error_type": type(exc).__name__}
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -870,6 +854,8 @@ def device_launch(package: str, activity: str | None = None,
 # 意义：这一档**不需要 LLM_API_KEY、不需要 tests/ 目录、不需要 .env** 就能用，
 # 挂给任意 agent 当"手和眼"（见 plugins/argus-device）。
 _DEVICE_PROFILE_KEEP = {
+    "device_sessions", "device_command", "device_connect", "device_observe", "device_act",
+    "device_handoff", "device_resume", "agent_task",
     "device_screenshot", "device_tap", "device_swipe", "device_input",
     "device_type_send", "device_key", "device_launch",
     "list_devices", "install_apk", "adb_reconnect", "setup_simulator",

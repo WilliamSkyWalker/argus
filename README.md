@@ -627,3 +627,8 @@ Argus is licensed under the [MIT License](LICENSE). Third-party dependencies rem
 Argus 采用 MIT 许可证，允许商用、修改和再分发，须保留版权及许可声明。第三方依赖遵循各自的许可证。
 
 Module responsibilities and execution paths: [Architecture](docs/architecture.md).
+
+
+## External programming agents
+
+CLI and MCP now share persistent phone/browser/desktop sessions, observations, action dispatch, and incremental task checkpoints. See [the installation and operation guide](docs/agent-control.md) for `argus device`, `argus task`, handoff/recovery, local evidence export, and the current validation limits.

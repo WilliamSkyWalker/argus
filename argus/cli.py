@@ -6,7 +6,7 @@ from argus.logger import set_level
 
 
 def build_parser():
-    from argus.commands import background, device, figma, probes, run, targets, toolchain
+    from argus.commands import background, device, figma, probes, run, targets, toolchain, task, doctor
     from argus.runtime import cli as workflow
 
     parser = argparse.ArgumentParser(description="Argus — LLM QA Agent")
@@ -14,7 +14,7 @@ def build_parser():
     sub = parser.add_subparsers(dest="command")
     init = sub.add_parser("init", help="Create default .env config file")
     init.set_defaults(handler=lambda args: init_config())
-    for commands in (targets, run, toolchain, device, probes, background, figma, workflow):
+    for commands in (targets, run, toolchain, device, probes, background, figma, workflow, task, doctor):
         commands.register(sub)
     return parser
 

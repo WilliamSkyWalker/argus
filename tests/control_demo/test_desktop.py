@@ -49,7 +49,8 @@ class DesktopTests(unittest.TestCase):
             with self.subTest(platform=p.platform_name), patch.object(p, 'long_press') as press:
                 p.press_key(' RETURN ')
                 p.press_key('delete')
-                p.press_key('unknown')
+                with self.assertRaises(ValueError):
+                    p.press_key('unknown')
                 self.assertEqual(p._pg.press.call_args_list, [call('enter'), call('backspace')])
                 p.scroll_up(); p.scroll_down()
                 self.assertEqual(p._pg.scroll.call_args_list, [call(5), call(-5)])

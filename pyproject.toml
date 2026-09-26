@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "argus-agent-control"
+version = "0.1.0"
+description = "Persistent visual control sessions for external programming agents"
+requires-python = ">=3.10"
+readme = "README.md"
+license = {file = "LICENSE"}
+dependencies = ["Pillow>=10"]
+
+[project.optional-dependencies]
+browser = ["playwright>=1.60,<2"]
+selenium = ["selenium>=4"]
+mobile = ["Appium-Python-Client>=4", "uiautomator2>=3.5,<4"]
+mcp = ["mcp>=1.2,<3"]
+qa = ["openai>=1"]
+windows = ["pyautogui>=0.9; sys_platform == 'win32'", "pywin32>=306; sys_platform == 'win32'"]
+mac = ["pyautogui>=0.9; sys_platform == 'darwin'", "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'", "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'"]
+
+[project.scripts]
+argus = "argus.cli:main"
+argus-mcp = "argus.mcp.server:main"
+
+[tool.setuptools.packages.find]
+include = ["argus*"]
+
+[tool.setuptools.package-data]
+argus = ["platforms/*.ps1", "skills/**/*.md", "skills/**/*.json", "skills/**/*.txt"]

@@ -1,9 +1,6 @@
 """Unified device command arguments, actions and JSON results."""
 
 import json
-import tempfile as _tempfile
-import time
-from pathlib import Path
 
 
 def _session_options(parser, *, screenshot=False):
@@ -75,144 +72,35 @@ def register(sub):
             page_parser.add_argument("url", help="HTTP(S) URL; returns a new page ID without selecting it")
         elif page_cmd != "pages":
             page_parser.add_argument("page_id")
+    for name in ("capabilities", "wait", "act"):
+        p = dev_sub.add_parser(name)
+        _session_options(p, screenshot=name != "capabilities")
+        if name == "wait":
+            p.add_argument("--mode", choices=["stable", "change"], default="stable")
+            p.add_argument("--timeout", type=float, default=5)
+        if name == "act":
+            p.add_argument("action", type=json.loads, help="JSON action object; type and coordinate_space")
+            p.add_argument("--observation-id")
+            p.add_argument("--observe-after", action="store_true")
+            p.add_argument("--timeout", type=float, default=5)
+    d_shot.add_argument("--crop", type=int, nargs=4, metavar=("LEFT", "TOP", "RIGHT", "BOTTOM"))
+    d_tap.add_argument("--coordinate-space", choices=["screen", "percent", "image", "crop"], default="screen")
+    d_tap.add_argument("--observation-id")
+    d_tap.add_argument("--observe-after", action="store_true")
     d_stop = dev_sub.add_parser("stop", help="Quit the device session")
     _session_options(d_stop)
     dev_p.set_defaults(handler=cmd_device)
 
 
 def cmd_device(args):
-    """通用设备驱动 CLI —— 走常驻 Appium session（跨进程按 session_id 重连），
-    每条命令输出 JSON 到 stdout，供任何能跑 shell 的 agent 机读驱动设备。"""
-    import io as _io
-    from argus.platforms import device_session as ds
-
-    cmd = args.device_command
-    if cmd in {"list", "sessions", "connect", "disconnect", "install", "boot", "network", "handoff", "resume"}:
-        from argus.devices.control import dispatch
-        return dispatch(args)
-    serial = getattr(args, "serial", None)
-
-    def _out(d):
-        print(json.dumps(d, ensure_ascii=False))
-
-    def _shot(plat, out_path):
-        png = plat.screenshot_raw()
-        if not out_path:
-            shots = Path(_tempfile.gettempdir()) / "argus-device-shots"
-            shots.mkdir(parents=True, exist_ok=True)
-            out_path = str(shots / f"{(serial or 'dev')}-{int(time.time() * 1000)}.png")
-        Path(out_path).write_bytes(png)
-        from PIL import Image
-        with Image.open(_io.BytesIO(png)) as im:
-            w, h = im.size
-        sw, sh = plat.screen_size
-        result = {"path": out_path, "width": w, "height": h,
-                  "screen_size": [sw, sh], "scale": plat.scale}
-        if hasattr(plat, "observation_metadata"):
-            result.update(plat.observation_metadata())
-        return result
-
-    plat = None
-    submission_attempted = False
-    try:
-        if cmd == "start":
-            os_name = getattr(args, "os", "android")
-            plat = ds.start(serial, os_name, browser_backend=getattr(args, "backend", None))
-            sw, sh = plat.screen_size
-            _out({"ok": True, "serial": serial or "default",
-                  "os": getattr(plat, "_os", os_name),
-                  "session_id": getattr(getattr(plat, "_driver", None), "session_id", None),
-                  "page_id": getattr(plat, "page_id", None), "screen_size": [sw, sh]})
-            return
-        if cmd == "stop":
-            ds.stop(serial)
-            _out({"ok": True, "stopped": serial or "default"})
-            return
-
-        if cmd in ("pages", "select-page", "close-page", "new-page"):
-            state = ds.load_state(serial) or {}
-            backend = "extension" if state.get("browser_backend") == "extension" else "playwright"
-            plat = ds.attach_browser(serial, backend=backend, manage_pages=True)
-            if cmd == "new-page":
-                page_id = plat.new_page(args.url)
-                _out({"created_page_id": page_id, "selected_page_id": plat.page_id, "pages": plat.list_pages()})
-                return
-            if cmd == "select-page":
-                plat.select_page(args.page_id)
-                state = ds.load_state(serial)
-                state["browser_backend"] = backend
-                ds.save_state(serial, state)
-            elif cmd == "close-page":
-                plat.close_page(args.page_id)
-            _out({"pages": plat.list_pages(), "selected_page_id": plat.page_id})
-            return
-
-        # A saved browser must reconnect as-is; never replace it after a selection error.
-        state = ds.load_state(serial)
-        if state and state.get("disconnected"):
-            raise RuntimeError("Session disconnected; use device connect to reconnect")
-        foreground = getattr(args, "foreground", False)
-        if foreground and (not state or state.get("kind") != "desktop" or state.get("os") != "windows"):
-            raise ValueError("--foreground requires a connected Windows desktop session")
-        if cmd == "type-send" and not args.prepare_only and (args.send_x is None or args.send_y is None):
-            raise ValueError("type-send requires --send-x and --send-y unless --prepare-only is set")
-        if state and state.get("kind") == "desktop":
-            plat = ds.attach_desktop(state, serial=serial, foreground=foreground)
-        elif state and state.get("kind") == "browser":
-            plat = ds.attach_browser(serial)
-        else:
-            plat = ds.attach(serial) or ds.start(serial, "browser" if cmd == "navigate" else "android")
-
-        if cmd == "open":
-            plat.open_target(args.target)
-            _out({"ok": True, "target": args.target})
-        elif cmd == "scroll":
-            (plat.scroll_up if args.direction == "up" else plat.scroll_down)()
-            _out({"ok": True, "direction": args.direction})
-        elif cmd == "navigate":
-            plat.open_target(args.url)
-            time.sleep(max(0.0, args.wait_s))
-            _out(_shot(plat, args.out))
-        elif cmd in ("screenshot", "focus"):
-            _out(_shot(plat, args.out))
-        elif cmd == "tap":
-            plat.tap(args.x, args.y)
-            result = {"ok": True, "tapped": [args.x, args.y]}
-            if args.out:
-                time.sleep(.3)
-                result.update(_shot(plat, args.out))
-                result["requires_observation"] = True
-            _out(result)
-        elif cmd == "swipe":
-            plat.swipe(args.x1, args.y1, args.x2, args.y2)
-            _out({"ok": True, "from": [args.x1, args.y1], "to": [args.x2, args.y2]})
-        elif cmd == "input":
-            plat.input_text(args.text)
-            _out({"ok": True, "len": len(args.text)})
-        elif cmd == "type-send":
-            plat.tap(args.input_x, args.input_y); time.sleep(0.7)
-            if args.replace:
-                plat.press_key("ctrl+a")
-            plat.input_text(args.text); time.sleep(0.4)
-            if not args.prepare_only:
-                submission_attempted = True
-                plat.tap(args.send_x, args.send_y)
-                time.sleep(max(0.0, args.wait_s))
-            res = _shot(plat, args.out)
-            res.update({"text": args.text, "submitted": not args.prepare_only, "requires_observation": True})
-            _out(res)
-        elif cmd == "key":
-            plat.press_key(args.key)
-            _out({"ok": True, "key": args.key})
-        elif cmd == "launch":
-            plat.reset_app(args.package, "relaunch" if args.force_stop else "none")
-            _out({"ok": True, "package": args.package, "force_stop": args.force_stop})
-    except Exception as exc:
-        error = {"ok": False, "error": str(exc)}
-        if cmd == "type-send":
-            error["submission_attempted"] = submission_attempted
-            error["requires_observation"] = submission_attempted
-        _out(error)
-        raise SystemExit(2) from exc
-    finally:
-        ds.release_controller(plat)
+    from argus.devices import control, service
+    command = args.device_command
+    if command in {"list", "sessions", "connect", "disconnect", "install", "boot", "network", "handoff", "resume"}:
+        return control.dispatch(args)
+    options = vars(args).copy()
+    for key in ("command", "device_command", "serial", "handler", "verbose"):
+        options.pop(key, None)
+    result = service.execute(command, getattr(args, "serial", None), **options)
+    print(json.dumps(result, ensure_ascii=False))
+    if not result.get("ok", True):
+        raise SystemExit(2)

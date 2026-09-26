@@ -67,7 +67,7 @@ def discover(which):
     return result
 
 
-def connect(args):
+def _connect(args):
     serial=args.session
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}",serial):
         raise ValueError("session must contain letters, digits, dot, dash or underscore")
@@ -148,7 +148,7 @@ def connect(args):
         ds.release_controller(plat, "browser")
 
 
-def disconnect(serial):
+def _disconnect(serial):
     state=ds.load_state(serial)
     if state is None: raise ValueError("Unknown session")
     if state.get("kind") not in {"browser","desktop"}:
@@ -156,6 +156,31 @@ def disconnect(serial):
     state["disconnected"]=True
     ds.save_state(serial,state)  # Preserve browser endpoint and target for explicit reconnect.
     return {"session":serial,"disconnected":True}
+
+
+def connect(args):
+    from argus.runtime.locking import resource_guard, session_keys
+    state = ds.load_state(args.session) or {}
+    if state.get("handoff"):
+        return {"connected": False, "session": args.session, **state["handoff"]}
+    keys = session_keys(args.session, state)
+    if args.platform in {"desktop", "windows", "mac"}:
+        keys.append("desktop:local")
+    if getattr(args, "device", None):
+        keys.append("mobile:" + args.device)
+    if getattr(args, "bridge_directory", None):
+        keys.append("browser-extension:" + str(Path(args.bridge_directory).expanduser().resolve()))
+    with resource_guard(keys):
+        current = ds.load_state(args.session) or {}
+        if current.get("handoff"):
+            return {"connected": False, "session": args.session, **current["handoff"]}
+        return _connect(args)
+
+
+def disconnect(serial):
+    from argus.runtime.locking import resource_guard, session_keys
+    with resource_guard(session_keys(serial)):
+        return _disconnect(serial)
 
 
 def register(sub):
@@ -185,11 +210,11 @@ def register(sub):
         p.add_argument("--session","--serial",dest="serial",required=True)
         if name=="open": p.add_argument("target")
         else: p.add_argument("direction",choices=["up","down"])
-    p=sub.add_parser("handoff",help="Pause a desktop session for login or other user interaction")
+    p=sub.add_parser("handoff",help="Pause any session for login or other user interaction")
     p.add_argument("--session",required=True)
     p.add_argument("--reason",default="login")
     p.add_argument("--instructions",required=True)
-    p=sub.add_parser("resume",help="Return a desktop session to observation after user interaction")
+    p=sub.add_parser("resume",help="Return a session to observation after user interaction")
     p.add_argument("--session",required=True)
     p.add_argument("--note",required=True)
     mobile.register_install_boot(sub)
@@ -197,18 +222,18 @@ def register(sub):
     register_network(sub)
 
 
-def handoff(args):
+def _handoff(args):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}",args.session): raise ValueError("Invalid session alias")
     state=ds.load_state(args.session)
-    if not state or state.get("kind") != "desktop":
-        raise ValueError("Desktop session required; workflow runs use workflow pause/resume")
+    if not state:
+        raise ValueError("Known session required")
     if not args.instructions.strip(): raise ValueError("Handoff instructions cannot be empty")
     state["handoff"]={"status":"waiting_for_human","reason":args.reason,"instructions":args.instructions}
     ds.save_state(args.session,state)
     return {"session":args.session,**state["handoff"]}
 
 
-def resume(args):
+def _resume(args):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}",args.session): raise ValueError("Invalid session alias")
     state=ds.load_state(args.session)
     if not state or not state.get("handoff"): raise ValueError("Session is not waiting for human interaction")
@@ -218,18 +243,60 @@ def resume(args):
     candidate=dict(state); candidate.pop("handoff")
     plat=None
     try:
-        plat=ds.attach_desktop(candidate)
+        if candidate.get("kind") == "desktop":
+            plat=ds.attach_desktop(candidate, serial=args.session)
+        elif candidate.get("kind") == "browser":
+            plat=ds.attach_browser(args.session, state=candidate)
+        else:
+            ds.save_state(args.session,candidate)
+            try:
+                plat=ds.attach(args.session)
+                if plat is None: raise RuntimeError("Session expired; reconnect required")
+            finally:
+                ds.save_state(args.session,state)
         # A fresh screenshot is required before returning control, not a login-success claim.
-        screenshot=plat.screenshot_raw()
-        path=mobile.home()/"desktop-observations"/(args.session+".png")
-        path.parent.mkdir(parents=True,exist_ok=True)
-        path.write_bytes(screenshot)
+        from .observations import capture
+        observation = capture(plat, args.session)
         candidate["resume_note"]=args.note
+        if candidate.get("kind") == "browser" and hasattr(plat, "page_id"):
+            candidate["page_id"] = plat.page_id
         ds.save_state(args.session,candidate)
-        return {"session":args.session,"status":"needs_observation","path":str(path),"requires_observation":True}
+        return {"session":args.session,"status":"needs_observation", "path":observation["path"],
+                "observation":observation,"requires_observation":True}
     except DesktopHandoffRequired as exc:
         return {"session":args.session,**exc.details}
-    finally: ds.release_controller(plat,"windows" if state["os"]=="windows" else "mac")
+    finally: ds.release_controller(plat, state.get("os") or state.get("kind"))
+
+
+def _human_event(args, function):
+    from argus.runtime.locking import resource_guard, session_keys, reserve, release
+    from .service import _record
+    import uuid
+    owner = "human:" + args.session
+    keys = session_keys(args.session)
+    with resource_guard(keys, owner=owner):
+        if function is _handoff:
+            reserve(owner, keys)
+        try:
+            result = function(args)
+        except Exception:
+            if function is _handoff:
+                release(owner)
+            raise
+        if function is _resume and result.get("status") == "needs_observation":
+            release(owner)
+        root = ds.STATE_DIR.parent / "operations"
+        root.mkdir(parents=True, exist_ok=True)
+        _record(root / (uuid.uuid4().hex + ".jsonl"), function.__name__.lstrip("_"), result)
+        return result
+
+
+def handoff(args):
+    return _human_event(args, _handoff)
+
+
+def resume(args):
+    return _human_event(args, _resume)
 
 
 def dispatch(args):

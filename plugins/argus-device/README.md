@@ -1,39 +1,35 @@
 # argus-device
 
-Gives Claude Code **eyes and hands on a phone**: screenshot the screen → locate visually → tap / swipe / type / press keys, on Android devices and emulators and on iOS devices and simulators.
-
-This is the device layer of [argus](https://github.com/WilliamSkyWalker/argus) (a vision-driven AI QA agent), split out so any Claude Code session can use it — **no LLM API key, no test files required**. You are the decision maker.
+Visual control for Android/iOS, browser pages and desktop windows. An external programming agent decides each step; Argus provides shared CLI/MCP sessions, observations, actions, human handoff and durable task records. No LLM API key or test suite is required.
 
 ## Install
+
+Install the plugin in Claude Code:
+
 ```
 /plugin marketplace add WilliamSkyWalker/argus
 /plugin install argus-device@argus-plugins
 ```
 
-Then set up argus itself plus the system dependencies (a plugin cannot install these):
+Install Argus into the Python environment used by the plugin. For this source version:
+
 ```bash
-git clone https://github.com/WilliamSkyWalker/argus.git
-export ARGUS_HOME=/absolute/path/to/argus          # put this in your shell profile
-pip3 install -r "$ARGUS_HOME/requirements.txt"
-python3 -m argus.cli mcp init                       # sandboxed Appium + drivers + adb
-# Android-only setup can use: python3 -m argus.cli mcp init --skip-ios
+pip install '/path/to/argus[browser,mcp]'
+python -m playwright install chromium
 ```
-Then run **`/argus-device:doctor`** in Claude Code — it checks every link in the chain and prints the exact fix for whatever is missing.
 
-## Use
-Just ask in plain language — the skill walks Claude through the screenshot→decide loop:
-- "Open Settings and turn dark mode off"
-- "Reproduce the blank screen on the XXX page on this device"
-- "Fill in this form and submit it, showing me a screenshot after each step"
+You can also install a built `argus_agent_control` wheel with the same extras. This source change does not publish a PyPI release. Only add `mobile` when using Android/iOS, `selenium` for that browser backend, and `mac` or `windows` for native desktop dependencies. WSL Windows control uses the bundled PowerShell runner.
 
-The device must be **unlocked with the screen on** (a locked screen can't be captured). With several devices, say which one to use (`list_devices` gives you the serials).
+An installed package supplies `argus` and `argus-mcp`; `ARGUS_HOME` is unnecessary. A source checkout without installation can still use `ARGUS_HOME`. Keep the agent's working directory at the user's project.
 
-## What's inside
-- **skill `device`** — the vision-driven loop plus the anti-patterns that actually bite (scale calibration, no blind retries, no chained taps, IME focus, no UI tree on Flutter)
-- **command `/argus-device:doctor`** — dependency check (Python packages / Node + Appium + drivers / adb + devices / simulators)
-- **MCP server `argus`** — `device_screenshot` `device_tap` `device_swipe` `device_input` `device_type_send` `device_key` `device_launch` `list_devices` `install_apk` `adb_reconnect` `setup_simulator`
+Mobile users additionally prepare the selected device toolchain with `argus device install --help`. Browser and desktop users do not need Appium. Run `/argus-device:doctor --session NAME` for an existing connection, or `--platform browser|android|ios|desktop` for dependency checks.
 
-A single long-lived Appium session is reused across processes, so turn-by-turn driving does not rebuild the connection each time. Everything runs on Appium primitives: **no adb for driving** (cloud device farms don't expose adb) and **no UI tree** (Flutter and custom-drawn UIs have nothing in it).
+## Operate
 
-## What this plugin is not
-It does not run test suites. Feeding `.feature`/`.md` cases to Argus's own agent loop — batch regression, multi-device parallelism, HTML reports — needs an LLM API key and a `tests/` directory, so it lives in the [Argus repo](https://github.com/WilliamSkyWalker/argus) itself (`argus run`), not here. This plugin is deliberately the zero-config half: **you** are the brain.
+Use the bundled [device skill](skills/device/SKILL.md) for the common protocol. Start by explicitly connecting a named session and querying its capabilities. Observe the image, decide one action, and inspect its result. Argus handles percent/image/crop coordinate conversion; a dispatched action is not a verified business result.
+
+MCP exposes `device_sessions`, `device_connect`, `device_observe`, `device_act`, `device_command`, `device_handoff`, `device_resume`, and `agent_task`. Compatible `device_screenshot`, `device_tap`, `device_swipe`, `device_input`, `device_type_send`, `device_key` and `device_launch` names remain available. Their `serial` argument refers to a saved session across all platforms.
+
+For cross-resource work, create an interactive task. It owns its resources until completion/cancellation and saves action intents before input. Request IDs prevent replay after lost responses. Recover after an agent restart; reconcile `needs_review` using observed evidence. Manual login uses handoff/resume. Task timeline and evidence export keep execution facts separate from agent notes.
+
+The CLI offers the same protocol through `argus device` and `argus task`. For other MCP clients, launch `argus-mcp --profile device`. Autonomous QA remains available separately through `argus run` with its own model configuration.

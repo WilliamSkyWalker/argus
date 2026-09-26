@@ -24,11 +24,12 @@ from pathlib import Path
 
 REPO_URL = "https://github.com/WilliamSkyWalker/argus"
 
-_HINT = f"""[argus-mcp] Cannot find the argus repository — the MCP server cannot start:
+_HINT = f"""[argus-mcp] Cannot import the argus package — the MCP server cannot start:
 
-       git clone {REPO_URL}.git
-       export ARGUS_HOME=/absolute/path/to/argus
-       pip3 install -r "$ARGUS_HOME/requirements.txt"
+       pip install "/path/to/argus[browser,mcp]"
+       # A built argus_agent_control wheel can also be installed with these extras.
+
+For phones add the mobile extra; ARGUS_HOME is optional when using a checkout.
 
 Afterwards run /argus-device:doctor in Claude Code for a full check (Appium server, drivers and
 connected devices included).
@@ -65,10 +66,11 @@ def main() -> int:
         sys.path.insert(0, str(root))
         # Some argus paths resolve against the cwd (test target discovery, reports),
         # so for the runner profile we need to sit in the repo root.
-        try:
-            os.chdir(root)
-        except OSError as e:
-            print(f"[argus-mcp] chdir({root}) failed: {e}", file=sys.stderr)
+        if os.environ.get("ARGUS_MCP_PROFILE", "device") != "device":
+            try:
+                os.chdir(root)
+            except OSError as e:
+                print(f"[argus-mcp] chdir({root}) failed: {e}", file=sys.stderr)
 
     try:
         import argus  # noqa: F401

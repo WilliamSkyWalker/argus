@@ -122,6 +122,46 @@ finally: p.disconnect()
                     out = subprocess.run(command + ["pages", "--serial", "web"], env=env,
                                          capture_output=True, text=True, check=True, timeout=30)
                     self.assertEqual(len(json.loads(out.stdout)["pages"]), 2)
+                    # Shared service: CLI input and MCP observation target the same saved page.
+                    from argus.mcp import server as mcp_server
+                    from argus.runtime.interactive import InteractiveRuntime
+                    out = subprocess.run(command + ["tap", "30", "25", "--session", "web"], env=env,
+                                         capture_output=True, text=True, check=True, timeout=30)
+                    self.assertTrue(json.loads(out.stdout)["dispatched"])
+                    result = mcp_server.device_input(" through MCP", serial="web")
+                    self.assertTrue(result["ok"], result)
+                    observed = mcp_server.device_screenshot(serial="web")
+                    self.assertEqual(observed["page_id"], original)
+                    self.assertEqual([c.type for c in mcp_server.device_observe("web")], ["text", "image"])
+
+                    # Two resources share one live browser but retain distinct selected pages.
+                    device_session.save_state("mail", {"kind":"browser", "browser_backend":"playwright",
+                        "debugger_address":f"127.0.0.1:{port}", "page_id":popup})
+                    interactive = InteractiveRuntime(Store(root / "runtime"))
+                    task = interactive.create_task({"form":"web", "mail":"mail"})
+                    task = interactive.observe(task["id"], "form")
+                    kwargs = dict(resource="form", action={"type":"tap", "x":30, "y":25},
+                                  observation_id=task["observations"]["form"]["id"], request_id="focus-form")
+                    task = interactive.submit(task["id"], **kwargs)
+                    self.assertEqual(task["status"], "idle", task)
+                    self.assertIsNone(task["error"], task)
+                    task = interactive.observe(task["id"], "mail")
+                    self.assertEqual(task["observations"]["mail"]["page_id"], popup)
+                    task_command = [sys.executable, "-m", "argus.cli", "task"]
+                    recovered = subprocess.run(task_command + ["recover", task["id"]], env=env,
+                                               capture_output=True, text=True, check=True, timeout=30)
+                    recovered = json.loads(recovered.stdout)
+                    self.assertEqual(recovered["cursor"], 1)
+                    self.assertEqual(recovered["observations"]["form"]["page_id"], original)
+                    self.assertEqual(recovered["observations"]["mail"]["page_id"], popup)
+                    interactive.handoff_task(task["id"], "Sign in to the test mailbox")
+                    self.assertFalse(mcp_server.device_tap(30,25,serial="mail")["ok"])
+                    task = interactive.resume_task(task["id"], "Test user returned control")
+                    self.assertEqual(task["status"], "idle")
+                    evidence = interactive.export(task["id"], str(root / "evidence.zip"))
+                    self.assertTrue(Path(evidence["path"]).exists())
+                    interactive.finish(task["id"], "Verified two-page operation and recovery")
+
                     store = Store(root / "runtime")
                     runtime = Runtime(store)
                     workflow = {"version": 1, "resources": {"web": {"kind": "browser", "session": "web"}},

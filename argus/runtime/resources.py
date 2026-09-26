@@ -1,7 +1,5 @@
 """Adapters for existing visual drivers and registered read-only SQLite queries."""
 
-import hashlib
-import math
 from pathlib import Path
 import sqlite3
 import time
@@ -74,7 +72,7 @@ class VisualResource:
             state = device_session.load_state(self.spec["session"])
             if not state or state.get("kind") != "desktop" or state.get("os") != kind or state.get("disconnected"):
                 raise PreconditionError("Desktop session missing, disconnected or platform mismatch")
-            self.platform = device_session.attach_desktop(state)
+            self.platform = device_session.attach_desktop(state, serial=self.spec["session"])
         elif kind in {"android", "ios", "browser"}:
             from ..platforms import device_session
             state = device_session.load_state(self.spec["session"])
@@ -102,11 +100,15 @@ class VisualResource:
     def observe(self):
         platform = self._attach()
         png = platform.screenshot_raw()
-        metadata = {"screen_size": list(platform.screen_size),
-                    "image_sha256": hashlib.sha256(png).hexdigest()}
+        from argus.devices.observations import metadata as describe
+        metadata = describe(platform, png, self.spec.get("session"))
         if hasattr(platform, "observation_metadata"):
             metadata.update(platform.observation_metadata())
         return png, metadata
+
+    def wait(self, timeout=5):
+        from argus.devices.observations import wait
+        return wait(self._attach(), "stable", timeout)
 
     def pages(self):
         platform = self._attach()
@@ -117,58 +119,21 @@ class VisualResource:
     def prepare(self, action, observation):
         """Validate all input before the durable dispatch intent is recorded."""
         platform = self._attach()
-        allowed = {"tap", "swipe", "input", "press_key", "scroll_up", "scroll_down", "open_url", "open_app"}
-        if self.spec["kind"] == "browser":
-            allowed |= {"select_page", "close_page", "new_page", "go_back", "go_forward"}
-        kind = action.get("type")
-        if kind not in allowed:
-            raise PreconditionError(f"unsupported action: {kind}")
-        _, meta = self.observe()
-        if (meta["screen_size"] != observation["screen_size"] or
-                meta["image_sha256"] != observation["image_sha256"] or
-                meta.get("page_id") != observation.get("page_id") or
-                meta.get("url") != observation.get("url")):
-            raise PreconditionError("screen changed since observation; capture a fresh observation and replan")
-        w, h = platform.screen_size
-        result = {"type": kind}
-        if kind in {"tap", "swipe"}:
-            pairs = [("x_pct", "x", w), ("y_pct", "y", h)] if kind == "tap" else [
-                ("x1_pct", "x1", w), ("y1_pct", "y1", h),
-                ("x2_pct", "x2", w), ("y2_pct", "y2", h)]
-            for source, dest, size in pairs:
-                value = action.get(source)
-                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 100:
-                    raise PreconditionError(f"{source} must be a finite percentage in [0,100]")
-                result[dest] = min(size - 1, int(round(value * size / 100)))
-        elif kind == "new_page":
-            from urllib.parse import urlsplit
-            url = action.get("url")
-            if not hasattr(platform, "new_page") or not isinstance(url, str):
-                raise PreconditionError("new_page requires a supported browser backend and URL")
-            if urlsplit(url).scheme not in {"http", "https"} or not urlsplit(url).netloc:
-                raise PreconditionError("new_page requires an HTTP(S) URL")
-            result["url"] = url
-        elif kind in {"select_page", "close_page"}:
-            if not hasattr(platform, "list_pages") or not isinstance(action.get("page_id"), str):
-                raise PreconditionError("page action requires a supported browser backend and an explicit page_id")
-            if action["page_id"] not in {p["page_id"] for p in platform.list_pages()}:
-                raise PreconditionError("requested page no longer exists")
-            result["page_id"] = action["page_id"]
-        else:
-            field = {"input": "text", "press_key": "key", "open_url": "url", "open_app": "target"}.get(kind)
-            if field:
-                if not isinstance(action.get(field), str) or not action[field]:
-                    raise PreconditionError(f"{field} must be a nonempty string")
-                result[field] = action[field]
-        return result
+        from argus.devices import actions
+        try:
+            if "path" not in observation:
+                _, meta = self.observe()
+                if any(meta.get(k) != observation.get(k) for k in ("screen_size", "image_sha256", "page_id", "url")):
+                    raise ValueError("screen changed since observation; capture a fresh observation and replan")
+                observation = None
+            return actions.prepare(platform, action, observation)
+        except ValueError as exc:
+            raise PreconditionError(str(exc)) from exc
 
     def execute(self, action):
         platform = self._attach()
-        result = {"dispatched": True}
-        if action["type"] == "new_page":
-            result["created_page_id"] = platform.new_page(action["url"])
-        else:
-            platform.execute_action(action)
+        from argus.devices.actions import dispatch
+        result = dispatch(platform, action)
         if hasattr(platform, "page_id"):
             result.update(page_id=platform.page_id, pages=platform.list_pages(),
                           events=platform.drain_events())

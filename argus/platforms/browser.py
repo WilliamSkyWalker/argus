@@ -223,8 +223,45 @@ class BrowserPlatform(Platform):
         mapped = key_map.get(key)
         if mapped:
             ActionChains(self._driver).send_keys(mapped).perform()
-        else:
+        elif "+" in key:
+            self.hotkey(key.split("+"))
+        elif len(key) == 1:
             ActionChains(self._driver).send_keys(key).perform()
+        else:
+            raise ValueError(f"Unsupported key: {key!r}")
+
+    def hotkey(self, keys):
+        from selenium.webdriver.common.keys import Keys
+        from selenium.webdriver.common.action_chains import ActionChains
+        modifiers = {"ctrl":Keys.CONTROL, "control":Keys.CONTROL, "alt":Keys.ALT,
+                     "shift":Keys.SHIFT, "cmd":Keys.COMMAND, "meta":Keys.COMMAND}
+        if len(keys) < 2 or any(k.lower() not in modifiers for k in keys[:-1]):
+            raise ValueError("hotkey requires modifiers followed by one key")
+        last = {"enter":Keys.ENTER,"tab":Keys.TAB,"escape":Keys.ESCAPE}.get(keys[-1].lower(),keys[-1])
+        if len(last) != 1:
+            raise ValueError("Unsupported hotkey key")
+        chain = ActionChains(self._driver)
+        for key in keys[:-1]: chain.key_down(modifiers[key.lower()])
+        chain.send_keys(last)
+        for key in reversed(keys[:-1]): chain.key_up(modifiers[key.lower()])
+        chain.perform()
+
+    def double_click(self, x, y):
+        from selenium.webdriver.common.action_chains import ActionChains
+        ActionChains(self._driver).move_to_element_with_offset(self._ensure_anchor(), x, y).double_click().perform()
+
+    def right_click(self, x, y):
+        from selenium.webdriver.common.action_chains import ActionChains
+        ActionChains(self._driver).move_to_element_with_offset(self._ensure_anchor(), x, y).context_click().perform()
+
+    def long_press(self, x, y, duration=1):
+        from selenium.webdriver.common.action_chains import ActionChains
+        ActionChains(self._driver).move_to_element_with_offset(self._ensure_anchor(), x, y).click_and_hold().pause(duration).release().perform()
+
+    def scroll_at(self, x, y, amount):
+        from selenium.webdriver.common.action_chains import ActionChains
+        from selenium.webdriver.common.actions.wheel_input import ScrollOrigin
+        ActionChains(self._driver).scroll_from_origin(ScrollOrigin.from_viewport(int(x), int(y)), 0, int(-amount * 100)).perform()
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int) -> None:
         from selenium.webdriver.common.action_chains import ActionChains

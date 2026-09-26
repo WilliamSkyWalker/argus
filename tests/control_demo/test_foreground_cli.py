@@ -19,7 +19,8 @@ class ForegroundCLITests(unittest.TestCase):
         with patch.object(sys, 'argv', ['argus', 'device', *command]), \
              patch.object(ds, 'load_state', return_value=state), \
              patch.object(ds, 'attach_desktop', return_value=controller) as attach, \
-             patch('argus.commands.device.time.sleep'), contextlib.redirect_stdout(output):
+             patch('argus.devices.service.time.sleep'), \
+             patch('argus.devices.observations.wait', return_value={'condition_met':True,'timed_out':False}), contextlib.redirect_stdout(output):
             try:
                 main()
             except SystemExit:
@@ -47,8 +48,9 @@ class ForegroundCLITests(unittest.TestCase):
                 '--out', str(Path(directory) / 'draft.png')], p)
         self.assertFalse(result['submitted'])
         self.assertTrue(result['requires_observation'])
-        self.assertEqual(p.method_calls, [call.tap(4, 5), call.press_key('ctrl+a'),
-            call.input_text('Example message'), call.screenshot_raw(), call.teardown()])
+        inputs = [c for c in p.method_calls if c[0] != 'screenshot_raw']
+        self.assertEqual(inputs, [call.tap(4, 5), call.press_key('ctrl+a'),
+            call.input_text('Example message'), call.teardown()])
         self.assertEqual(attach.call_args.kwargs, {'serial': 'example', 'foreground': True})
 
     def test_send_reports_dispatch_not_verified_delivery(self):
@@ -74,13 +76,13 @@ class ForegroundCLITests(unittest.TestCase):
             p = self.controller()
             with tempfile.TemporaryDirectory() as directory:
                 result, attach = self.run_command(command + ['--session', 'example', '--out', str(Path(directory) / 'view.png')], p)
-            p.screenshot_raw.assert_called_once()
+            self.assertGreaterEqual(p.screenshot_raw.call_count, 1)
             self.assertEqual(attach.call_args.kwargs, {'serial': 'example', 'foreground': True})
             self.assertEqual(result['width'], 20)
 
     def test_capture_failure_after_send_reports_uncertain_submission(self):
         p = self.controller()
-        p.screenshot_raw.side_effect = RuntimeError('capture unavailable')
+        p.screenshot_raw.side_effect = [p.screenshot_raw.return_value, RuntimeError('capture unavailable'), RuntimeError('capture unavailable')]
         result, _ = self.run_command([
             'type-send', 'Example', '--session', 'example', '--input-x', '4', '--input-y', '5',
             '--send-x', '8', '--send-y', '9', '--wait-s', '0'], p, expect_error=True)

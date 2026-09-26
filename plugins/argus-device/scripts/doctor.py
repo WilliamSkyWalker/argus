@@ -73,11 +73,11 @@ def argus_root() -> tuple[Path | None, str]:
 
 def check_python() -> None:
     v = sys.version_info
-    if (v.major, v.minor) >= (3, 11):
+    if (v.major, v.minor) >= (3, 10):
         add(OK, "python", f"{platform.python_version()} ({sys.executable})")
     else:
-        add(MISS, "python", f"{platform.python_version()} < 3.11",
-            "argus needs Python >= 3.11 — run Claude Code against a 3.11+ interpreter")
+        add(MISS, "python", f"{platform.python_version()} < 3.10",
+            "argus needs Python >= 3.10 — run Claude Code against a 3.10+ interpreter")
 
 
 def check_argus() -> Path | None:
@@ -96,22 +96,20 @@ def check_argus() -> Path | None:
     return None
 
 
-def check_py_deps() -> None:
-    # (import name, pip name, blocking, what it's for)
-    deps = [
-        ("mcp", "mcp", True, "MCP server"),
-        ("PIL", "Pillow", True, "screenshot handling"),
-        ("appium", "Appium-Python-Client", True, "mobile driver"),
-        ("selenium", "selenium", True, "Appium client dependency / browser platform"),
-        ("openai", "openai", True, "argus.cli import chain (only really used when running suites)"),
-        ("uiautomator2", "uiautomator2", False, "optional Android helpers"),
-    ]
+def check_py_deps(target="browser", profile="device") -> None:
+    deps = [("mcp", "mcp", True, "MCP server"), ("PIL", "Pillow", True, "screenshot handling")]
+    if target in {"android", "ios"}:
+        deps.extend([("appium", "Appium-Python-Client", True, "mobile driver"),
+                     ("selenium", "selenium", True, "Appium client dependency")])
+    elif target == "browser":
+        deps.append(("playwright", "playwright", False, "Playwright browser backend; extension backend does not require this"))
+    if profile == "full":
+        deps.append(("openai", "openai", True, "autonomous QA runner"))
     for mod, pip_name, blocking, why in deps:
         if importlib.util.find_spec(mod):
             add(OK, f"py:{pip_name}", why)
         else:
-            add(MISS if blocking else WARN, f"py:{pip_name}", f"missing ({why})",
-                f"pip3 install {pip_name}")
+            add(MISS if blocking else WARN, f"py:{pip_name}", f"missing ({why})", f"pip3 install {pip_name}")
 
 
 def check_appium() -> None:
@@ -237,14 +235,30 @@ def main() -> int:
     ap.add_argument("--profile", choices=("device", "full"), default="device",
                     help="device = device driving only; full = also check .env / tests/")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument("--session", help="Check connection, screenshot and image reading for a named session")
+    ap.add_argument("--platform", choices=("browser", "android", "ios", "desktop"), default="browser")
     args = ap.parse_args()
 
     check_python()
     root = check_argus()
-    check_py_deps()
-    check_appium()
-    check_android()
-    check_ios()
+    if root:
+        sys.path.insert(0, str(root))
+    if args.session:
+        try:
+            from argus.commands.doctor import diagnose
+            report = diagnose(args.session)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0 if report.get("ok") else 1
+        except (ImportError, RuntimeError, OSError, ValueError) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}))
+            return 1
+    check_py_deps(args.platform, args.profile)
+    if args.platform in {"android", "ios"}:
+        check_appium()
+    if args.platform == "android":
+        check_android()
+    if args.platform == "ios":
+        check_ios()
     if args.profile == "full":
         check_runner(root)
 

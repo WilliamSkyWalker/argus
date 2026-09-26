@@ -392,7 +392,7 @@ class AppiumPlatform(Platform):
                 return
             except Exception as e:
                 log.warning("iOS mobile: keys 失败: %s", e)
-        log.warning("input_text 失败：无法写入（先 tap 聚焦输入框再 input）")
+        raise RuntimeError("input_text failed; focus an input field before typing")
 
     def press_key(self, key: str) -> None:
         if self._os == "android":
@@ -409,8 +409,7 @@ class AppiumPlatform(Platform):
                 if cand.isdigit():
                     code = int(cand)
                 else:
-                    log.warning("press_key 不识别: %r", key)
-                    return
+                    raise ValueError(f"Unsupported key: {key!r}")
             self._driver.press_keycode(code)
         else:
             # iOS：硬件键有限
@@ -418,7 +417,7 @@ class AppiumPlatform(Platform):
                 try:
                     self._driver.execute_script("mobile: pressButton", {"name": "home"})
                 except Exception as e:
-                    log.warning("iOS home 失败: %s", e)
+                    raise RuntimeError("iOS home failed") from e
             elif key == "enter":
                 self.input_text("\n")
             elif key == "delete":
@@ -426,9 +425,9 @@ class AppiumPlatform(Platform):
                     from appium.webdriver.common.appiumby import AppiumBy
                     self._driver.find_element(AppiumBy.XPATH, '//*[@focused="true"]').send_keys("\b")
                 except Exception as e:
-                    log.debug("iOS delete 失败: %s", e)
+                    raise RuntimeError("iOS delete failed") from e
             else:
-                log.warning("iOS 不支持按键: %r", key)
+                raise ValueError(f"Unsupported iOS key: {key!r}")
 
     def open_target(self, target: str) -> None:
         """Android=包名启动，iOS=bundle_id 启动。"""
@@ -437,13 +436,12 @@ class AppiumPlatform(Platform):
         try:
             if self._os == "android":
                 if not re.fullmatch(r"[\w.]+", target):
-                    log.warning("非法包名，忽略: %r", target)
-                    return
+                    raise ValueError(f"Invalid package name: {target!r}")
                 self._driver.activate_app(target)
             else:
                 self._driver.activate_app(target)
         except Exception as e:
-            log.warning("open_target(%s) 失败: %s", target, e)
+            raise RuntimeError(f"open_target failed: {target}") from e
 
     def reset_app(self, target: str, mode: str) -> None:
         """通过 Appium 原语（不碰 adb）把被测 App 重置到起点，是 case 启动/换 App
@@ -459,8 +457,7 @@ class AppiumPlatform(Platform):
         if not target:
             return
         if self._os == "android" and not re.fullmatch(r"[\w.]+", target):
-            log.warning("非法包名，忽略 reset: %r", target)
-            return
+            raise ValueError(f"Invalid package name: {target!r}")
         try:
             # 先收系统 overlay（通知栏/多任务），避免下个 case 首屏被遮
             self.press_key("home")
@@ -488,7 +485,7 @@ class AppiumPlatform(Platform):
                 self._driver.activate_app(target)
                 time.sleep(2)
         except Exception as e:
-            log.warning("reset_app(%s, %s) 失败: %s", target, mode, e)
+            raise RuntimeError(f"reset_app failed: {target}") from e
 
     def is_ime_visible(self) -> bool:
         if self._os != "android":

@@ -50,7 +50,7 @@ class Runtime:
         artifact_dir.mkdir(parents=True, exist_ok=True)
         path = artifact_dir / f"{oid}.png"
         path.write_bytes(png)
-        observation = dict(metadata, id=oid, resource=name, at=time.time(), path=str(path))
+        observation = dict(metadata, id=oid, observation_id=oid, resource=name, at=time.time(), path=str(path))
         state["observations"][name] = observation
         if metadata.get("page_id"):
             state.setdefault("bindings", {})[name] = {"page_id": metadata["page_id"]}
@@ -81,7 +81,27 @@ class Runtime:
             finally:
                 self._close()
 
+    def _resource_keys(self, state):
+        from .locking import session_keys
+        keys = []
+        for spec in state["workflow"]["resources"].values():
+            keys.append(resource_key(spec))
+            if spec.get("session"):
+                keys.extend(session_keys(spec["session"]))
+        return keys
+
     def _drive(self, state):
+        from .locking import resource_guard, reserve, release
+        keys = self._resource_keys(state)
+        with resource_guard(keys, owner=state["id"]):
+            reserve(state["id"], keys)
+            try:
+                return self._drive_locked(state)
+            finally:
+                if state["status"] in TERMINAL or state["status"] == "queued":
+                    release(state["id"])
+
+    def _drive_locked(self, state):
         self.store.reserve(state["id"], [resource_key(s) for s in state["workflow"]["resources"].values()])
         state["status"] = "running"
         self.store.save(state, "running")
@@ -147,9 +167,11 @@ class Runtime:
         observation = resolve(step["observation"], context)
         if state.get("revalidate_step") == step["id"]:
             fresh = self._observe(state, name)
-            if (not isinstance(observation, dict) or observation.get("resource") != name or
-                    any(observation.get(k) != fresh.get(k) for k in ("image_sha256", "screen_size", "page_id", "url"))):
+            if not isinstance(observation, dict) or observation.get("resource") != name:
                 raise PreconditionError("screen changed during interruption; old action cannot be replayed")
+            resource = self._resource(state, name)
+            # The adapter validates page identity, dimensions, frame changes and target region.
+            resource.prepare(resolve(step["action"], context), observation)
             observation = fresh
             state.pop("revalidate_step", None)
         latest = state["observations"].get(name)
@@ -180,28 +202,33 @@ class Runtime:
             state = self.store.get(run_id)
             if state["status"] != "waiting_for_human":
                 raise ValueError("only waiting_for_human runs can resume")
-            try:
-                if self.store.control(run_id) == "cancel":
-                    self._control(state)
-                    return state
-                # Invalidate all pre-handoff observations; reconnect and see current state.
-                state["observations"] = {}
-                for name, spec in state["workflow"]["resources"].items():
-                    if spec["kind"] != "sqlite":
-                        self._observe(state, name)
-                human = state["human"]
-                state["human"] = None
-                state["status"] = "queued"
-                if state["cursor"] < len(state["workflow"]["steps"]):
-                    state["revalidate_step"] = state["workflow"]["steps"][state["cursor"]]["id"]
-                if human.get("kind") == "human":
-                    step = state["workflow"]["steps"][state["cursor"]]
-                    self._complete(state, step, {"acknowledged": True, "note": note, "data": data,
-                                              "verification_pending": human["verify_step"]})
-                self.store.save(state, "human_returned", {"note": note, "data": data})
-                return self._drive(state)
-            finally:
-                self._close()
+            from .locking import resource_guard
+            with resource_guard(self._resource_keys(state), owner=run_id):
+                try:
+                    if self.store.control(run_id) == "cancel":
+                        self._control(state)
+                        return state
+                    # Invalidate all pre-handoff observations; reconnect and see current state.
+                    state["observations"] = {}
+                    for name, spec in state["workflow"]["resources"].items():
+                        if spec["kind"] != "sqlite":
+                            self._observe(state, name)
+                    human = state["human"]
+                    state["human"] = None
+                    state["status"] = "queued"
+                    if state["cursor"] < len(state["workflow"]["steps"]):
+                        state["revalidate_step"] = state["workflow"]["steps"][state["cursor"]]["id"]
+                    if human.get("kind") == "human":
+                        step = state["workflow"]["steps"][state["cursor"]]
+                        self._complete(state, step, {"acknowledged": True, "note": note, "data": data,
+                                                  "verification_pending": human["verify_step"]})
+                    self.store.save(state, "human_returned", {"note": note, "data": data})
+                    return self._drive_locked(state)
+                finally:
+                    self._close()
+                    if state["status"] in TERMINAL:
+                        from .locking import release
+                        release(run_id)
 
     def recover(self, run_id):
         """Only possible when the OS executor lock is free; never replays input."""
@@ -251,10 +278,14 @@ class Runtime:
             with self.store.guard(run_id):
                 state = self.store.get(run_id)
                 if state["status"] in TERMINAL:
+                    from .locking import release
+                    release(run_id)
                     return state
                 # Keep uncertain results visible even when cancelling; no replay on cancellation.
                 state["status"] = "cancelled"
                 self.store.save(state, "cancelled", {"unresolved_action": state["pending"]}, release=True, clear_control="cancel")
+                from .locking import release
+                release(run_id)
                 return state
         except BusyError:
             return self.store.get(run_id)

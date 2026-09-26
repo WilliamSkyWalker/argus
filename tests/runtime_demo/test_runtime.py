@@ -52,6 +52,10 @@ class RuntimeTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        from argus.platforms import device_session
+        session_patch = patch.object(device_session, "STATE_DIR", self.root / "device-sessions")
+        session_patch.start()
+        self.addCleanup(session_patch.stop)
         self.store = Store(self.root / "state")
         self.trace = []
         self.phone = FakeVisual("phone", self.trace)
@@ -321,12 +325,16 @@ class RuntimeTests(unittest.TestCase):
         class Platform:
             screen_size = (200, 400)
             def screenshot_raw(self):
-                return b"screenshot"
+                import io
+                from PIL import Image
+                out = io.BytesIO()
+                Image.new("RGB", (200,400)).save(out, format="PNG")
+                return out.getvalue()
         adapter = VisualResource({"kind": "android", "session": "phone"})
         adapter.platform = Platform()
         _, obs = adapter.observe()
         action = adapter.prepare({"type": "tap", "x_pct": 50, "y_pct": 100}, obs)
-        self.assertEqual(action, {"type": "tap", "x": 100, "y": 399})
+        self.assertEqual((action["type"], action["x"], action["y"]), ("tap", 100, 399))
         with self.assertRaises(PreconditionError):
             adapter.prepare({"type": "tap", "x_pct": float("nan"), "y_pct": 50}, obs)
         obs["image_sha256"] = "stale"

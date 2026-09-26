@@ -1,7 +1,7 @@
 {
   "name": "argus-device",
-  "version": "0.1.0",
-  "description": "Let Claude drive Android/iOS devices, emulators and simulators purely by sight: screenshot, look, tap/swipe/type/press. Appium under the hood, no UI tree, no LLM key needed.",
+  "version": "0.2.0",
+  "description": "Visual control for phones, browser pages and desktop windows, with shared CLI/MCP sessions, durable interactive tasks and human handoff. No LLM key needed.",
   "author": {
     "name": "argus",
     "url": "https://github.com/WilliamSkyWalker/argus"
@@ -17,7 +17,11 @@
     "emulator",
     "simulator",
     "mobile",
-    "vision"
+    "vision",
+    "browser",
+    "desktop",
+    "agent",
+    "workflow"
   ],
   "mcpServers": {
     "argus": {

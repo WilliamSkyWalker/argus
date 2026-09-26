@@ -42,11 +42,13 @@ class Store:
         finally:
             db.close()
 
-    def create(self, workflow):
+    def create(self, workflow, *, mode=None):
         run_id = uuid.uuid4().hex
         state = dict(id=run_id, workflow=workflow, cursor=0, status="queued",
                      outputs={}, observations={}, pending=None, human=None,
                      error=None, created_at=time.time())
+        if mode == "interactive":
+            state.update(mode=mode, status="idle", requests={})
         with self.connect() as db:
             db.execute("INSERT INTO runs(id,snapshot) VALUES (?,?)", (run_id, json.dumps(state)))
             self._event(db, run_id, "created", {})

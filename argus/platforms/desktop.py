@@ -56,8 +56,10 @@ class DesktopPlatform(Platform):
     def long_press(self, x: int, y: int, duration: float = 1.0) -> None:
         gx, gy = self._to_global(x, y)
         self._pg.mouseDown(gx, gy)
-        time.sleep(max(0.1, duration))
-        self._pg.mouseUp(gx, gy)
+        try:
+            time.sleep(max(0.1, duration))
+        finally:
+            self._pg.mouseUp(gx, gy)
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int) -> None:
         gx1, gy1 = self._to_global(x1, y1)
@@ -78,20 +80,39 @@ class DesktopPlatform(Platform):
             return
         try:
             self._set_clipboard(text)
-            self._pg.hotkey(self.paste_modifier, "v")
-        except Exception as e:
-            log.warning("剪贴板粘贴失败，退回 typewrite(仅 ASCII): %s", e)
-            try:
-                self._pg.typewrite(text, interval=0.02)
-            except Exception as e2:
-                log.warning("typewrite 也失败: %s", e2)
+        except Exception:
+            if not text.isascii():
+                raise
+            self._pg.typewrite(text, interval=0.02)
+            return
+        self._pg.hotkey(self.paste_modifier, "v")
 
     def press_key(self, key: str) -> None:
+        if "+" in key:
+            return self.hotkey(key.split("+"))
         k = self.key_map.get(str(key).strip().lower())
         if k is None:
-            log.warning("press_key 不识别: %r", key)
-            return
+            raise ValueError(f"Unsupported key: {key!r}")
         self._pg.press(k)
+
+    def hotkey(self, keys):
+        keys = [self.key_map.get(k.lower(), k.lower()) for k in keys]
+        if any(k not in self._pg.KEYBOARD_KEYS for k in keys):
+            raise ValueError("Unsupported hotkey")
+        self._pg.hotkey(*keys)
+
+    def hover(self, x, y):
+        self._pg.moveTo(*self._to_global(x, y))
+
+    def double_click(self, x, y):
+        self._pg.doubleClick(*self._to_global(x, y), interval=.1)
+
+    def right_click(self, x, y):
+        self._pg.click(*self._to_global(x, y), button="right")
+
+    def scroll_at(self, x, y, amount):
+        self.hover(x, y)
+        self._pg.scroll(int(amount))
 
     def is_ime_visible(self) -> bool:
         return False

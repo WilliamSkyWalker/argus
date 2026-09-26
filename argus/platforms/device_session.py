@@ -44,7 +44,11 @@ def release_controller(plat, kind=None):
 
 
 def _key(serial: str | None) -> str:
-    return serial or "default"
+    import re
+    value = serial or "default"
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value):
+        raise ValueError("Invalid session name")
+    return value
 
 
 def _state_path(serial: str | None) -> Path:
@@ -165,6 +169,8 @@ def attach(serial: str | None, quiet: bool = False) -> "object | None":
         if not quiet:
             log.warning("无 device session 状态文件（先跑 argus device start）: %s", _key(serial))
         return None
+    if state.get("handoff"):
+        raise RuntimeError("Session waiting_for_human; resume before operating")
     if state.get("disconnected"):
         return None
     if state.get("kind") == "desktop":
@@ -307,6 +313,8 @@ def attach_browser(serial, *, state=None, backend=None, page_id=None, manage_pag
     state = state if state is not None else load_state(serial)
     if not state or state.get("kind") != "browser":
         raise RuntimeError("Browser session missing; start the named browser session first")
+    if state.get("handoff"):
+        raise RuntimeError("Session waiting_for_human; resume before operating")
     if state.get("disconnected"):
         raise RuntimeError("Session disconnected; use device connect to reconnect")
     backend = backend or state.get("browser_backend", "selenium")

@@ -256,6 +256,26 @@ class PlaywrightBrowserPlatform(Platform):
         finally:
             mouse.up()
 
+    def hover(self, x, y):
+        self.page.mouse.move(x, y)
+
+    def double_click(self, x, y):
+        self.page.mouse.dblclick(x, y)
+
+    def right_click(self, x, y):
+        self.page.mouse.click(x, y, button="right")
+
+    def long_press(self, x, y, duration=1):
+        self.page.mouse.click(x, y, delay=duration * 1000)
+
+    def hotkey(self, keys):
+        mapping = {"ctrl": "Control", "alt": "Alt", "shift": "Shift", "cmd": "Meta", "meta": "Meta"}
+        self.page.keyboard.press("+".join(mapping.get(k.lower(), k) for k in keys))
+
+    def scroll_at(self, x, y, amount):
+        self.page.mouse.move(x, y)
+        self.page.mouse.wheel(0, -amount * 100)
+
     def scroll_up(self):
         self.page.mouse.wheel(0, -300)
 

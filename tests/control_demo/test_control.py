@@ -187,11 +187,17 @@ class ControlTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'capture failed'):
                 control.resume(Namespace(session='test',note='Logged in'))
         self.assertIn('handoff',ds.load_state('test'))
-        p.screenshot_raw.side_effect=None; p.screenshot_raw.return_value=b'png'
+        from PIL import Image
+        picture = io.BytesIO()
+        Image.new('RGB', (20, 20)).save(picture, format='PNG')
+        p.screenshot_raw.side_effect=None; p.screenshot_raw.return_value=picture.getvalue()
+        p.screen_size = (20, 20); p.scale = 1
+        p.observation_metadata.return_value = {}
+        del p.page_id
         with patch.object(ds,'attach_desktop',return_value=p),patch.object(control.mobile,'home',return_value=Path(self.tmp.name)):
             result=control.resume(Namespace(session='test',note='Logged in'))
         self.assertEqual(result['status'],'needs_observation')
-        self.assertEqual(Path(result['path']).read_bytes(),b'png')
+        self.assertEqual(Path(result['path']).read_bytes(),picture.getvalue())
         self.assertNotIn('handoff',ds.load_state('test'))
 
     def test_running_app_without_window_requests_human_instead_of_retry(self):
