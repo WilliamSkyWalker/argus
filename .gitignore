@@ -210,3 +210,10 @@ tests/*_demo/reports/
 
 # argus run --report 对 inline/无 target 用例的机读报告 fallback(运行产物，勿入库)
 /__auto__.json
+
+# Local databases used by public workflow examples
+/examples/workflows/*.sqlite*
+
+# Keep generated Python caches ignored after public demo re-inclusion rules.
+tests/*_demo/**/__pycache__/
+tests/*_demo/**/*.py[codz]

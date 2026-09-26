@@ -14,6 +14,10 @@ Argus reads a **BDD `.feature` test case** (Gherkin / Cucumber), **looks at the 
 
 ---
 
+## Multi-resource workflow runtime (initial version)
+
+`argus workflow` runs explicit JSON workflows across mobile, browser and desktop resources, with SQLite queries, durable checkpoints and human handoff/resume. It is separate from the existing QA runner; natural-language planning and general API/MCP connectors are not implemented yet. Browser resources default to Playwright/CDP with persistent page selection; the QA runner retains Selenium. See [runtime guide](docs/runtime.md), [browser guide](docs/browser.md) and [examples](examples/workflows).
+
 ## How it works
 
 ```
@@ -61,7 +65,7 @@ The validator checks evidence text and response structure, not whether the claim
 |----------|--------|
 | Android  | Appium + **UiAutomator2** driver (text input via `mobile: type`, routed through a Unicode IME to bypass the native IME — works on both native `EditText` and Flutter's self-drawn canvas) |
 | iOS      | Appium + **XCUITest** driver (auto-signs WDA via xcodebuild/CoreDevice; needs `IOS_TEAM_ID` + a Xcode-logged-in team) |
-| Browser  | Selenium WebDriver (local or Selenium Grid, optional headless) |
+| Browser  | QA: Selenium (local/Grid). Workflow: Playwright/CDP with persistent Chromium sessions; Selenium opt-in. |
 | macOS desktop   | `DesktopMacPlatform` — **window-level** pure-vision driver (not full-screen): screenshots the target app's window only (`CGWindowListCreateImage`), keeps it foregrounded before every turn, and injects clicks/keys globally via `pyautogui` (percentage coordinates converted to the window's global points). Requires Screen Recording + Accessibility permissions; foreground-only (takes over mouse/keyboard focus). |
 | Windows desktop | From WSL, `WindowsRunnerPlatform` automatically launches the bundled PowerShell/Win32 JSONL runner on the Windows host: no Windows Python, packages, service, or RDP login. Native Windows Python uses `DesktopWinPlatform` (`pyautogui` + `pywin32`). Both capture only the target window and operate the current foreground desktop. |
 | Remote desktop (experimental) | `RDPPlatform` is **under development**. Its current prototype connects from Linux/WSL to Windows through FreeRDP in Xvfb. It is retained as the foundation for future remote Windows/macOS support, but its API and behavior are not yet stable. |
@@ -356,6 +360,10 @@ Argus 读取 **BDD `.feature` 测试用例**（Gherkin / Cucumber），**直接�
 - 🔌 **MCP** —— 把自身能力暴露为 MCP 工具（可被 Claude Code / Cursor 调用），也能调用外部 MCP server（如 Figma）。
 - 🧑‍✈️ **双驱动模式** —— 内置引擎（任意视觉 LLM API），或 **`/argus-drive`**：直接把 Claude Code 会话当 brain，不需要 LLM API key。
 
+## 多资源操作运行时（首版）
+
+新增 `argus workflow`：通过显式 JSON 工作流在移动端、浏览器和桌面资源间顺序执行，支持 SQLite 查询、持久化检查点与人工接管恢复。现有 QA 入口保留；自然语言规划与通用 API/MCP 连接器尚未实现。浏览器资源默认使用 Playwright/CDP 并持久化页面绑定，QA 保留 Selenium。见[运行时文档](docs/runtime.md)、[浏览器文档](docs/browser.md)与[示例](examples/workflows)。
+
 ## 工作原理
 
 ```
@@ -403,7 +411,7 @@ BDD .feature 测试用例（手写，或 Figma 生成）
 |------|------|
 | Android | Appium + **UiAutomator2** driver（文字输入走 `mobile: type`，经 Unicode IME 绕开原生输入法——原生 `EditText` 和 Flutter 自绘 canvas 都通吃） |
 | iOS | Appium + **XCUITest** driver（走 xcodebuild/CoreDevice 自动签 WDA；需 `IOS_TEAM_ID` + Xcode 登录该 team） |
-| 浏览器 | Selenium WebDriver（本地或 Selenium Grid，可选无头） |
+| 浏览器 | QA：Selenium（本地/Grid）。Workflow：默认 Playwright/CDP 持久 Chromium 会话，可选 Selenium。 |
 | macOS 桌面 | `DesktopMacPlatform` —— **窗口级**纯视觉驱动（不是整屏）：只截**被测 App 窗口**画面（`CGWindowListCreateImage`），每 turn 截图前把它 activate 到前台，用 `pyautogui` 按全局坐标点击/输入（百分比坐标换算成窗口对应的全局坐标）。需要屏幕录制 + 辅助功能权限；**前台方案**（会占用鼠标/键盘焦点）。 |
 | Windows 桌面 | WSL 下自动使用 `WindowsRunnerPlatform`，通过内置 PowerShell/Win32 JSONL runner 操作宿主 Windows，不需安装 Windows Python、依赖或服务；原生 Windows Python 环境仍使用 `DesktopWinPlatform`（`pyautogui + pywin32`）。两者均只截目标窗口并操作当前前台桌面。 |
 | 远程桌面（实验性） | `RDPPlatform` **仍在开发中**。当前原型通过 Xvfb + FreeRDP 从 Linux/WSL 连接 Windows；保留它作为未来远程 Windows/macOS 支持的基础，但 API 与行为尚不稳定。 |
@@ -588,3 +596,7 @@ Skill 实现了什么（完整协议见 [`.claude/skills/argus-drive/SKILL.md`](
 - 无法视觉验证的断言（埋点、后端调用、系统时间、通知抽屉、跨 App 深链）在纯视觉路径下**刻意判 fail**——要么改写用例、要么打 tag 跳过，要么挂 [probe 插件](./docs/probes.md) 真验证（该 step 由插件裁决）。
 
 完整架构、逐模块说明与贡献指引见 **[CLAUDE.md](./CLAUDE.md)**。
+
+### Existing browser sessions
+
+The optional [browser extension backend](docs/browser-extension.md) connects Argus to all website tabs by default in your daily Chrome/Edge profile, retaining login state and supporting Runtime human handoff.

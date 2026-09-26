@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "resources": {"web": {"kind": "browser", "session": "daily-web", "backend": "extension"}},
+  "steps": [
+    {"id": "before", "kind": "observe", "resource": "web"},
+    {"id": "manual", "kind": "human", "resource": "web", "instructions": "In the selected tab, open https://example.com/ then return control to Argus.", "verify_step": "verify"},
+    {"id": "after", "kind": "observe", "resource": "web"},
+    {"id": "verify", "kind": "check", "actual": {"$ref": "steps.after.url"}, "equals": "https://example.com/"}
+  ]
+}

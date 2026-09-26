@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "resources": {
+    "phone": {"kind": "android", "session": "emulator-5554"},
+    "admin": {"kind": "browser", "session": "admin-web", "backend": "playwright"},
+    "orders": {
+      "kind": "sqlite",
+      "path": "orders.sqlite",
+      "queries": {"get": "SELECT id, status FROM orders WHERE id = :id"}
+    }
+  },
+  "steps": [
+    {"id": "phone_screen", "kind": "observe", "resource": "phone"},
+    {
+      "id": "create_order", "kind": "human", "resource": "phone",
+      "instructions": "Create an order in the app, then return its order_id using resume --data.",
+      "verify_step": "order_exists"
+    },
+    {
+      "id": "lookup", "kind": "tool", "resource": "orders", "operation": "get",
+      "arguments": {"id": {"$ref": "steps.create_order.data.order_id"}}
+    },
+    {
+      "id": "order_exists", "kind": "check",
+      "actual": {"$ref": "steps.lookup.rows.0.id"}, "equals": {"$ref": "steps.create_order.data.order_id"}
+    },
+    {"id": "browser_screen", "kind": "observe", "resource": "admin"},
+    {
+      "id": "open_admin", "kind": "action", "resource": "admin",
+      "observation": {"$ref": "steps.browser_screen"},
+      "action": {"type": "open_url", "url": "https://example.com"}
+    },
+    {"id": "admin_result", "kind": "observe", "resource": "admin"},
+    {
+      "id": "payment", "kind": "human", "resource": "phone",
+      "instructions": "Complete payment on the phone, then return control. Payment will be checked in the database.",
+      "verify_step": "payment_verified"
+    },
+    {
+      "id": "paid_order", "kind": "tool", "resource": "orders", "operation": "get",
+      "arguments": {"id": {"$ref": "steps.lookup.rows.0.id"}}
+    },
+    {
+      "id": "payment_verified", "kind": "check",
+      "actual": {"$ref": "steps.paid_order.rows.0.status"}, "equals": "paid"
+    }
+  ]
+}

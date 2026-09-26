@@ -248,6 +248,9 @@ def main():
                         help="Enable debug logging")
     sub = parser.add_subparsers(dest="command")
 
+    from .runtime.cli import register as register_workflow
+    register_workflow(sub)
+
     # argus init
     sub.add_parser("init", help="Create default .env config file")
 
@@ -338,7 +341,9 @@ def main():
     d_start.add_argument("--serial", default=None)
     d_start.add_argument("--os", "--platform", dest="os", default="android",
                          choices=["android", "ios", "browser"],
-                         help="android/ios = Appium; browser = persistent Chrome (Selenium)")
+                         help="android/ios = Appium; browser = persistent Chrome")
+    d_start.add_argument("--backend", choices=["selenium", "playwright", "extension"], default=None,
+                         help="Browser backend (new device sessions default to selenium; workflows use playwright)")
     d_shot = dev_sub.add_parser("screenshot", help="Screenshot → {path,screen_size,scale}")
     d_shot.add_argument("--serial", default=None)
     d_shot.add_argument("--out", default=None)
@@ -369,6 +374,13 @@ def main():
     d_nav.add_argument("url")
     d_nav.add_argument("--wait-s", type=float, default=6.0)
     d_nav.add_argument("--serial", default=None); d_nav.add_argument("--out", default=None)
+    for page_cmd in ("pages", "select-page", "close-page", "new-page"):
+        page_parser = dev_sub.add_parser(page_cmd, help="Browser page management via Playwright or extension")
+        page_parser.add_argument("--serial", required=True)
+        if page_cmd == "new-page":
+            page_parser.add_argument("url", help="HTTP(S) URL; returns a new page ID without selecting it")
+        elif page_cmd != "pages":
+            page_parser.add_argument("page_id")
     d_stop = dev_sub.add_parser("stop", help="Quit the device session")
     d_stop.add_argument("--serial", default=None)
 
@@ -431,7 +443,10 @@ def main():
     if getattr(args, "verbose", False):
         set_level("DEBUG")
 
-    if args.command == "init":
+    if args.command == "workflow":
+        from .runtime.cli import dispatch
+        dispatch(args)
+    elif args.command == "init":
         init_config()
     elif args.command == "new":
         cmd_new(args.name, args.platform, package=args.package, url=args.url,
@@ -1087,52 +1102,87 @@ def cmd_device(args):
         with Image.open(_io.BytesIO(png)) as im:
             w, h = im.size
         sw, sh = plat.screen_size
-        return {"path": out_path, "width": w, "height": h,
-                "screen_size": [sw, sh], "scale": plat.scale}
+        result = {"path": out_path, "width": w, "height": h,
+                  "screen_size": [sw, sh], "scale": plat.scale}
+        if hasattr(plat, "observation_metadata"):
+            result.update(plat.observation_metadata())
+        return result
 
-    if cmd == "start":
-        os_name = getattr(args, "os", "android")
-        plat = ds.start(serial, os_name)
-        sw, sh = plat.screen_size
-        _out({"ok": True, "serial": serial or "default",
-              "os": getattr(plat, "_os", os_name),
-              "session_id": plat._driver.session_id, "screen_size": [sw, sh]})
-        return
-    if cmd == "stop":
-        ds.stop(serial)
-        _out({"ok": True, "stopped": serial or "default"})
-        return
+    plat = None
+    try:
+        if cmd == "start":
+            os_name = getattr(args, "os", "android")
+            plat = ds.start(serial, os_name, browser_backend=getattr(args, "backend", None))
+            sw, sh = plat.screen_size
+            _out({"ok": True, "serial": serial or "default",
+                  "os": getattr(plat, "_os", os_name),
+                  "session_id": getattr(getattr(plat, "_driver", None), "session_id", None),
+                  "page_id": getattr(plat, "page_id", None), "screen_size": [sw, sh]})
+            return
+        if cmd == "stop":
+            ds.stop(serial)
+            _out({"ok": True, "stopped": serial or "default"})
+            return
 
-    # 其余动作：重连已有 session；无则自动 start（navigate 默认 browser，其余 android）
-    plat = ds.attach(serial) or ds.start(serial, "browser" if cmd == "navigate" else "android")
+        if cmd in ("pages", "select-page", "close-page", "new-page"):
+            state = ds.load_state(serial) or {}
+            backend = "extension" if state.get("browser_backend") == "extension" else "playwright"
+            plat = ds.attach_browser(serial, backend=backend, manage_pages=True)
+            if cmd == "new-page":
+                page_id = plat.new_page(args.url)
+                _out({"created_page_id": page_id, "selected_page_id": plat.page_id, "pages": plat.list_pages()})
+                return
+            if cmd == "select-page":
+                plat.select_page(args.page_id)
+                state = ds.load_state(serial)
+                state["browser_backend"] = backend
+                ds.save_state(serial, state)
+            elif cmd == "close-page":
+                plat.close_page(args.page_id)
+            _out({"pages": plat.list_pages(), "selected_page_id": plat.page_id})
+            return
 
-    if cmd == "navigate":
-        plat.open_target(args.url)
-        time.sleep(max(0.0, args.wait_s))
-        _out(_shot(plat, args.out))
-    elif cmd == "screenshot":
-        _out(_shot(plat, args.out))
-    elif cmd == "tap":
-        plat.tap(args.x, args.y)
-        _out({"ok": True, "tapped": [args.x, args.y]})
-    elif cmd == "swipe":
-        plat.swipe(args.x1, args.y1, args.x2, args.y2)
-        _out({"ok": True, "from": [args.x1, args.y1], "to": [args.x2, args.y2]})
-    elif cmd == "input":
-        plat.input_text(args.text)
-        _out({"ok": True, "len": len(args.text)})
-    elif cmd == "type-send":
-        plat.tap(args.input_x, args.input_y); time.sleep(0.7)
-        plat.input_text(args.text); time.sleep(0.4)
-        plat.tap(args.send_x, args.send_y); time.sleep(max(0.0, args.wait_s))
-        res = _shot(plat, args.out); res["sent"] = args.text
-        _out(res)
-    elif cmd == "key":
-        plat.press_key(args.key)
-        _out({"ok": True, "key": args.key})
-    elif cmd == "launch":
-        plat.reset_app(args.package, "relaunch" if args.force_stop else "none")
-        _out({"ok": True, "package": args.package, "force_stop": args.force_stop})
+        # A saved browser must reconnect as-is; never replace it after a selection error.
+        state = ds.load_state(serial)
+        if state and state.get("kind") == "browser":
+            plat = ds.attach_browser(serial)
+        else:
+            plat = ds.attach(serial) or ds.start(serial, "browser" if cmd == "navigate" else "android")
+
+        if cmd == "navigate":
+            plat.open_target(args.url)
+            time.sleep(max(0.0, args.wait_s))
+            _out(_shot(plat, args.out))
+        elif cmd == "screenshot":
+            _out(_shot(plat, args.out))
+        elif cmd == "tap":
+            plat.tap(args.x, args.y)
+            _out({"ok": True, "tapped": [args.x, args.y]})
+        elif cmd == "swipe":
+            plat.swipe(args.x1, args.y1, args.x2, args.y2)
+            _out({"ok": True, "from": [args.x1, args.y1], "to": [args.x2, args.y2]})
+        elif cmd == "input":
+            plat.input_text(args.text)
+            _out({"ok": True, "len": len(args.text)})
+        elif cmd == "type-send":
+            plat.tap(args.input_x, args.input_y); time.sleep(0.7)
+            plat.input_text(args.text); time.sleep(0.4)
+            plat.tap(args.send_x, args.send_y); time.sleep(max(0.0, args.wait_s))
+            res = _shot(plat, args.out); res["sent"] = args.text
+            _out(res)
+        elif cmd == "key":
+            plat.press_key(args.key)
+            _out({"ok": True, "key": args.key})
+        elif cmd == "launch":
+            plat.reset_app(args.package, "relaunch" if args.force_stop else "none")
+            _out({"ok": True, "package": args.package, "force_stop": args.force_stop})
+    except Exception as exc:
+        _out({"ok": False, "error": str(exc)})
+        raise SystemExit(2) from exc
+    finally:
+        if plat is not None and hasattr(plat, "disconnect"):
+            plat.disconnect()
+
 
 
 def cmd_setup(name: str, device_type: str):

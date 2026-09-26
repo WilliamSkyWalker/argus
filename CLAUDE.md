@@ -11,6 +11,15 @@ Argus = 视觉驱动 AI QA agent，替代人工测试。喂 `.feature`(Gherkin) 
 - `tests/` 目录被 argus 的 .gitignore 排除。**测试用例是独立私有仓**(嵌套在 `tests/<target>/`，自己的 .git，push 用普通 `git push`，别 force)——它是客户内容不适用上面的公开脱敏，但**别和 argus 主仓搞混**。
 - argus 主仓：直接 commit 到 `main`，message 简洁；commit 尾 `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`。
 
+## 通用多资源 Runtime（首版）
+
+`argus/runtime/` 与 QA 引擎独立，CLI 为 `argus workflow`，格式和限制见 `docs/runtime.md`。
+支持显式 JSON 步骤、多资源顺序操作、SQLite 只读查询、人工接管与持久化恢复；尚无自然语言规划。
+- 所有写入设备的动作先记 durable intent，再派发，再原子保存结果和游标。异常/中断且结果不确定 → `needs_review`，禁止自动重放。
+- `human` 要声明后续 `verify_step`；resume 只确认交还控制权，重新观察后仍要执行验证。
+- OS 锁保护执行进程，SQLite 资源归属跨人工暂停保留；现有 `argus device`/QA 入口尚未纳入这套锁。
+- 测试：`python3 -m unittest discover -s tests/runtime_demo -v`。用模拟视觉驱动和真实 SQLite 离线验证，不声称完成真机测试。
+
 ## 架构（数据流）
 用例 → `gherkin.py` 解析 → `render_case()`(step + metadata) → `planner.py`(1 LLM call/case，拆 intent/expected/hint) → `agent.py` step 主循环 → fail/timeout/error 时 `healer.py`(根因五分类) → `report.py`(HTML+base64截图)。
 
@@ -43,7 +52,7 @@ Argus = 视觉驱动 AI QA agent，替代人工测试。喂 `.feature`(Gherkin) 
 - `base.py` 抽象接口(screenshot/tap/swipe/input_text/press_key/is_ime_visible…)。
 - `appium.py` **iOS+Android 统一驱动**：`AppiumServerManager` 自动起 server(带 ANDROID_HOME、锁定装了 appium 的 node)；os 由 `config["appium"]["os"]` 选 xcuitest/uiautomator2。`create_platform("ios"/"android"/"appium")` 全 → AppiumPlatform。
 - **mjpeg 帧流截图**(`platforms/mjpeg.py`，默认开)：起 session 时开 driver `mjpegServerPort`，`screenshot_raw` 从常驻流取最新帧(JPEG→PNG)省 HTTP 往返；取不到无条件 fallback 到 `get_screenshot_as_png`(故只快不错，云 appium 不暴露端口时自动降级)。`APPIUM_MJPEG_*` 控。
-- `browser.py` Selenium(local/Grid，回写实际 viewport 校正坐标)。
+- `browser.py` 保留 Selenium QA/local/Grid。新 Runtime 的 browser 默认 `browser_playwright.py`，CDP 接入常驻 Chromium，按 target ID 绑定页面；关闭控制器只断开，不关 Chrome。CLI `device start --backend playwright`、`pages/select-page/close-page`；详见 `docs/browser.md`。测试 `tests/browser_demo`（真实浏览器测试需 `ARGUS_TEST_CHROME`）。
 - 桌面：`desktop_mac.py` / `desktop_win.py` 是前台窗口级驱动；WSL 显式选 `PLATFORM=windows`，由 `windows_runner.py` + PowerShell/Win32 runner 操作宿主。`PLATFORM=desktop` 仅在原生 Windows 选 Windows 驱动，其余系统选 macOS。桌面通过环境变量配置；`run --platform` 当前只接受 ios/android/browser/rdp。
 - `rdp.py` 为实验性远程 Windows 驱动，尚不应视为稳定接口。
 - **文字输入**：Android 走 `mobile: type`(经 UnicodeIME，cap `unicodeKeyboard:true`+`resetKeyboard:true`，`io.appium.settings` 提供)——原生 EditText 与 Flutter 自绘都通吃(ACTION_SET_TEXT 对 Flutter 无效)。iOS 聚焦元素 send_keys。
@@ -155,3 +164,7 @@ BROWSER_HEADLESS / VIEWPORT_* / SELENIUM_GRID_URL ; FIGMA_TOKEN ; SKILLS_ENABLED
 - 不可视断言(埋点/后端/系统时间/launcher badge/通知抽屉/跨App)**视觉层**一律 fail，不许蒙混；要真验证挂 probe 插件(见上)，那条 step 由插件裁决。
 - iOS 真机若非专用设备(如私人手机)会反复 `unavailable`(锁屏/休眠/拔线)——按需插+解锁，规模化用专用设备或云真机(云上 iOS 只有 Appium 一条路，且免签名代管)。
 - 依赖：`openai`(OpenAI 兼容 LLM) / `Pillow` / `uiautomator2` / `selenium` / Appium(server+drivers)。
+
+## Existing browser extension backend
+
+`extensions/argus-browser/` + `argus/browser_bridge.py` + `platforms/browser_extension.py`：Native Messaging + 私有共享目录 IPC，Windows host 可与 WSL Argus 通信，不监听网络端口。默认当前浏览器配置文件内所有 HTTP(S) 标签页（含新弹窗），操作目标仍显式选择；browser session UUID + tab ID 防重启误选；不提取 DOM。Runtime browser resource 必须写 `backend: extension`；先 install/bind，见 `docs/browser-extension.md`。仅能声称已执行的平台测试，Windows/WSL 桥接、导航和截图已实机验证。测试：`tests/extension_demo`，可选 `ARGUS_TEST_CHROME`。

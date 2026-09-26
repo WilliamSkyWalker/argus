@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "inputs": {"order_id": "order-1"},
+  "resources": {
+    "orders": {
+      "kind": "sqlite", "path": "orders.sqlite",
+      "queries": {"get": "SELECT id,status FROM orders WHERE id=:id"}
+    }
+  },
+  "steps": [
+    {
+      "id": "lookup", "kind": "tool", "resource": "orders", "operation": "get",
+      "arguments": {"id": {"$ref": "inputs.order_id"}}
+    },
+    {
+      "id": "exists", "kind": "check",
+      "actual": {"$ref": "steps.lookup.rows.0.id"}, "equals": {"$ref": "inputs.order_id"}
+    }
+  ]
+}

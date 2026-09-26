@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "resources": {
+    "desktop": {"kind": "windows", "app": "Calculator"}
+  },
+  "steps": [
+    {"id": "current_window", "kind": "observe", "resource": "desktop"}
+  ]
+}

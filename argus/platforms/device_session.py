@@ -35,8 +35,18 @@ def _state_path(serial: str | None) -> Path:
 
 
 def save_state(serial: str | None, data: dict) -> None:
+    import tempfile
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    _state_path(serial).write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    target = _state_path(serial)
+    fd, temporary = tempfile.mkstemp(prefix=".session-", suffix=".json", dir=STATE_DIR)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(data, stream, ensure_ascii=False, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def load_state(serial: str | None) -> dict | None:
@@ -98,13 +108,15 @@ def _platform_from_driver(drv, os_name: str, state: dict):
     return plat
 
 
-def start(serial: str | None, os_name: str = "android") -> "object":
+def start(serial: str | None, os_name: str = "android", browser_backend: str | None = None) -> "object":
     """新建一个 device session 并落状态文件，返回平台对象。已有存活 session 则复用。
 
     os_name="browser" → 常驻 Chrome（remote-debugging-port，跨进程按 debuggerAddress
     重连，与 Appium 那套对称）；否则走 Appium（android/ios）。"""
     if os_name == "browser":
-        return _browser_start(serial)
+        return _browser_start(serial, backend=browser_backend)
+    if browser_backend is not None:
+        raise ValueError("--backend is only supported for browser sessions")
     # 已有状态且能连通 → 直接复用，不重复建
     existing = attach(serial, quiet=True)
     if existing is not None:
@@ -164,7 +176,7 @@ def stop(serial: str | None) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Browser（Selenium）session —— 与上面的 Appium session 对称：
+# Browser（Selenium / Playwright CDP）session —— 与上面的 Appium session 对称：
 # Chrome 由独立子进程常驻（--remote-debugging-port + 独立 user-data-dir），
 # 各 `argus device` 命令用 debuggerAddress 重连该 Chrome，做完即退（只杀本次
 # 的 chromedriver，Chrome 存活供下次复用）。`stop` 才真正杀 Chrome 进程。
@@ -194,7 +206,15 @@ def _chrome_binary() -> str:
     for c in candidates:
         if c and Path(c).exists():
             return c
-    raise RuntimeError("找不到 Chrome 可执行文件；设 ARGUS_CHROME_BIN 指向 Chrome/Chromium")
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            bundled = pw.chromium.executable_path
+        if Path(bundled).is_file():
+            return bundled
+    except ImportError:
+        pass
+    raise RuntimeError("找不到 Chrome；设 ARGUS_CHROME_BIN 或运行 python3 -m playwright install chromium")
 
 
 def _devtools_ready(port: int, timeout: float = 15.0) -> bool:
@@ -214,6 +234,48 @@ def _devtools_ready(port: int, timeout: float = 15.0) -> bool:
 
 def _browser_attach(serial: str | None, state: dict, quiet: bool = False) -> "object | None":
     try:
+        return attach_browser(serial, state=state)
+    except Exception as exc:
+        if not quiet:
+            log.warning("Browser attach failed: %s", exc)
+        return None
+
+
+def attach_browser(serial, *, state=None, backend=None, page_id=None, manage_pages=False):
+    """Attach without launching/replacing Chrome; explicit backend overrides session default."""
+    state = state if state is not None else load_state(serial)
+    if not state or state.get("kind") != "browser":
+        raise RuntimeError("Browser session missing; start the named browser session first")
+    backend = backend or state.get("browser_backend", "selenium")
+    if state.get("browser_backend") == "extension" and backend != "extension":
+        raise ValueError("Extension sessions require backend=extension")
+    if backend in {"playwright", "extension"}:
+        from .browser_playwright import PlaywrightBrowserPlatform
+        from .browser_extension import ExtensionBrowserPlatform
+
+        def save_selection(target_id):
+            current = load_state(serial) or state.copy()
+            current["page_id"] = target_id
+            save_state(serial, current)
+
+        platform = ExtensionBrowserPlatform() if backend == "extension" else PlaywrightBrowserPlatform()
+        endpoint = state["bridge_directory"] if backend == "extension" else state["debugger_address"]
+        platform.connect(endpoint,
+                         page_id=page_id if page_id is not None else state.get("page_id"),
+                         selection_callback=save_selection, manage_pages=manage_pages)
+        return platform
+    if backend != "selenium":
+        raise ValueError(f"Unknown browser backend: {backend}")
+    if page_id is not None:
+        raise ValueError("Explicit page IDs require the Playwright backend")
+    platform = _selenium_browser_attach(serial, state)
+    if platform is None:
+        raise RuntimeError("Selenium could not attach to the browser session")
+    return platform
+
+
+def _selenium_browser_attach(serial: str | None, state: dict, quiet: bool = False) -> "object | None":
+    try:
         from selenium import webdriver
         opts = webdriver.ChromeOptions()
         opts.debugger_address = state["debugger_address"]
@@ -232,7 +294,7 @@ def _browser_attach(serial: str | None, state: dict, quiet: bool = False) -> "ob
     return plat
 
 
-def _browser_start(serial: str | None) -> "object":
+def _browser_start(serial: str | None, backend: str | None = None) -> "object":
     import subprocess
     port = _browser_port(serial)
     udd = str(STATE_DIR / f"{_key(serial)}-chrome")
@@ -240,14 +302,23 @@ def _browser_start(serial: str | None) -> "object":
     h = int(os.environ.get("ARGUS_BROWSER_H", 896))
     headless = os.environ.get("ARGUS_BROWSER_HEADLESS", "") not in ("", "0", "false", "False")
 
-    # 已有存活 Chrome → 复用
+    if backend == "extension":
+        return attach_browser(serial, backend="extension")
+    if backend not in (None, "selenium", "playwright"):
+        raise ValueError(f"Unknown browser backend: {backend}")
+    # A live saved endpoint is authoritative. Never replace it because tab selection failed.
+    st = load_state(serial)
+    if st and st.get("kind") == "browser" and st.get("browser_backend") == "extension":
+        return attach_browser(serial, backend="extension")
+    if st and st.get("kind") == "browser" and _devtools_ready(st["port"], timeout=1):
+        selected_backend = backend or st.get("browser_backend", "selenium")
+        plat = attach_browser(serial, state=st, backend=selected_backend)
+        current = load_state(serial) or st
+        current["browser_backend"] = selected_backend
+        save_state(serial, current)
+        return plat
     if _devtools_ready(port, timeout=1):
-        st = load_state(serial)
-        if st and st.get("kind") == "browser":
-            plat = _browser_attach(serial, st, quiet=True)
-            if plat is not None:
-                log.info("复用已运行的 browser session: port=%s", port)
-                return plat
+        raise RuntimeError(f"Debugging port {port} is already occupied by another browser")
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     chrome = _chrome_binary()
@@ -265,17 +336,19 @@ def _browser_start(serial: str | None) -> "object":
              "debugger_address": f"127.0.0.1:{port}", "user_data_dir": udd,
              "viewport_width": w, "viewport_height": h, "headless": headless,
              "serial": serial or ""}
-    plat = _browser_attach(serial, state, quiet=True)
-    if plat is None:
-        raise RuntimeError("Chrome 起了但 Selenium 连不上")
-    try:  # 回写真实视口（滚动条会吃掉几像素），让坐标与截图同一空间
-        actual = plat._driver.execute_script("return [window.innerWidth, window.innerHeight];")
-        if actual and actual[0] and actual[1]:
-            plat._viewport_width, plat._viewport_height = int(actual[0]), int(actual[1])
-            state["viewport_width"] = plat._viewport_width
-            state["viewport_height"] = plat._viewport_height
-    except Exception:
-        pass
+    state["browser_backend"] = backend or "selenium"
+    # A new Chrome process must not inherit the old process's selected target ID.
+    save_state(serial, state)
+    plat = attach_browser(serial, state=state)
+    state = load_state(serial) or state
+    if state["browser_backend"] == "selenium":
+        try:
+            w, h = plat._driver.execute_script("return [window.innerWidth, window.innerHeight];")
+            if w and h:
+                plat._viewport_width, plat._viewport_height = int(w), int(h)
+        except Exception:
+            pass
+    state["viewport_width"], state["viewport_height"] = plat.screen_size
     save_state(serial, state)
     log.info("browser session 就绪: serial=%s port=%s pid=%s", _key(serial), port, proc.pid)
     return plat
