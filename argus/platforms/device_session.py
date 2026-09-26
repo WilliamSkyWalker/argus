@@ -270,7 +270,12 @@ def _browser_attach(serial: str | None, state: dict, quiet: bool = False) -> "ob
 def attach_desktop(state):
     from . import create_platform
     kind = state["os"]
-    cfg = {"win" if kind == "windows" else "mac": {"app": state["app"], "launch": ""}}
+    if state.get("handoff"):
+        from .desktop import DesktopHandoffRequired
+        raise DesktopHandoffRequired(state["handoff"])
+    options = {"app": state["app"], "launch": ""}
+    options.update({key: state[key] for key in ("launch", "process_name", "process_id", "new_window", "new_window_args") if key in state})
+    cfg = {"win" if kind == "windows" else "mac": options}
     plat = create_platform(kind, cfg)
     try:
         plat.setup(cfg)

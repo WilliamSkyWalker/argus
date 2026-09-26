@@ -81,12 +81,37 @@ def connect(args):
         if not args.app: raise ValueError("Desktop connections require --app (window title on Windows, app name on macOS)")
         if old and old.get("app") != args.app:
             raise ValueError("Session belongs to another desktop app; use a different --session")
+        if old and old.get("handoff"):
+            return {"connected":False,"session":serial,**old["handoff"]}
         state={"kind":"desktop","os":kind,"app":args.app}
-        plat=ds.attach_desktop(state)
+        if old and not getattr(args,"new_window",False):
+            state.update({key:old[key] for key in ("process_id","process_name","launch") if key in old})
+        if getattr(args,"new_window",False) and (not getattr(args,"launch",None) or not getattr(args,"new_window_args",None)):
+            raise ValueError("--new-window requires --launch and explicit --new-window-arg values supported by the app")
+        for key in ("launch", "process_name", "new_window", "new_window_args"):
+            value=getattr(args,key,None)
+            if value: state[key]=value
+        if kind != "windows" and any(state.get(k) for k in ("launch", "process_name", "new_window")):
+            raise ValueError("Explicit desktop lifecycle options currently require Windows")
+        from argus.platforms.desktop import DesktopHandoffRequired
+        try:
+            plat=ds.attach_desktop(state)
+        except DesktopHandoffRequired as exc:
+            state.pop("new_window",None); state.pop("new_window_args",None)
+            state["handoff"]=exc.details
+            ds.save_state(serial,state)
+            return {"connected":False,"session":serial,**exc.details}
         try:
             size=list(plat.screen_size)
+            connection=getattr(plat,"connection",{})
+            if not isinstance(connection,dict): connection={}
+            for key in ("process_id", "process_name", "launch"):
+                if connection.get(key): state[key]=connection[key]
+            # New-window intent is one-shot, never repeated by screenshots/actions.
+            state.pop("new_window",None); state.pop("new_window_args",None)
             ds.save_state(serial,state)
-            return {"connected":True,"session":serial,"platform":kind,"screen_size":size}
+            return {"connected":True,"session":serial,"platform":kind,"screen_size":size,
+                    "connection":connection,"requires_observation":True}
         finally: ds.release_controller(plat, kind)
     backend=args.backend or (old or {}).get("browser_backend","playwright")
     plat=None
@@ -142,6 +167,11 @@ def register(sub):
     p.add_argument("--server-url")
     p.add_argument("--team-id")
     p.add_argument("--app")
+    p.add_argument("--process",dest="process_name",help="Windows executable process name")
+    p.add_argument("--launch",help="Windows executable; launched only if no matching process exists")
+    p.add_argument("--new-window",action="store_true",help="Explicitly request another window")
+    p.add_argument("--new-window-arg",dest="new_window_args",action="append",default=[],
+                   help="App-specific argument, e.g. --new-window-arg=--new-window")
     p.add_argument("--backend",choices=["playwright","selenium","extension"])
     p.add_argument("--bridge-directory")
     p.add_argument("--page-id")
@@ -152,9 +182,51 @@ def register(sub):
         p.add_argument("--session","--serial",dest="serial",required=True)
         if name=="open": p.add_argument("target")
         else: p.add_argument("direction",choices=["up","down"])
+    p=sub.add_parser("handoff",help="Pause a desktop session for login or other user interaction")
+    p.add_argument("--session",required=True)
+    p.add_argument("--reason",default="login")
+    p.add_argument("--instructions",required=True)
+    p=sub.add_parser("resume",help="Return a desktop session to observation after user interaction")
+    p.add_argument("--session",required=True)
+    p.add_argument("--note",required=True)
     mobile.register_install_boot(sub)
     from .network import register as register_network
     register_network(sub)
+
+
+def handoff(args):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}",args.session): raise ValueError("Invalid session alias")
+    state=ds.load_state(args.session)
+    if not state or state.get("kind") != "desktop":
+        raise ValueError("Desktop session required; workflow runs use workflow pause/resume")
+    if not args.instructions.strip(): raise ValueError("Handoff instructions cannot be empty")
+    state["handoff"]={"status":"waiting_for_human","reason":args.reason,"instructions":args.instructions}
+    ds.save_state(args.session,state)
+    return {"session":args.session,**state["handoff"]}
+
+
+def resume(args):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}",args.session): raise ValueError("Invalid session alias")
+    state=ds.load_state(args.session)
+    if not state or not state.get("handoff"): raise ValueError("Session is not waiting for human interaction")
+    if not args.note.strip(): raise ValueError("A completion note is required")
+    from argus.platforms.desktop import DesktopHandoffRequired
+    from argus.devices import mobile
+    candidate=dict(state); candidate.pop("handoff")
+    plat=None
+    try:
+        plat=ds.attach_desktop(candidate)
+        # A fresh screenshot is required before returning control, not a login-success claim.
+        screenshot=plat.screenshot_raw()
+        path=mobile.home()/"desktop-observations"/(args.session+".png")
+        path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_bytes(screenshot)
+        candidate["resume_note"]=args.note
+        ds.save_state(args.session,candidate)
+        return {"session":args.session,"status":"needs_observation","path":str(path),"requires_observation":True}
+    except DesktopHandoffRequired as exc:
+        return {"session":args.session,**exc.details}
+    finally: ds.release_controller(plat,"windows" if state["os"]=="windows" else "mac")
 
 
 def dispatch(args):
@@ -163,7 +235,9 @@ def dispatch(args):
         if command in {"install","boot"}:
             mobile.dispatch(args)
             return
-        if command=="network":
+        if command=="handoff": result=handoff(args)
+        elif command=="resume": result=resume(args)
+        elif command=="network":
             from .network import execute
             result=execute(args)
         elif command=="list": result=discover(args.platform)

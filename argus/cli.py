@@ -1058,7 +1058,7 @@ def cmd_device(args):
     from .platforms import device_session as ds
 
     cmd = args.device_command
-    if cmd in {"list", "sessions", "connect", "disconnect", "install", "boot", "network"}:
+    if cmd in {"list", "sessions", "connect", "disconnect", "install", "boot", "network", "handoff", "resume"}:
         from argus.devices.control import dispatch
         return dispatch(args)
     serial = getattr(args, "serial", None)

@@ -65,3 +65,11 @@ class DesktopTests(unittest.TestCase):
                 p._last_shot_size = (1600, 1200)
                 self.assertEqual(p.screenshot_png(), b'png')
                 self.assertEqual(p.scale, 2.0 if p.platform_name == 'mac' else 1.0)
+
+    def test_runner_scale_tracks_resized_screenshots(self):
+        from argus.platforms.windows_runner import WindowsRunnerPlatform
+        runner = WindowsRunnerPlatform()
+        runner._size = (2560, 1440)
+        self.assertEqual(runner.scale, .5)
+        runner._size = (800, 600)
+        self.assertEqual(runner.scale, 1.0)

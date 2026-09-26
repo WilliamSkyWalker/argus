@@ -106,3 +106,40 @@ adapters retain window discovery/capture, coordinate conversion, clipboard
 access and paste modifiers (Command on macOS, Ctrl on Windows). Tests cover
 negative window origins, Retina scale, Unicode paste and clipboard fallback
 without sending input to a real desktop.
+
+### Desktop application lifecycle
+
+Windows connections (native and WSL) share a process-aware resolver. They reuse
+existing processes, restore an existing hidden/minimized window, and launch only
+when no matching process exists. Localized installed-app names are resolved via
+Start Menu metadata where available. `--process` can identify an executable when
+its display name and window title differ; `--launch` supplies a launch executable.
+Running without an accessible window returns `waiting_for_human`, never repeated
+launch attempts. A successful connection returns process/window identity and
+`launched`/`restored` flags; it does **not** assert login readiness.
+
+```bash
+argus device connect --platform windows --app Example --process Example --launch 'C:\Example\Example.exe' --session desktop
+```
+
+An explicit new-window request is different from reconnecting. Use `--new-window`
+with `--launch` and application-supported `--new-window-arg=VALUE` arguments.
+Argus makes one attempt and verifies that another window appeared. It never
+assumes that starting another process means a new window. Missing arguments are
+rejected before launch; ordinary screenshots/actions do not repeat this intent.
+These explicit lifecycle options currently apply to Windows.
+
+When visual observation finds a login/payment/manual-interaction page, the caller
+can persistently pause a standalone desktop session:
+
+```bash
+argus device handoff --session desktop --reason login --instructions 'Complete login in the existing window'
+argus device resume --session desktop --note 'Login completed'
+```
+
+Device actions and reconnect are blocked while the handoff is pending. Resume
+must successfully capture a new screenshot before clearing the pause and returns
+`needs_observation`; inspect that image before continuing. This is a persisted
+control state, not a conversation reminder. Window metadata cannot classify login
+screens: visual readiness remains the agent's responsibility. Workflow runs use
+`workflow pause/resume` and their existing human/verification steps instead.

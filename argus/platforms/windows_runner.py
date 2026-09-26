@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
 import shutil
 import subprocess
 import threading
@@ -32,6 +33,7 @@ class WindowsRunnerPlatform(Platform):
         self._request_id = 0
         self._size = (0, 0)
         self._desktop_path = ""
+        self.connection = {}
 
     def setup(self, config: dict) -> None:
         powershell = shutil.which("powershell.exe")
@@ -40,22 +42,32 @@ class WindowsRunnerPlatform(Platform):
                 "WSL Windows runner 需要启用 WSL interop，并能从 WSL 执行 powershell.exe。"
             )
         script = Path(__file__).with_name("windows_runner.ps1")
-        windows_script = subprocess.run(
-            ["wslpath", "-w", str(script)], capture_output=True, text=True,
-            check=True, timeout=5,
-        ).stdout.strip()
+        if os.name == "nt":
+            windows_script = str(script)
+        else:
+            windows_script = subprocess.run(
+                ["wslpath", "-w", str(script)], capture_output=True, text=True,
+                check=True, timeout=5,
+            ).stdout.strip()
+        from argus.devices.toolchain import background_options
         self._process = subprocess.Popen(
             [
                 powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-STA",
                 "-ExecutionPolicy", "Bypass", "-File", windows_script,
             ],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, encoding="utf-8", bufsize=1,
+            text=True, encoding="utf-8", bufsize=1, **background_options(),
         )
         win = config.get("win", {}) or {}
         result = self._call(
             "setup", app=str(win.get("app") or ""), launch=str(win.get("launch") or ""),
+            process_name=win.get("process_name"), process_id=win.get("process_id"),
+            new_window=win.get("new_window", False), new_window_args=win.get("new_window_args", []),
         )
+        self.connection = result.get("connection", {})
+        if self.connection.get("status") == "waiting_for_human":
+            from .desktop import DesktopHandoffRequired
+            raise DesktopHandoffRequired(self.connection)
         self._size = int(result["width"]), int(result["height"])
         self._desktop_path = str(result.get("desktop_path") or "")
         log.info(
@@ -124,6 +136,10 @@ class WindowsRunnerPlatform(Platform):
     @property
     def screen_size(self) -> tuple[int, int]:
         return self._size
+
+    @property
+    def scale(self) -> float:
+        return min(1.0, _MAX_IMAGE_WIDTH / self._size[0]) if self._size[0] else 1.0
 
     def tap(self, x: int, y: int) -> None:
         self._call("tap", x=x, y=y)

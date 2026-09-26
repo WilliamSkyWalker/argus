@@ -158,3 +158,47 @@ class ControlTests(unittest.TestCase):
             cli.cmd_run('example', report_path='__auto__')
             html.assert_not_called()
             json_report.assert_not_called()
+
+    def test_new_window_is_explicit_and_one_shot(self):
+        p=Mock(); p.screen_size=(800,600)
+        p.connection={'process_id':42,'process_name':'Example','new_window':True}
+        with patch.object(ds,'attach_desktop',return_value=p) as attach:
+            with self.assertRaisesRegex(ValueError,'new-window-arg'):
+                control.connect(args(platform='windows',app='Example',new_window=True))
+            attach.assert_not_called()
+            control.connect(args(platform='windows',app='Example',new_window=True,
+                launch='example.exe',new_window_args=['--new-window']))
+        state=ds.load_state('test')
+        self.assertNotIn('new_window',state)
+        self.assertNotIn('new_window_args',state)
+        self.assertEqual(state['process_id'],42)
+
+    def test_handoff_blocks_until_resume_observes_again(self):
+        from argus.platforms.desktop import DesktopHandoffRequired
+        ds.save_state('test',{'kind':'desktop','os':'windows','app':'Example'})
+        result=control.handoff(Namespace(session='test',reason='login',instructions='Please log in'))
+        self.assertEqual(result['status'],'waiting_for_human')
+        with patch('argus.platforms.create_platform') as create:
+            with self.assertRaises(DesktopHandoffRequired): ds.attach_desktop(ds.load_state('test'))
+            create.assert_not_called()
+        self.assertFalse(control.connect(args(platform='windows',app='Example'))['connected'])
+        p=Mock(); p.screenshot_raw.side_effect=RuntimeError('capture failed')
+        with patch.object(ds,'attach_desktop',return_value=p):
+            with self.assertRaisesRegex(RuntimeError,'capture failed'):
+                control.resume(Namespace(session='test',note='Logged in'))
+        self.assertIn('handoff',ds.load_state('test'))
+        p.screenshot_raw.side_effect=None; p.screenshot_raw.return_value=b'png'
+        with patch.object(ds,'attach_desktop',return_value=p),patch.object(control.mobile,'home',return_value=Path(self.tmp.name)):
+            result=control.resume(Namespace(session='test',note='Logged in'))
+        self.assertEqual(result['status'],'needs_observation')
+        self.assertEqual(Path(result['path']).read_bytes(),b'png')
+        self.assertNotIn('handoff',ds.load_state('test'))
+
+    def test_running_app_without_window_requests_human_instead_of_retry(self):
+        from argus.platforms.desktop import DesktopHandoffRequired
+        details={'status':'waiting_for_human','reason':'window_unavailable','instructions':'Restore the app'}
+        with patch.object(ds,'attach_desktop',side_effect=DesktopHandoffRequired(details)) as attach:
+            result=control.connect(args(platform='windows',app='Example'))
+        attach.assert_called_once()
+        self.assertEqual(result['status'],'waiting_for_human')
+        self.assertEqual(ds.load_state('test')['handoff'],details)

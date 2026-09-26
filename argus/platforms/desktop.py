@@ -15,6 +15,13 @@ _KEY_MAP = {
 }
 
 
+class DesktopHandoffRequired(RuntimeError):
+    """The app is running but requires user help to expose a usable window."""
+    def __init__(self, details):
+        self.details = details
+        super().__init__(details["instructions"])
+
+
 class DesktopPlatform(Platform):
     """Shared input flow with native coordinate and clipboard hooks."""
 

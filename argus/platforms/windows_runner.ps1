@@ -25,6 +25,8 @@ public static class ArgusNative {
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr p);
     [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc cb, IntPtr p);
     [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hwnd, int index);
+    [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hwnd, uint command);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int command);
@@ -117,12 +119,112 @@ function Test-Cloaked([IntPtr]$hwnd) {
 }
 
 function Test-WindowUsable([IntPtr]$hwnd) {
+    if (([ArgusNative]::GetWindowLong($hwnd,-20) -band 0x08000080) -ne 0) { return $false }
     if (-not [ArgusNative]::IsWindowVisible($hwnd)) { return $false }
     if ([ArgusNative]::IsIconic($hwnd)) { return $false }
     if (Test-Cloaked $hwnd) { return $false }
     $rect = [ArgusNative+RECT]::new()
     if (-not [ArgusNative]::GetWindowRect($hwnd, [ref]$rect)) { return $false }
     return (($rect.Right - $rect.Left) -gt 0 -and ($rect.Bottom - $rect.Top) -gt 0)
+}
+
+function Resolve-DesktopApp($request) {
+    # Process existence, window existence and login readiness are separate states.
+    $app = [string]$request.app
+    $script:PreferredTitle = $app
+    $launch = [string]$request.launch
+    $processName = [string]$request.process_name
+    if (-not $processName -and $launch) {
+        $processName = [IO.Path]::GetFileNameWithoutExtension($launch)
+    }
+    if (-not $processName) {
+        $processName = $app
+        # Display names can differ from executable names (localized applications).
+        $installed = @(Get-StartApps -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $app })
+        if ($installed.Count -eq 1 -and $installed[0].AppID -match '\.exe$') {
+            $processName = [IO.Path]::GetFileNameWithoutExtension([string]$installed[0].AppID)
+            if (-not $launch) {
+                $shell = New-Object -ComObject WScript.Shell
+                $roots = @([Environment]::GetFolderPath('StartMenu'), [Environment]::GetFolderPath('CommonStartMenu'))
+                $links = @($roots | ForEach-Object { Get-ChildItem $_ -Filter '*.lnk' -Recurse -ErrorAction SilentlyContinue } |
+                    Where-Object { $_.BaseName -eq $app })
+                $paths = @($links | ForEach-Object { $shell.CreateShortcut($_.FullName).TargetPath } |
+                    Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique)
+                if ($paths.Count -eq 1) { $launch = $paths[0] }
+            }
+        }
+    }
+    $existing = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.ProcessName -eq $processName -or ($_.MainWindowTitle -and $_.MainWindowTitle.IndexOf($app,[StringComparison]::OrdinalIgnoreCase) -ge 0)
+    })
+    if ($request.process_id) {
+        $existing = @($existing | Where-Object { $_.Id -eq [int]$request.process_id })
+        if ($existing.Count -eq 0) { throw 'Bound application process exited; reconnect explicitly.' }
+    }
+    $script:CandidatePids = @($existing | ForEach-Object { $_.Id })
+    $before = @(Get-AppWindows $script:CandidatePids)
+    $launched = $false
+    $newWindow = [bool]$request.new_window
+    if ($newWindow -and (@($request.new_window_args).Count -eq 0 -or -not $launch)) {
+        throw 'New-window mode requires an application executable and explicit supported new-window arguments.'
+    }
+    if ($existing.Count -eq 0 -or $newWindow) {
+        if (-not $launch) { throw 'Application is not running; supply an executable with --launch.' }
+        if ($newWindow) { $child = Start-Process -FilePath $launch -ArgumentList @($request.new_window_args) -PassThru }
+        else { $child = Start-Process -FilePath $launch -PassThru }
+        $launched = $true
+        $script:CandidatePids += $child.Id
+    }
+    $deadline = [DateTime]::UtcNow.AddSeconds(12)
+    $window = $null
+    do {
+        if (-not $request.process_id) {
+            $script:CandidatePids = @($script:CandidatePids + @(Get-Process -Name $processName -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }) | Select-Object -Unique)
+        }
+        $windows = @(Get-AppWindows $script:CandidatePids)
+        if ($newWindow) { $windows = @($windows | Where-Object { $_.handle -notin @($before | ForEach-Object { $_.handle }) }) }
+        $window = $windows | Sort-Object @{Expression={ $_.title_match };Descending=$true}, @{Expression={ $_.visible };Descending=$true}, @{Expression={ $_.area };Descending=$true} | Select-Object -First 1
+        if ($window) { break }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if (-not $window) {
+        # Never launch again just because a running process has no usable window.
+        return @{ status='waiting_for_human'; reason='window_unavailable'; launched=$launched;
+            instructions='Restore an existing application window manually, then reconnect. No automatic relaunch was attempted.' }
+    }
+    $handle = [IntPtr][long]$window.handle
+    $restored = -not $window.visible -or [ArgusNative]::IsIconic($handle)
+    if ($restored) { [void][ArgusNative]::ShowWindow($handle, 4); Start-Sleep -Milliseconds 200 }
+    $script:Hwnd = $handle
+    $script:PrimaryWindow = $handle
+    $script:TargetProcessId = [int]$window.process_id
+    return @{ status='connected'; process_id=$window.process_id; process_name=(Get-Process -Id $window.process_id).ProcessName;
+        window_handle=$window.handle; title=$window.title; launched=$launched; restored=$restored;
+        new_window=$newWindow; launch=$launch }
+}
+
+function Get-AppWindows($processIds) {
+    $script:AppWindowRows = [Collections.Generic.List[object]]::new()
+    $script:AppWindowPids = @($processIds)
+    $callback = [ArgusNative+EnumWindowsProc] {
+        param([IntPtr]$hwnd, [IntPtr]$unused)
+        [uint32]$ownerId = 0
+        [void][ArgusNative]::GetWindowThreadProcessId($hwnd, [ref]$ownerId)
+        if ($ownerId -notin $script:AppWindowPids) { return $true }
+        if (([ArgusNative]::GetWindowLong($hwnd,-20) -band 0x08000080) -ne 0) { return $true }
+        $title = Get-WindowTitle $hwnd
+        if (-not $title -or (Test-Cloaked $hwnd)) { return $true }
+        $rect = [ArgusNative+RECT]::new()
+        if (-not [ArgusNative]::GetWindowRect($hwnd,[ref]$rect)) { return $true }
+        $area = [long]($rect.Right-$rect.Left)*($rect.Bottom-$rect.Top)
+        if ($area -le 0) { return $true }
+        $script:AppWindowRows.Add(@{handle=$hwnd.ToInt64(); process_id=$ownerId; title=$title;
+            visible=[ArgusNative]::IsWindowVisible($hwnd); area=$area;
+            title_match=($title.IndexOf($script:PreferredTitle,[StringComparison]::OrdinalIgnoreCase) -ge 0)})
+        return $true
+    }
+    [void][ArgusNative]::EnumWindows($callback,[IntPtr]::Zero)
+    return $script:AppWindowRows.ToArray()
 }
 
 function Find-TargetWindow {
@@ -136,13 +238,20 @@ function Find-TargetWindow {
             [uint32]$windowProcessId = 0
             [void][ArgusNative]::GetWindowThreadProcessId($hwnd, [ref]$windowProcessId)
             if ($windowProcessId -eq $script:TargetProcessId -and (Test-WindowUsable $hwnd)) {
+                # Main window or an owned dialog only; a process may also own
+                # tray/notification/helper windows with unrelated captions.
+                $owner = $hwnd
+                for ($depth=0; $depth -lt 16 -and $owner -ne [IntPtr]::Zero -and $owner -ne $script:PrimaryWindow; $depth++) {
+                    $owner = [ArgusNative]::GetWindow($owner,4)
+                }
+                if ($owner -ne $script:PrimaryWindow) { return $true }
                 $script:enumBest = $hwnd
                 return $false
             }
             return $true
         }
         [void][ArgusNative]::EnumWindows($callback, [IntPtr]::Zero)
-        if ($script:enumBest -ne [IntPtr]::Zero) { return $script:enumBest }
+        return $script:enumBest
     }
     $needle = $script:App
     $script:enumBest = [IntPtr]::Zero
@@ -259,7 +368,7 @@ function Capture-Window([IntPtr]$hwnd, $rect) {
 }
 
 function Make-LParam([int]$x, [int]$y) {
-    return [IntPtr]((([int64]($y -band 0xFFFF)) -shl 32) -bor ([int64]($x -band 0xFFFF)))
+    return [IntPtr]((([int64]($y -band 0xFFFF)) -shl 16) -bor ([int64]($x -band 0xFFFF)))
 }
 
 function Resolve-ChildAt([IntPtr]$hwnd, [int]$screenX, [int]$screenY) {
@@ -388,22 +497,18 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
                 $script:App = [string]$request.app
                 $script:Launch = [string]$request.launch
                 if ([string]::IsNullOrWhiteSpace($script:App)) { throw "WIN_APP is required." }
-                if (-not [string]::IsNullOrWhiteSpace($script:Launch)) {
-                    $launched = Start-Process -FilePath $script:Launch -PassThru
-                    $script:TargetProcessId = $launched.Id
+                $connection = Resolve-DesktopApp $request
+                if ($connection.status -eq 'waiting_for_human') {
+                    Write-Response @{id=$request.id; ok=$true; data=@{connection=$connection}}
+                    break
                 }
-                $deadline = [DateTime]::UtcNow.AddSeconds(12)
-                do {
-                    $script:Hwnd = Find-TargetWindow
-                    if ($script:Hwnd -ne [IntPtr]::Zero) { break }
-                    Start-Sleep -Milliseconds 300
-                } while ([DateTime]::UtcNow -lt $deadline)
-                if (-not (Refresh-TargetWindow)) { throw "Target window '$($script:App)' was not found." }
+                if (-not (Refresh-TargetWindow)) { throw "Target window could not be restored." }
                 Write-Response @{ id=$request.id; ok=$true; data=@{
                     width=$script:Rect.Right-$script:Rect.Left
                     height=$script:Rect.Bottom-$script:Rect.Top
                     title=(Get-WindowTitle $script:Hwnd)
                     desktop_path=[Environment]::GetFolderPath('Desktop')
+                    connection=$connection
                 }}
             }
             "screenshot" {

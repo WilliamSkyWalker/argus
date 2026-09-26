@@ -91,21 +91,17 @@ class DesktopWinPlatform(DesktopPlatform):
                 "跑 windows 平台必须指定被测窗口 —— 在 .env 配 WIN_APP=<窗口标题子串>，"
                 "或 `WIN_APP=计算器 python -m argus.cli run … --platform windows`。")
 
-        # 有 WIN_LAUNCH 就先启动，再等窗口出现
-        if self._launch:
-            self._launch_app(self._launch)
-        deadline = time.time() + _WINDOW_WAIT_S
-        found = 0
-        while time.time() < deadline:
-            found = self._find_window()
-            if found:
-                break
-            time.sleep(0.5)
-        if not found:
-            raise RuntimeError(
-                f"{_WINDOW_WAIT_S}s 内未找到标题含「{self._app}」的可见窗口。请确认 "
-                f"WIN_APP 是标题栏文字的子串，且该 App 已开着一个窗口"
-                + ("，或配 WIN_LAUNCH 指定它的启动路径。" if not self._launch else "。"))
+        # Share the deterministic reuse/restore/launch policy with the WSL backend.
+        from .windows_runner import WindowsRunnerPlatform
+        resolver = WindowsRunnerPlatform()
+        try:
+            resolver.setup({"win": wcfg})
+            self.connection = resolver.connection
+            self._process_id = self.connection["process_id"]
+            found = self.connection["window_handle"]
+            self._primary_hwnd = found
+        finally:
+            resolver.teardown()
         self._apply_window(found)
         log.info("Windows 桌面就绪: app=%r hwnd=%d win=%dx%d @(%d,%d)",
                  self._app, self._hwnd, self._win_w, self._win_h, self._win_x, self._win_y)
@@ -156,8 +152,19 @@ class DesktopWinPlatform(DesktopPlatform):
             nonlocal best, best_area
             if not w32.IsWindowVisible(hwnd):
                 return
+            if getattr(self, "_process_id", None):
+                import win32process
+                if win32process.GetWindowThreadProcessId(hwnd)[1] != self._process_id:
+                    return
+                owner = hwnd
+                for _ in range(16):
+                    if not owner or owner == self._primary_hwnd:
+                        break
+                    owner = w32.GetWindow(owner, 4)  # GW_OWNER: owned dialogs only.
+                if owner != self._primary_hwnd:
+                    return
             title = w32.GetWindowText(hwnd) or ""
-            if needle not in title.lower():
+            if not getattr(self, "_process_id", None) and needle not in title.lower():
                 return
             try:
                 l, t, r, b = w32.GetWindowRect(hwnd)
