@@ -72,6 +72,8 @@ def connect(args):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}",serial):
         raise ValueError("session must contain letters, digits, dot, dash or underscore")
     kind=desktop_platform(args.platform)
+    if getattr(args,"background",False) and kind != "windows":
+        raise ValueError("--background currently requires Windows")
     if kind in {"android","ios"}:
         return mobile.connect(kind,args.device,serial,args.server_url,args.team_id)
     old=ds.load_state(serial)
@@ -85,10 +87,10 @@ def connect(args):
             return {"connected":False,"session":serial,**old["handoff"]}
         state={"kind":"desktop","os":kind,"app":args.app}
         if old and not getattr(args,"new_window",False):
-            state.update({key:old[key] for key in ("process_id","process_name","launch") if key in old})
+            state.update({key:old[key] for key in ("process_id","process_name","launch","background") if key in old})
         if getattr(args,"new_window",False) and (not getattr(args,"launch",None) or not getattr(args,"new_window_args",None)):
             raise ValueError("--new-window requires --launch and explicit --new-window-arg values supported by the app")
-        for key in ("launch", "process_name", "new_window", "new_window_args"):
+        for key in ("launch", "process_name", "new_window", "new_window_args", "background"):
             value=getattr(args,key,None)
             if value: state[key]=value
         if kind != "windows" and any(state.get(k) for k in ("launch", "process_name", "new_window")):
@@ -167,6 +169,7 @@ def register(sub):
     p.add_argument("--server-url")
     p.add_argument("--team-id")
     p.add_argument("--app")
+    p.add_argument("--background",action="store_true",help="Windows background window messages and capture; never use global input")
     p.add_argument("--process",dest="process_name",help="Windows executable process name")
     p.add_argument("--launch",help="Windows executable; launched only if no matching process exists")
     p.add_argument("--new-window",action="store_true",help="Explicitly request another window")

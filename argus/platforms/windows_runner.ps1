@@ -27,6 +27,15 @@ public static class ArgusNative {
     [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hwnd, int index);
     [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hwnd, uint command);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool IsChild(IntPtr parent, IntPtr child);
+    [StructLayout(LayoutKind.Sequential)]
+    public struct GUITHREADINFO {
+        public int cbSize; public uint flags;
+        public IntPtr hwndActive, hwndFocus, hwndCapture, hwndMenuOwner, hwndMoveSize, hwndCaret;
+        public RECT rcCaret;
+    }
+    [DllImport("user32.dll")] public static extern bool GetGUIThreadInfo(uint threadId, ref GUITHREADINFO info);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int command);
@@ -94,6 +103,14 @@ $script:BM_CLICK         = 0x00F5
 $script:MK_LBUTTON       = 0x0001
 
 function Write-Response([object]$value) {
+    if ($value.ok) {
+        if (-not $value.data) { $value.data = @{} }
+        $value.data.input_binding = $null
+        if ($script:FocusChild -ne [IntPtr]::Zero -and [ArgusNative]::IsWindow($script:FocusChild)) {
+            $value.data.input_binding = @{window=$script:Hwnd.ToInt64(); target=$script:FocusChild.ToInt64();
+                process_id=$script:TargetProcessId; class_name=(Get-WindowClass $script:FocusChild)}
+        }
+    }
     [Console]::Out.WriteLine(($value | ConvertTo-Json -Compress -Depth 6))
     [Console]::Out.Flush()
 }
@@ -358,13 +375,20 @@ function Capture-Window([IntPtr]$hwnd, $rect) {
             if (-not (Test-Uniform $bitmap)) { return $bitmap }
             $bitmap.Dispose()
         }
-        return (Capture-Screen $rect.Left $rect.Top $w $h)
+        throw 'Background capture unavailable: PrintWindow failed or returned a uniform image. Screen capture fallback is disabled.'
     } finally {
         [void][ArgusNative]::SelectObject($mem, $old)
         [void][ArgusNative]::DeleteObject($hbm)
         [void][ArgusNative]::DeleteDC($mem)
         [void][ArgusNative]::ReleaseDC($hwnd, $hdc)
     }
+}
+
+function Get-InputTarget {
+    $target = $script:FocusChild
+    if ($target -ne [IntPtr]::Zero -and [ArgusNative]::IsWindow($target) -and
+        ($target -eq $script:Hwnd -or [ArgusNative]::IsChild($script:Hwnd,$target))) { return $target }
+    throw 'No target input focus; tap the intended field first.'
 }
 
 function Make-LParam([int]$x, [int]$y) {
@@ -384,62 +408,6 @@ function Resolve-ChildAt([IntPtr]$hwnd, [int]$screenX, [int]$screenY) {
         $parent = $child
     }
     return @{ Hwnd = $parent; X = $pt.X; Y = $pt.Y }
-}
-
-function Try-UIAClick([int]$screenX, [int]$screenY) {
-    # DirectUI surfaces (file dialog nav tree / item view) have no real child
-    # HWNDs, so posted mouse messages never reach their inner elements. UIA
-    # works cross-process and does not require foreground focus.
-    try {
-        $el = [System.Windows.Automation.AutomationElement]::FromPoint(
-            [System.Windows.Point]::new([double]$screenX, [double]$screenY))
-        if ($null -eq $el) { return $false }
-        if ($script:TargetProcessId -gt 0 -and $el.Current.ProcessId -ne $script:TargetProcessId) {
-            return $false   # something else covers the dialog at this point
-        }
-        $pat = $null
-        if ($el.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pat)) {
-            $pat.Select()
-            return $true
-        }
-        if ($el.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pat)) {
-            $pat.Invoke()
-            return $true
-        }
-    } catch { }
-    return $false
-}
-
-function Select-TreeItemAt([IntPtr]$tree, [int]$screenX, [int]$screenY) {
-    # Shell namespace tree (file dialog / Explorer nav pane, class
-    # NamespaceTreeControl hosting a SysTreeView32). Posted mouse clicks only
-    # move the TreeView caret: NM_CLICK carries no coordinates, so the host
-    # hit-tests with GetMessagePos() (the REAL cursor) and never navigates.
-    # UIA shows the tree as an empty Pane, but the host's MSAA provider exposes
-    # every node with its screen rect and a "Navigate" default action. Still a
-    # pure coordinate click: pick the node whose rect contains the point.
-    if ((Get-WindowClass ([ArgusNative]::GetParent($tree))) -ne "NamespaceTreeControl") { return $false }
-    try {
-        $iid = [Guid]"618736E0-3C3D-11CF-810C-00AA00389B71"   # IID_IAccessible
-        $acc = $null
-        if ([ArgusNative]::AccessibleObjectFromWindow($tree, [uint32]4294967292, [ref]$iid, [ref]$acc) -ne 0) { return $false }  # OBJID_CLIENT
-        $tr = [ArgusNative+RECT]::new()
-        [void][ArgusNative]::GetWindowRect($tree, [ref]$tr)
-        $count = [int]$acc.accChildCount
-        for ($i = 1; $i -le $count; $i++) {
-            $x = 0; $y = 0; $w = 0; $h = 0
-            try { $acc.accLocation([ref]$x, [ref]$y, [ref]$w, [ref]$h, $i) } catch { continue }
-            if ($w -le 0 -or $h -le 0) { continue }   # collapsed / scrolled out
-            # accLocation covers only the label; a click anywhere on that row
-            # of the pane (icon, indent, trailing space) selects the same node.
-            if ($screenY -ge $y -and $screenY -lt ($y + $h) -and $screenX -ge $tr.Left -and $screenX -lt $tr.Right) {
-                try { $acc.accSelect(2, $i) } catch { }                     # SELFLAG_TAKESELECTION
-                try { $acc.accDoDefaultAction($i) } catch { return $false }  # "Navigate"
-                return $true
-            }
-        }
-    } catch { }
-    return $false
 }
 
 function Press-TitleBarButtonAt([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [int]$ncBottom) {
@@ -503,6 +471,12 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
                     break
                 }
                 if (-not (Refresh-TargetWindow)) { throw "Target window could not be restored." }
+                $binding = $request.input_binding
+                if ($binding -and [long]$binding.window -eq $script:Hwnd.ToInt64() -and [int]$binding.process_id -eq $script:TargetProcessId) {
+                    $target = [IntPtr][long]$binding.target
+                    if ([ArgusNative]::IsWindow($target) -and ($target -eq $script:Hwnd -or [ArgusNative]::IsChild($script:Hwnd,$target)) -and
+                        (Get-WindowClass $target) -eq $binding.class_name) { $script:FocusChild = $target }
+                }
                 Write-Response @{ id=$request.id; ok=$true; data=@{
                     width=$script:Rect.Right-$script:Rect.Left
                     height=$script:Rect.Bottom-$script:Rect.Top
@@ -512,16 +486,8 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
                 }}
             }
             "screenshot" {
-                if (Refresh-TargetWindow) {
-                    $bitmap = Capture-Window $script:Hwnd $script:Rect
-                } else {
-                    # Target window gone (e.g. final close-verification step):
-                    # capture the virtual screen so the agent sees the desktop.
-                    $script:Hwnd = [IntPtr]::Zero
-                    $script:FocusChild = [IntPtr]::Zero
-                    $vs = [Windows.Forms.SystemInformation]::VirtualScreen
-                    $bitmap = Capture-Screen $vs.X $vs.Y $vs.Width $vs.Height
-                }
+                if (-not (Refresh-TargetWindow)) { throw 'Target window is unavailable; refusing to capture another application.' }
+                $bitmap = Capture-Window $script:Hwnd $script:Rect
                 $stream = [IO.MemoryStream]::new()
                 try {
                     $bitmap.Save($stream, [Drawing.Imaging.ImageFormat]::Png)
@@ -548,12 +514,21 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
                     $script:FocusChild = $hit.Hwnd
                     $lp = Make-LParam $hit.X $hit.Y
                     $cls = Get-WindowClass $hit.Hwnd
-                    if ($cls -eq "Button") {
-                        [void][ArgusNative]::SendMessageW($hit.Hwnd, $script:BM_CLICK, [UIntPtr]::Zero, [IntPtr]::Zero)
-                    } elseif ($cls -eq "SysTreeView32" -and (Select-TreeItemAt $hit.Hwnd $sx $sy)) {
-                        # shell nav tree node navigated via MSAA default action (background-safe)
-                    } elseif ($cls -eq "DirectUIHWND" -and (Try-UIAClick $sx $sy)) {
-                        # UIA handled it (nav tree item, dialog button, list item)
+                    if ($cls -match '^(Edit$|WindowsForms\d+\.EDIT\.)') {
+                        # Mouse-down makes Edit call SetFocus and activate its parent.
+                        # Place the caret by the requested coordinate without OS focus.
+                        $pos = [long][ArgusNative]::SendMessageW($hit.Hwnd, 0x00D7, [UIntPtr]::Zero, $lp)
+                        $index = $pos -band 0xFFFF
+                        [void][ArgusNative]::SendMessageW($hit.Hwnd, 0x00B1, [UIntPtr]([uint64]$index), [IntPtr]$index)
+                    } elseif ($cls -match '^(Button$|WindowsForms\d+\.BUTTON\.)') {
+                        # The handle comes from target-local hit testing, never FromPoint.
+                        # WinForms button mouse-up checks the physical cursor position.
+                        $iid = [Guid]"618736E0-3C3D-11CF-810C-00AA00389B71"
+                        $acc = $null
+                        if ([ArgusNative]::AccessibleObjectFromWindow($hit.Hwnd, [uint32]4294967292, [ref]$iid, [ref]$acc) -ne 0) {
+                            throw 'Background button invocation unavailable.'
+                        }
+                        $acc.accDoDefaultAction(0)
                     } else {
                         [void][ArgusNative]::PostMessageW($hit.Hwnd, $script:WM_MOUSEMOVE, [UIntPtr]::Zero, $lp)
                         [void][ArgusNative]::PostMessageW($hit.Hwnd, $script:WM_LBUTTONDOWN, [UIntPtr]([uint64]$script:MK_LBUTTON), $lp)
@@ -618,25 +593,13 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
                 $cy = [int](($script:Rect.Bottom - $script:Rect.Top) / 2)
                 $hit = Resolve-ChildAt $script:Hwnd ($script:Rect.Left + $cx) ($script:Rect.Top + $cy)
                 [int16]$delta = if ([string]$request.direction -eq "up") { 600 } else { -600 }
-                $wp = [UIntPtr]([uint64]((([int64]([uint16]$delta)) -band 0xFFFF) -shl 16))
+                $wp = [UIntPtr]([uint64]((([int64]([int64]$delta)) -band 0xFFFF) -shl 16))
                 [void][ArgusNative]::PostMessageW($hit.Hwnd, $script:WM_MOUSEWHEEL, $wp, (Make-LParam ($script:Rect.Left + $cx) ($script:Rect.Top + $cy)))
                 Write-Response @{ id=$request.id; ok=$true }
             }
             "input" {
                 if (-not (Refresh-TargetWindow)) { throw "Target window '$($script:App)' was not found." }
-                $target = $script:FocusChild
-                if ($target -eq [IntPtr]::Zero -or -not [ArgusNative]::IsWindow($target)) {
-                    $cx = [int](($script:Rect.Right - $script:Rect.Left) / 2)
-                    $cy = [int](($script:Rect.Bottom - $script:Rect.Top) / 2)
-                    $target = (Resolve-ChildAt $script:Hwnd ($script:Rect.Left + $cx) ($script:Rect.Top + $cy)).Hwnd
-                    $script:FocusChild = $target
-                }
-                # Text only lands in Edit controls; a stale FocusChild (e.g. a
-                # Button hit by the last tap) would silently swallow it.
-                if ((Get-WindowClass $target) -ne "Edit") {
-                    $ed = Find-EditChild $script:Hwnd
-                    if ($ed -ne [IntPtr]::Zero) { $target = $ed; $script:FocusChild = $ed }
-                }
+                $target = Get-InputTarget
                 foreach ($ch in [char[]][string]$request.text) {
                     [void][ArgusNative]::PostMessageW($target, $script:WM_CHAR, [UIntPtr]([uint64][char]$ch), [IntPtr]::Zero)
                 }
@@ -676,55 +639,25 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
                     # Edit child would make TranslateMessage synthesize WM_CHAR
                     # (GetKeyState never sees the posted modifier) -- that is how a
                     # stray 's' leaked into the document on ctrl+s.
-                    $hwnd = $script:Hwnd
+                    $keyTarget = $script:Hwnd
                     if ($modNames.Count -eq 1 -and $modNames[0] -eq "ctrl" -and $mainName -eq "a") {
                         # Edit detects Ctrl+A through GetKeyState, which posted keys
                         # never update; EM_SETSEL selects all without key state.
                         # Prefer the Edit the last tap landed on (a dialog has
                         # several: search box, address bar, file name...).
-                        if ($script:FocusChild -ne [IntPtr]::Zero -and [ArgusNative]::IsWindow($script:FocusChild) -and (Get-WindowClass $script:FocusChild) -eq "Edit") {
-                            $hwnd = $script:FocusChild
-                        } elseif ((Get-WindowClass $hwnd) -ne "Edit") {
-                            $ed = Find-EditChild $script:Hwnd
-                            if ($ed -ne [IntPtr]::Zero) { $hwnd = $ed; $script:FocusChild = $ed }
-                        }
-                        [void][ArgusNative]::PostMessageW($hwnd, 0x00B1, [UIntPtr]::Zero, [IntPtr](-1))
+                        $keyTarget = Get-InputTarget
+                        if ((Get-WindowClass $keyTarget) -notmatch '^(Edit$|RichEdit|WindowsForms\d+\.(EDIT|RichEdit))') { throw 'Background select-all requires an Edit or RichEdit control.' }
+                        [void][ArgusNative]::PostMessageW($keyTarget, 0x00B1, [UIntPtr]::Zero, [IntPtr](-1))
                         Write-Response @{ id=$request.id; ok=$true }
                         break
                     }
-                    $topCountBefore = if ($script:TargetProcessId -gt 0) { Count-ProcessTopLevels $script:TargetProcessId } else { -1 }
-                    foreach ($m in $modNames) { Post-Key $hwnd $modTable[$m] $false $hasAlt }
-                    Post-Key $hwnd $mainVk $false $hasAlt
-                    Post-Key $hwnd $mainVk $true $hasAlt
-                    for ($i = $modNames.Count - 1; $i -ge 0; $i--) { Post-Key $hwnd $modTable[$modNames[$i]] $true $hasAlt }
-                    # Classic Notepad resolves its accel table via GetKeyState, which
-                    # posted messages never update, so Ctrl+S silently no-ops there.
-                    # If no new top-level window (Save As dialog) appears, fall back
-                    # to WM_COMMAND with the menu id.
-                    if ($topCountBefore -ge 0 -and $mainVk -eq 0x53 -and ($modNames -contains "ctrl")) {
-                        for ($t = 0; $t -lt 5; $t++) {
-                            Start-Sleep -Milliseconds 180
-                            if ((Count-ProcessTopLevels $script:TargetProcessId) -gt $topCountBefore) { break }
-                            if ($t -eq 2 -or $t -eq 4) {
-                                $cls = Get-WindowClass $script:Hwnd
-                                if ($cls -eq "Notepad") {
-                                    # 4 = File>Save (opens Save As when untitled), 5 = File>Save As.
-                                    # PostMessage, never SendMessage: Notepad runs the modal
-                                    # dialog inside the WM_COMMAND handler, so a synchronous
-                                    # send would block this thread until the dialog closes.
-                                    $cmdId = if ($t -eq 2) { 4 } else { 5 }
-                                    $wp = [UIntPtr]([uint64](($cmdId -band 0xFFFF) -bor (1 -shl 16)))
-                                    [void][ArgusNative]::PostMessageW($script:Hwnd, 0x0111, $wp, [IntPtr]::Zero)
-                                }
-                            }
-                        }
-                    }
+                    throw "Background shortcut '$name' is unsupported; use a visual click or a supported control operation."
                 } elseif ($vkTable.ContainsKey($mainName)) {
-                    $target = if ($script:FocusChild -ne [IntPtr]::Zero -and [ArgusNative]::IsWindow($script:FocusChild)) { $script:FocusChild } else { $script:Hwnd }
+                    $target = Get-InputTarget
                     Post-Key $target $vkTable[$mainName] $false $false
                     Post-Key $target $vkTable[$mainName] $true $false
                 } elseif ($mainName.Length -eq 1) {
-                    $target = if ($script:FocusChild -ne [IntPtr]::Zero -and [ArgusNative]::IsWindow($script:FocusChild)) { $script:FocusChild } else { $script:Hwnd }
+                    $target = Get-InputTarget
                     [void][ArgusNative]::PostMessageW($target, $script:WM_CHAR, [UIntPtr]([uint32][char]$mainName[0]), [IntPtr]::Zero)
                 } else {
                     throw "Unsupported key '$name'."

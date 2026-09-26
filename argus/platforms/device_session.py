@@ -168,7 +168,7 @@ def attach(serial: str | None, quiet: bool = False) -> "object | None":
     if state.get("disconnected"):
         return None
     if state.get("kind") == "desktop":
-        return attach_desktop(state)
+        return attach_desktop(state, serial=serial)
     if state.get("kind") == "browser":
         return _browser_attach(serial, state, quiet=quiet)
     try:
@@ -267,14 +267,27 @@ def _browser_attach(serial: str | None, state: dict, quiet: bool = False) -> "ob
         return None
 
 
-def attach_desktop(state):
+def attach_desktop(state, *, serial=None):
     from . import create_platform
     kind = state["os"]
     if state.get("handoff"):
         from .desktop import DesktopHandoffRequired
         raise DesktopHandoffRequired(state["handoff"])
     options = {"app": state["app"], "launch": ""}
-    options.update({key: state[key] for key in ("launch", "process_name", "process_id", "new_window", "new_window_args") if key in state})
+    options.update({key: state[key] for key in ("launch", "process_name", "process_id", "new_window", "new_window_args", "background", "input_binding") if key in state})
+    if serial is not None and kind == "windows":
+        def save_binding(binding):
+            current = load_state(serial)
+            if not current or current.get("handoff") or current.get("disconnected"):
+                return
+            if current.get("app") != state.get("app") or current.get("process_id") != state.get("process_id"):
+                return
+            if binding:
+                current["input_binding"] = binding
+            else:
+                current.pop("input_binding", None)
+            save_state(serial, current)
+        options["_binding_callback"] = save_binding
     cfg = {"win" if kind == "windows" else "mac": options}
     plat = create_platform(kind, cfg)
     try:

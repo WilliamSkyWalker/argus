@@ -73,3 +73,28 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(runner.scale, .5)
         runner._size = (800, 600)
         self.assertEqual(runner.scale, 1.0)
+
+    def test_background_factory_never_falls_back_to_foreground(self):
+        from argus.platforms import create_platform
+        from argus.platforms.windows_runner import WindowsRunnerPlatform
+        with patch('platform.system', return_value='Windows'), patch('platform.release', return_value='10'):
+            with patch('shutil.which', return_value='powershell.exe'):
+                self.assertIsInstance(create_platform('desktop', {'win': {'background': True}}), WindowsRunnerPlatform)
+            with patch('shutil.which', return_value=None):
+                with self.assertRaisesRegex(RuntimeError, 'foreground fallback is disabled'):
+                    create_platform('windows', {'win': {'background': True}})
+
+    def test_background_binding_survives_separate_controllers(self):
+        from argus.platforms import device_session as ds
+        state = {'kind': 'desktop', 'os': 'windows', 'app': 'Example',
+                 'background': True, 'process_id': 123}
+        binding = {'window': 12, 'target': 13, 'process_id': 123, 'class_name': 'Edit'}
+        with patch.object(ds, 'load_state', return_value=state.copy()), patch.object(ds, 'save_state') as save:
+            with patch('argus.platforms.create_platform') as factory:
+                ds.attach_desktop(state, serial='example')
+                options = factory.call_args.args[1]['win']
+                self.assertTrue(options['background'])
+                options['_binding_callback'](binding)
+                self.assertEqual(save.call_args.args[1]['input_binding'], binding)
+                options['_binding_callback'](None)
+                self.assertNotIn('input_binding', save.call_args.args[1])

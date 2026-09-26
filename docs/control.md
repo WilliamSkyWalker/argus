@@ -143,3 +143,44 @@ must successfully capture a new screenshot before clearing the pause and returns
 control state, not a conversation reminder. Window metadata cannot classify login
 screens: visual readiness remains the agent's responsibility. Workflow runs use
 `workflow pause/resume` and their existing human/verification steps instead.
+
+### Windows background control (experimental)
+
+```bash
+argus device connect --platform windows --app 'Example App' --session work --background
+argus device screenshot --session work --out /tmp/work.png
+argus device tap 120 90 --session work
+argus device input 'Example text' --session work
+```
+
+`--background` selects the PowerShell/Win32 runner on native Windows; WSL already
+uses this runner. It captures the target with PrintWindow and dispatches input to
+that window's controls without global mouse, keyboard or clipboard injection.
+Missing PowerShell, a closed window or unavailable capture produces an error;
+there is no automatic foreground or desktop-screenshot fallback.
+
+Standard Edit controls position the caret by the requested coordinates without
+setting OS focus. Standard/WinForms buttons use their window-bound accessibility
+action. Other controls receive window messages and may ignore them or activate
+their own window; background support is application-dependent, especially for
+GPU-rendered and custom controls. Successful dispatch is not proof of a UI change.
+Minimized windows may need restoring; this is not a headless or locked-screen mode.
+
+Tap the intended input control first. Saved device sessions retain its binding
+across CLI calls and validate window/process/class membership on reconnect;
+missing or invalid bindings are rejected rather than guessing another field.
+A replaced control can reuse a handle, so verify the current screenshot after UI
+changes and tap again. Ctrl+A supports Edit/RichEdit controls; other modifier
+shortcuts are rejected. Use a visual button or human handoff when unsupported.
+
+Opt-in regression on an unlocked Windows/WSL desktop (avoid moving the mouse
+during the test):
+
+```bash
+ARGUS_TEST_WINDOWS=1 python3 -m unittest discover -s tests/control_demo -p test_background_live.py -v
+```
+
+The test opens only its own fixture and cover windows. It verifies an occluded
+screenshot, two text fields, Unicode input, button clicks, coordinates, restored
+input bindings, invalid targets, and unchanged activation/cursor/clipboard state.
+It does not call an LLM or establish compatibility with every Windows app.

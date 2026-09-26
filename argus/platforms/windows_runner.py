@@ -34,6 +34,8 @@ class WindowsRunnerPlatform(Platform):
         self._size = (0, 0)
         self._desktop_path = ""
         self.connection = {}
+        self.input_binding = None
+        self._binding_callback = None
 
     def setup(self, config: dict) -> None:
         powershell = shutil.which("powershell.exe")
@@ -53,14 +55,17 @@ class WindowsRunnerPlatform(Platform):
         self._process = subprocess.Popen(
             [
                 powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-STA",
+                "-WindowStyle", "Hidden",
                 "-ExecutionPolicy", "Bypass", "-File", windows_script,
             ],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", bufsize=1, **background_options(),
         )
         win = config.get("win", {}) or {}
+        self._binding_callback = win.get("_binding_callback")
         result = self._call(
             "setup", app=str(win.get("app") or ""), launch=str(win.get("launch") or ""),
+            input_binding=win.get("input_binding"),
             process_name=win.get("process_name"), process_id=win.get("process_id"),
             new_window=win.get("new_window", False), new_window_args=win.get("new_window_args", []),
         )
@@ -90,6 +95,9 @@ class WindowsRunnerPlatform(Platform):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=3)
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream:
+                stream.close()
         self._process = None
 
     def _call(self, command: str, **payload: object) -> dict:
@@ -113,7 +121,13 @@ class WindowsRunnerPlatform(Platform):
                 raise RuntimeError("Windows runner 响应序号不匹配。")
             if not response.get("ok"):
                 raise RuntimeError(f"Windows runner 操作失败：{response.get('error', '未知错误')}")
-            return response.get("data") or {}
+            data = response.get("data") or {}
+            if "input_binding" in data:
+                binding = data["input_binding"]
+                if self._binding_callback and (binding != self.input_binding or command == "setup"):
+                    self._binding_callback(binding)
+                self.input_binding = binding
+            return data
 
     def screenshot_raw(self) -> bytes:
         result = self._call("screenshot")
@@ -168,16 +182,12 @@ class WindowsRunnerPlatform(Platform):
 
     def get_system_prompt_segment(self) -> str:
         extra = (
-            "\n\nWSL 后台 runner 补充说明：\n"
-            "- press_key 支持组合键：{\"key\": \"ctrl+s\"} / {\"key\": \"ctrl+shift+s\"} / "
-            "{\"key\": \"alt+f4\"}，修饰键为 ctrl/shift/alt。\n"
-            "- 本机桌面路径：{desktop}\n"
-            "- 窗口在后台运行，Windows 不会为它绘制输入光标、焦点框或选中高亮：点击输入框后"
-            "截图里看不到光标是正常现象，不代表点击未生效；input 的文字是否出现才是唯一判据。\n"
-            "- x_pct/y_pct 必须在 0-100 之间（超出会被钳到窗口边缘，点错位置）。\n"
-            "- 截屏是被测窗口自身画面，窗口被遮挡或失去焦点也正确，无需把窗口切到前台。\n"
-            "- 被测窗口一旦关闭，截屏会自动切换为整个 Windows 桌面（可能出现其他程序/任务栏，"
-            "画面比例也随之变化）；此时 tap/press_key 会返回 \"Target window ... was not found\"，"
-            "该错误本身即说明被测窗口已不存在。"
-        ).replace("{desktop}", self._desktop_path or "（未知，用 桌面 图标可见路径推断）")
+            "\n\nWindows 后台 runner：\n"
+            "- 坐标始终相对于目标窗口；先 tap 输入框，再 input。\n"
+            "- 不使用全局鼠标、键盘或剪贴板；控件自身仍可能响应消息而激活窗口。\n"
+            "- Ctrl+A 仅支持原生 Edit/RichEdit 输入框，其他组合键暂不支持。\n"
+            "- 截图来自目标窗口；截取失败或窗口关闭时明确报错，不回退到桌面截图。\n"
+            "- 后台输入可能没有可见光标，必须验证文字或按钮结果；派发成功不代表应用已处理。\n"
+            "- GPU/自绘控件可能不支持后台操作；无效果时停止重试并请求人工接管。"
+        )
         return _PROMPT_SEGMENT + extra

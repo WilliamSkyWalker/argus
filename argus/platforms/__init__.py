@@ -25,7 +25,9 @@ def create_platform(platform_name: str, config: dict) -> Platform:
         # WSL 通过内置 PowerShell runner 操作当前 Windows 控制台，无需装 Windows Python。
         import platform as _p
         import shutil
-        if "microsoft" in _p.release().lower() and shutil.which("powershell.exe"):
+        if "microsoft" in _p.release().lower() or (config.get("win") or {}).get("background"):
+            if not shutil.which("powershell.exe"):
+                raise RuntimeError("Windows background control requires powershell.exe; foreground fallback is disabled")
             from .windows_runner import WindowsRunnerPlatform
             return WindowsRunnerPlatform()
         # 原生 Windows Python 仍使用 pyautogui + pywin32。
@@ -40,8 +42,7 @@ def create_platform(platform_name: str, config: dict) -> Platform:
         import platform as _p
         sysname = _p.system()
         if sysname == "Windows":
-            from .desktop_win import DesktopWinPlatform
-            return DesktopWinPlatform()
+            return create_platform("windows", config)
         from .desktop_mac import DesktopMacPlatform
         return DesktopMacPlatform()
     else:
