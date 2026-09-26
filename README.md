@@ -1,5 +1,7 @@
 # Argus
 
+[License: MIT](LICENSE)
+
 > A vision-based AI agent that replaces the human QA tester.
 
 Argus reads a **BDD `.feature` test case** (Gherkin / Cucumber), **looks at the screen** (iOS / Android / Browser / desktop), decides what to do, performs the action, and judges pass/fail on its own — the way a human tester would, but driven by a vision LLM.
@@ -600,3 +602,24 @@ Skill 实现了什么（完整协议见 [`.claude/skills/argus-drive/SKILL.md`](
 ### Existing browser sessions
 
 The optional [browser extension backend](docs/browser-extension.md) connects Argus to all website tabs by default in your daily Chrome/Edge profile, retaining login state and supporting Runtime human handoff.
+
+### Phones and simulators
+
+Use `argus mobile devices` to discover Android devices and iOS devices/simulators,
+then `argus mobile connect --platform android --device DEVICE_ID --session phone`.
+`argus mobile install --platform android --boot --connect` provisions an Android
+emulator and automation tools; `--platform ios` requires a Mac with full Xcode.
+See [mobile setup](docs/mobile.md) for licenses, host prerequisites and remote
+Windows/Mac Appium connections from WSL.
+
+### Unified control entry point
+
+`argus device list/connect/sessions` manage mobile, desktop and browser targets.
+Use the same `--session` with screenshot, tap, input, key, scroll and open;
+`device install/boot` provision simulators. [Unified CLI guide](docs/control.md).
+
+## License / 许可证
+
+Argus is licensed under the [MIT License](LICENSE). Third-party dependencies remain under their respective licenses.
+
+Argus 采用 MIT 许可证，允许商用、修改和再分发，须保留版权及许可声明。第三方依赖遵循各自的许可证。

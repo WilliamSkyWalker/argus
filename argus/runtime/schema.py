@@ -35,8 +35,11 @@ def validate(workflow: dict) -> dict:
             if not isinstance(spec.get("session"), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", spec["session"]):
                 raise ValueError(f"{name}: session must be an explicit safe session name")
         elif kind in {"mac", "windows"}:
-            if not isinstance(spec.get("app"), str) or not spec["app"].strip():
-                raise ValueError(f"{name}: app is required")
+            if "session" in spec:
+                if not isinstance(spec["session"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", spec["session"]):
+                    raise ValueError(f"{name}: invalid desktop session")
+            elif not isinstance(spec.get("app"), str) or not spec["app"].strip():
+                raise ValueError(f"{name}: app or session is required")
         elif kind == "sqlite":
             if not isinstance(spec.get("path"), str) or not spec["path"]:
                 raise ValueError(f"{name}: database path required")

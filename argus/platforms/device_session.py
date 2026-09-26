@@ -108,7 +108,7 @@ def _platform_from_driver(drv, os_name: str, state: dict):
     return plat
 
 
-def start(serial: str | None, os_name: str = "android", browser_backend: str | None = None) -> "object":
+def start(serial: str | None, os_name: str = "android", browser_backend: str | None = None, appium_config: dict | None = None) -> "object":
     """新建一个 device session 并落状态文件，返回平台对象。已有存活 session 则复用。
 
     os_name="browser" → 常驻 Chrome（remote-debugging-port，跨进程按 debuggerAddress
@@ -123,7 +123,8 @@ def start(serial: str | None, os_name: str = "android", browser_backend: str | N
         return existing
     from .appium import AppiumPlatform
     plat = AppiumPlatform()
-    plat.setup({"appium": {"os": os_name, "device": serial or ""}})
+    config = {"os": os_name, "device": serial or "", **(appium_config or {})}
+    plat.setup({"appium": config})
     save_state(serial, {
         "server_url": plat._server_url,
         "session_id": plat._driver.session_id,
@@ -131,6 +132,7 @@ def start(serial: str | None, os_name: str = "android", browser_backend: str | N
         "screen_width": plat._screen_width,
         "screen_height": plat._screen_height,
         "serial": serial or "",
+        "device_id": config["device"],
     })
     # start 亲手起的 server 不能在进程退出时被关（要留给后续 device 命令）→ 交出所有权
     if plat._server is not None:
@@ -146,6 +148,10 @@ def attach(serial: str | None, quiet: bool = False) -> "object | None":
         if not quiet:
             log.warning("无 device session 状态文件（先跑 argus device start）: %s", _key(serial))
         return None
+    if state.get("disconnected"):
+        return None
+    if state.get("kind") == "desktop":
+        return attach_desktop(state)
     if state.get("kind") == "browser":
         return _browser_attach(serial, state, quiet=quiet)
     try:
@@ -163,6 +169,9 @@ def attach(serial: str | None, quiet: bool = False) -> "object | None":
 def stop(serial: str | None) -> bool:
     """退出 session 并清状态文件。"""
     state = load_state(serial)
+    if state and state.get("kind") == "desktop":
+        clear_state(serial)
+        return True
     if state and state.get("kind") == "browser":
         return _browser_stop(serial, state)
     plat = attach(serial, quiet=True)
@@ -241,11 +250,26 @@ def _browser_attach(serial: str | None, state: dict, quiet: bool = False) -> "ob
         return None
 
 
+def attach_desktop(state):
+    from . import create_platform
+    kind = state["os"]
+    cfg = {"win" if kind == "windows" else "mac": {"app": state["app"], "launch": ""}}
+    plat = create_platform(kind, cfg)
+    try:
+        plat.setup(cfg)
+        return plat
+    except Exception:
+        plat.teardown()
+        raise
+
+
 def attach_browser(serial, *, state=None, backend=None, page_id=None, manage_pages=False):
     """Attach without launching/replacing Chrome; explicit backend overrides session default."""
     state = state if state is not None else load_state(serial)
     if not state or state.get("kind") != "browser":
         raise RuntimeError("Browser session missing; start the named browser session first")
+    if state.get("disconnected"):
+        raise RuntimeError("Session disconnected; use device connect to reconnect")
     backend = backend or state.get("browser_backend", "selenium")
     if state.get("browser_backend") == "extension" and backend != "extension":
         raise ValueError("Extension sessions require backend=extension")

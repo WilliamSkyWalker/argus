@@ -168,3 +168,24 @@ BROWSER_HEADLESS / VIEWPORT_* / SELENIUM_GRID_URL ; FIGMA_TOKEN ; SKILLS_ENABLED
 ## Existing browser extension backend
 
 `extensions/argus-browser/` + `argus/browser_bridge.py` + `platforms/browser_extension.py`：Native Messaging + 私有共享目录 IPC，Windows host 可与 WSL Argus 通信，不监听网络端口。默认当前浏览器配置文件内所有 HTTP(S) 标签页（含新弹窗），操作目标仍显式选择；browser session UUID + tab ID 防重启误选；不提取 DOM。Runtime browser resource 必须写 `backend: extension`；先 install/bind，见 `docs/browser-extension.md`。仅能声称已执行的平台测试，Windows/WSL 桥接、导航和截图已实机验证。测试：`tests/extension_demo`，可选 `ARGUS_TEST_CHROME`。
+
+## Mobile discovery and simulator provisioning
+
+`argus/mobile.py` provides `mobile devices/connect/install/boot`. Discovery covers
+adb devices, devicectl physical iOS devices and simctl simulators. Explicit IDs
+and persistent session aliases are separate. Local iOS requires full Xcode on
+macOS; remote devices use an explicit Appium URL and ID. Installer never force
+overwrites AVDs; driver installation failures must propagate. SDK licensing is
+interactive unless `--accept-licenses` is explicitly supplied. adb is used only
+for discovery/lifecycle here, not visual control. Tests: `tests/mobile_demo`;
+see `docs/mobile.md` for platform requirements and actual validation coverage.
+
+## Unified control
+
+`argus/control.py` extends `argus device` with list/connect/sessions/disconnect,
+install/boot and common open/scroll commands. `--session` aliases `--serial`.
+Desktop bindings persist app+OS and reconnect short-lived controllers; Runtime
+accepts desktop `session` resources as well as inline `app`. Disconnect preserves
+endpoint configuration and blocks subsequent actions until explicit reconnect;
+it is not cross-process cancellation or global extension revocation. Tests:
+`tests/control_demo`. User guide: `docs/control.md`.

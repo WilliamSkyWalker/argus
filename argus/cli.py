@@ -250,6 +250,8 @@ def main():
 
     from .runtime.cli import register as register_workflow
     register_workflow(sub)
+    from .mobile import register as register_mobile
+    register_mobile(sub)
 
     # argus init
     sub.add_parser("init", help="Create default .env config file")
@@ -337,52 +339,54 @@ def main():
     dev_p = sub.add_parser("device",
                            help="Drive a device via persistent Appium session (agent-callable; JSON out)")
     dev_sub = dev_p.add_subparsers(dest="device_command")
+    from .control import register as register_control
+    register_control(dev_sub)
     d_start = dev_sub.add_parser("start", help="Create/reuse a device session")
-    d_start.add_argument("--serial", default=None)
+    d_start.add_argument("--serial", "--session", default=None)
     d_start.add_argument("--os", "--platform", dest="os", default="android",
                          choices=["android", "ios", "browser"],
                          help="android/ios = Appium; browser = persistent Chrome")
     d_start.add_argument("--backend", choices=["selenium", "playwright", "extension"], default=None,
                          help="Browser backend (new device sessions default to selenium; workflows use playwright)")
     d_shot = dev_sub.add_parser("screenshot", help="Screenshot → {path,screen_size,scale}")
-    d_shot.add_argument("--serial", default=None)
+    d_shot.add_argument("--serial", "--session", default=None)
     d_shot.add_argument("--out", default=None)
     d_tap = dev_sub.add_parser("tap", help="Tap at device pixel (x, y)")
     d_tap.add_argument("x", type=int); d_tap.add_argument("y", type=int)
-    d_tap.add_argument("--serial", default=None)
+    d_tap.add_argument("--serial", "--session", default=None)
     d_swipe = dev_sub.add_parser("swipe", help="Swipe (x1,y1)→(x2,y2)")
     for a in ("x1", "y1", "x2", "y2"): d_swipe.add_argument(a, type=int)
     d_swipe.add_argument("--duration-ms", type=int, default=300)
-    d_swipe.add_argument("--serial", default=None)
+    d_swipe.add_argument("--serial", "--session", default=None)
     d_input = dev_sub.add_parser("input", help="Type text into focused field (no submit)")
     d_input.add_argument("text")
-    d_input.add_argument("--serial", default=None)
+    d_input.add_argument("--serial", "--session", default=None)
     d_ts = dev_sub.add_parser("type-send", help="Focus→type→submit→wait→screenshot in one call")
     d_ts.add_argument("text")
     d_ts.add_argument("--input-x", type=int, required=True); d_ts.add_argument("--input-y", type=int, required=True)
     d_ts.add_argument("--send-x", type=int, required=True); d_ts.add_argument("--send-y", type=int, required=True)
     d_ts.add_argument("--wait-s", type=float, default=12.0)
-    d_ts.add_argument("--serial", default=None); d_ts.add_argument("--out", default=None)
+    d_ts.add_argument("--serial", "--session", default=None); d_ts.add_argument("--out", default=None)
     d_key = dev_sub.add_parser("key", help="Press key: enter/delete/back/home/recent/…")
     d_key.add_argument("key")
-    d_key.add_argument("--serial", default=None)
+    d_key.add_argument("--serial", "--session", default=None)
     d_launch = dev_sub.add_parser("launch", help="Foreground/relaunch a package (Appium activate, no adb)")
     d_launch.add_argument("package")
-    d_launch.add_argument("--serial", default=None)
+    d_launch.add_argument("--serial", "--session", default=None)
     d_launch.add_argument("--force-stop", action="store_true", help="terminate then activate (relaunch)")
     d_nav = dev_sub.add_parser("navigate", help="(browser) Open a URL, then screenshot")
     d_nav.add_argument("url")
     d_nav.add_argument("--wait-s", type=float, default=6.0)
-    d_nav.add_argument("--serial", default=None); d_nav.add_argument("--out", default=None)
+    d_nav.add_argument("--serial", "--session", default=None); d_nav.add_argument("--out", default=None)
     for page_cmd in ("pages", "select-page", "close-page", "new-page"):
         page_parser = dev_sub.add_parser(page_cmd, help="Browser page management via Playwright or extension")
-        page_parser.add_argument("--serial", required=True)
+        page_parser.add_argument("--serial", "--session", required=True)
         if page_cmd == "new-page":
             page_parser.add_argument("url", help="HTTP(S) URL; returns a new page ID without selecting it")
         elif page_cmd != "pages":
             page_parser.add_argument("page_id")
     d_stop = dev_sub.add_parser("stop", help="Quit the device session")
-    d_stop.add_argument("--serial", default=None)
+    d_stop.add_argument("--serial", "--session", default=None)
 
     # argus list
     list_p = sub.add_parser("list", help="List available test targets")
@@ -445,6 +449,9 @@ def main():
 
     if args.command == "workflow":
         from .runtime.cli import dispatch
+        dispatch(args)
+    elif args.command == "mobile":
+        from .mobile import dispatch
         dispatch(args)
     elif args.command == "init":
         init_config()
@@ -1086,6 +1093,9 @@ def cmd_device(args):
     from .platforms import device_session as ds
 
     cmd = args.device_command
+    if cmd in {"list", "sessions", "connect", "disconnect", "install", "boot"}:
+        from .control import dispatch
+        return dispatch(args)
     serial = getattr(args, "serial", None)
 
     def _out(d):
@@ -1144,12 +1154,22 @@ def cmd_device(args):
 
         # A saved browser must reconnect as-is; never replace it after a selection error.
         state = ds.load_state(serial)
-        if state and state.get("kind") == "browser":
+        if state and state.get("disconnected"):
+            raise RuntimeError("Session disconnected; use device connect to reconnect")
+        if state and state.get("kind") == "desktop":
+            plat = ds.attach_desktop(state)
+        elif state and state.get("kind") == "browser":
             plat = ds.attach_browser(serial)
         else:
             plat = ds.attach(serial) or ds.start(serial, "browser" if cmd == "navigate" else "android")
 
-        if cmd == "navigate":
+        if cmd == "open":
+            plat.open_target(args.target)
+            _out({"ok": True, "target": args.target})
+        elif cmd == "scroll":
+            (plat.scroll_up if args.direction == "up" else plat.scroll_down)()
+            _out({"ok": True, "direction": args.direction})
+        elif cmd == "navigate":
             plat.open_target(args.url)
             time.sleep(max(0.0, args.wait_s))
             _out(_shot(plat, args.out))
@@ -1182,6 +1202,8 @@ def cmd_device(args):
     finally:
         if plat is not None and hasattr(plat, "disconnect"):
             plat.disconnect()
+        elif plat is not None and getattr(plat, "platform_name", "") in {"mac", "windows"}:
+            plat.teardown()
 
 
 

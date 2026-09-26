@@ -68,9 +68,9 @@ def _run(cmd: list[str], env: dict | None = None, cwd: str | None = None,
 
 # ── 平台/架构 ────────────────────────────────────────────────
 def _os_arch() -> tuple[str, str]:
-    sysname = {"Darwin": "darwin", "Linux": "linux"}.get(platform.system())
+    sysname = {"Darwin": "darwin", "Linux": "linux", "Windows": "win"}.get(platform.system())
     if not sysname:
-        raise RuntimeError(f"暂不支持的系统: {platform.system()}（仅 macOS / Linux）")
+        raise RuntimeError(f"暂不支持的系统: {platform.system()}（macOS / Linux / Windows）")
     mach = platform.machine().lower()
     arch = {"arm64": "arm64", "aarch64": "arm64",
             "x86_64": "x64", "amd64": "x64"}.get(mach)
@@ -100,7 +100,7 @@ def _node_ok(ver: tuple[int, int, int] | None) -> bool:
 
 
 def _sandbox_node_bin() -> str | None:
-    b = NODE_DIR / "bin" / "node"
+    b = NODE_DIR / "node.exe" if os.name == "nt" else NODE_DIR / "bin" / "node"
     return str(b) if b.is_file() else None
 
 
@@ -128,7 +128,7 @@ def _latest_lts_version(sysname: str, arch: str) -> str:
     try:
         with urllib.request.urlopen("https://nodejs.org/dist/index.json", timeout=15) as r:
             data = json.load(r)
-        wanted = f"{sysname}-{arch}"
+        wanted = f"{sysname}-{arch}" + ("-zip" if sysname == "win" else "")
         lts = [d for d in data if d.get("lts") and wanted in d.get("files", [])]
         if lts:
             # index.json 按新→旧排列，第一个即最新 LTS
@@ -148,14 +148,15 @@ def install_sandbox_node() -> str:
     sysname, arch = _os_arch()
     ver = _latest_lts_version(sysname, arch)
     name = f"node-{ver}-{sysname}-{arch}"
-    url = f"https://nodejs.org/dist/{ver}/{name}.tar.gz"
+    extension = "zip" if sysname == "win" else "tar.gz"
+    url = f"https://nodejs.org/dist/{ver}/{name}.{extension}"
     _say(f"  下载 Node {ver} ({sysname}-{arch}) …")
     NODE_DIR.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as td:
         tgz = Path(td) / "node.tar.gz"
         urllib.request.urlretrieve(url, tgz)
-        with tarfile.open(tgz) as tf:
-            tf.extractall(td)
+        from .mobile import unpack
+        unpack(tgz, td)
         src = Path(td) / name
         # 解压结果搬进 NODE_DIR（扁平化：NODE_DIR/bin/node）
         for item in src.iterdir():
@@ -190,6 +191,8 @@ def _node_env(node_bin: str) -> dict:
 
 # ── Appium + drivers ────────────────────────────────────────
 def _appium_local_bin() -> Path:
+    if os.name == "nt":
+        return RUNTIME / "node_modules/appium/build/lib/main.js"
     return RUNTIME / "node_modules" / ".bin" / "appium"
 
 
@@ -207,7 +210,8 @@ def install_appium(node_bin: str) -> str:
     env = _node_env(node_bin)
     npm = os.path.join(os.path.dirname(node_bin), "npm")
     _say(f"  npm install {_APPIUM_SPEC}（本地，沙盒内，不动全局）…")
-    r = _run([npm, "install", _APPIUM_SPEC, "--no-fund", "--no-audit"],
+    npm_cmd = [node_bin, str(Path(node_bin).parent / "node_modules/npm/bin/npm-cli.js")] if os.name == "nt" else [npm]
+    r = _run([*npm_cmd, "install", _APPIUM_SPEC, "--no-fund", "--no-audit"],
              env=env, cwd=str(RUNTIME))
     if r.returncode != 0:
         raise RuntimeError(f"appium 安装失败:\n{r.stderr[-2000:]}")
@@ -225,7 +229,7 @@ def install_drivers(node_bin: str, appium_bin: str, ios: bool) -> None:
     env["APPIUM_HOME"] = str(APPIUM_HOME)
 
     def _installed() -> set[str]:
-        r = _run([appium_bin, "driver", "list", "--installed", "--json"], env=env)
+        r = _run([*([node_bin] if appium_bin.endswith(".js") else []), appium_bin, "driver", "list", "--installed", "--json"], env=env)
         try:
             return set(json.loads(r.stdout or "{}").keys())
         except Exception:
@@ -240,9 +244,9 @@ def install_drivers(node_bin: str, appium_bin: str, ios: bool) -> None:
             _ok(f"driver 已装: {d}")
             continue
         _say(f"  appium driver install {d} …")
-        r = _run([appium_bin, "driver", "install", d], env=env)
+        r = _run([*([node_bin] if appium_bin.endswith(".js") else []), appium_bin, "driver", "install", d], env=env)
         if r.returncode != 0:
-            _warn(f"driver {d} 安装失败: {r.stderr[-500:]}")
+            raise RuntimeError(f"driver {d} 安装失败: {r.stderr[-500:]}")
         else:
             _ok(f"driver 安装完成: {d}")
 
@@ -251,7 +255,7 @@ def install_drivers(node_bin: str, appium_bin: str, ios: bool) -> None:
 def detect_adb() -> str | None:
     for cand in (
         shutil.which("adb"),
-        str(PLATFORM_TOOLS / "adb"),
+        str(PLATFORM_TOOLS / ("adb.exe" if os.name == "nt" else "adb")),
         os.path.expanduser("~/Library/Android/sdk/platform-tools/adb"),
         os.path.expanduser("~/Android/Sdk/platform-tools/adb"),
     ):
@@ -261,9 +265,9 @@ def detect_adb() -> str | None:
 
 
 def install_platform_tools() -> str | None:
-    """下载独立 platform-tools（含 adb）进沙盒。仅 macOS/Linux。"""
+    """下载独立 platform-tools（含 adb）进沙盒。支持 macOS/Linux/Windows。"""
     sysname, _ = _os_arch()
-    slug = {"darwin": "darwin", "linux": "linux"}[sysname]
+    slug = {"darwin": "darwin", "linux": "linux", "win": "windows"}[sysname]
     url = f"https://dl.google.com/android/repository/platform-tools-latest-{slug}.zip"
     _say(f"  下载 Android platform-tools（adb）…")
     RUNTIME.mkdir(parents=True, exist_ok=True)
@@ -274,7 +278,7 @@ def install_platform_tools() -> str | None:
             urllib.request.urlretrieve(url, z)
             with zipfile.ZipFile(z) as zf:
                 zf.extractall(RUNTIME)   # 解出 RUNTIME/platform-tools/
-        adb = PLATFORM_TOOLS / "adb"
+        adb = PLATFORM_TOOLS / ("adb.exe" if os.name == "nt" else "adb")
         if adb.is_file():
             adb.chmod(0o755)
             _ok(f"adb 安装完成: {adb}")
@@ -312,7 +316,7 @@ def setup_ios_wda(node_bin: str, appium_bin: str, team_id: str | None,
         env = _node_env(node_bin)
         env["APPIUM_HOME"] = str(APPIUM_HOME)
         _say("  预构建 WebDriverAgent（首次较慢）…")
-        r = _run([appium_bin, "driver", "run", "xcuitest", "build-wda",
+        r = _run([*([node_bin] if appium_bin.endswith(".js") else []), appium_bin, "driver", "run", "xcuitest", "build-wda",
                   "--udid", device], env=env, timeout=1200)
         if r.returncode == 0:
             _ok("WebDriverAgent 预构建完成")
@@ -344,7 +348,7 @@ def sandbox_paths() -> dict:
         out["node_bin"] = nb
     if APPIUM_HOME.is_dir():
         out["appium_home"] = str(APPIUM_HOME)
-    adb = PLATFORM_TOOLS / "adb"
+    adb = PLATFORM_TOOLS / ("adb.exe" if os.name == "nt" else "adb")
     if adb.is_file():
         out["platform_tools"] = str(PLATFORM_TOOLS)
     return out

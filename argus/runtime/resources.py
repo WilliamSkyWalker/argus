@@ -69,11 +69,17 @@ class VisualResource:
         if self.platform is not None:
             return self.platform
         kind = self.spec["kind"]
-        if kind in {"android", "ios", "browser"}:
+        if kind in {"mac", "windows"} and "session" in self.spec:
+            from ..platforms import device_session
+            state = device_session.load_state(self.spec["session"])
+            if not state or state.get("kind") != "desktop" or state.get("os") != kind or state.get("disconnected"):
+                raise PreconditionError("Desktop session missing, disconnected or platform mismatch")
+            self.platform = device_session.attach_desktop(state)
+        elif kind in {"android", "ios", "browser"}:
             from ..platforms import device_session
             state = device_session.load_state(self.spec["session"])
             actual = "browser" if state and state.get("kind") == "browser" else (state or {}).get("os")
-            if actual != kind:
+            if actual != kind or state.get("disconnected"):
                 raise PreconditionError("session missing or platform mismatch; start the named device session first")
             if kind == "browser":
                 self.platform = device_session.attach_browser(

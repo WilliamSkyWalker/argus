@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import time
+import tempfile
 import urllib.request
 from urllib.parse import urlparse
 
@@ -30,7 +31,7 @@ from ..logger import get_logger
 log = get_logger("appium.server")
 
 _READY_TIMEOUT = 60         # 等 server /status 就绪的秒数
-_SPAWN_LOG = "/tmp/argus-appium-server.log"
+_SPAWN_LOG = os.path.join(tempfile.gettempdir(), "argus-appium-server.log")
 
 
 def _parse_node_version(path: str) -> tuple:
@@ -79,7 +80,9 @@ def _default_android_home() -> str | None:
     ):
         if cand and os.path.isdir(cand):
             return cand
-    return None
+    from ..mobile import sdk_root
+    root = sdk_root()
+    return str(root) if root.is_dir() else None
 
 
 class AppiumServerManager:
@@ -122,7 +125,8 @@ class AppiumServerManager:
         port = str(parsed.port or 4723)
         host = parsed.hostname or "127.0.0.1"
 
-        env = os.environ.copy()
+        from ..mobile import environment
+        env = environment()
         # 关键：把 appium 所在 node 的 bin 放 PATH 最前，令 shebang 命中对的 node
         node_bin_dir = os.path.dirname(appium_bin)
         env["PATH"] = node_bin_dir + os.pathsep + env.get("PATH", "")
@@ -148,9 +152,9 @@ class AppiumServerManager:
                  appium_bin, node_bin_dir, android_home or "<none>")
         logf = open(self._cfg.get("log_path", _SPAWN_LOG), "ab")
         self._proc = subprocess.Popen(
-            [appium_bin, "--address", host, "--port", port, "--log-level", "info:info"],
+            [*([sb.get("node_bin") or "node"] if appium_bin.endswith(".js") else []), appium_bin, "--address", host, "--port", port, "--log-level", "info:info"],
             stdout=logf, stderr=logf, env=env,
-            start_new_session=True,   # 脱离 argus 进程组，避免信号误杀/被杀
+            start_new_session=os.name != "nt",   # 脱离 argus 进程组，避免信号误杀/被杀
         )
         self._owned = True
 
