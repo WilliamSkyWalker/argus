@@ -109,6 +109,13 @@ class MobileTests(unittest.TestCase):
         self.assertEqual(result['device'],'emulator-5554')
         spawn.assert_not_called()
 
+    def test_boot_waits_for_new_adb_server_to_discover_existing_emulator(self):
+        rows=[{'id':'emulator-5554','type':'emulator','connectable':True}]
+        with patch.object(mobile,'android_devices',side_effect=[[],rows]), patch.object(mobile,'run',side_effect=['Argus','Argus\nOK','1','Argus\nOK']), patch.object(mobile.time,'sleep'), patch.object(mobile.subprocess,'Popen') as spawn:
+            result=mobile.boot_device('android','Argus')
+        self.assertEqual(result['device'],'emulator-5554')
+        spawn.assert_not_called()
+
     def test_boot_rejects_wrong_port_owner(self):
         rows=[{'id':'emulator-5554','type':'emulator','connectable':True}]
         with patch.object(mobile,'android_devices',return_value=rows), patch.object(mobile,'run',side_effect=['Argus','Argus\nOK','1','Other\nOK']):

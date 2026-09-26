@@ -74,7 +74,7 @@ Argus = 视觉驱动 AI QA agent，替代人工测试。喂 `.feature`(Gherkin) 
 
 ## 对其他 agent 开放：CLI 是通用接口
 **任何能跑 shell 的 agent 都用 `argus` CLI 驱动**（不限 Claude Code）。两类能力：
-- **编排**：`argus run/list/status/report`；`list`/`devices` 带 `--json`、`run --report` 出 JSON，供机读。
+- **编排**：`argus run/list/status/report`；`list` 带 `--json`，`device list` 默认 JSON、`run --report` 出 JSON，供机读。
 - **设备驱动**：`argus device <start|screenshot|tap|swipe|input|type-send|key|launch|stop>`，每条输出 JSON。跨进程复用同一常驻 Appium session（`platforms/device_session.py` 按 session_id 重连；server 由 AppiumServerManager 常驻），故 turn-by-turn 驱动不必每次重建 session。全程 Appium 原语，**不碰 adb**。
 
 ## MCP（`argus/mcp/`，给 MCP-native agent 的可选适配器）
@@ -119,7 +119,7 @@ argus run <target> --shard 0/3           # 手动分片
 argus run <target> --bg ; argus status [run_id]            # 后台+查
 argus run "打开X验证Y" --platform ios    # inline
 argus new <t> --platform android --package com.example.app # 脚手架
-argus list --json / devices --json / setup                 # 发现(机读)
+argus list --json / argus device list / argus device install --platform ios --boot                 # 发现(机读)
 # 设备驱动原语(任何 agent 可调，输出 JSON，跨进程复用 session：Appium 移动端 / Selenium 浏览器)
 argus device start --serial s1                              # 建/复用 session
 argus device screenshot --serial s1 --out shot.png         # → {path,screen_size,scale}
@@ -167,11 +167,11 @@ BROWSER_HEADLESS / VIEWPORT_* / SELENIUM_GRID_URL ; FIGMA_TOKEN ; SKILLS_ENABLED
 
 ## Existing browser extension backend
 
-`extensions/argus-browser/` + `argus/browser_bridge.py` + `platforms/browser_extension.py`：Native Messaging + 私有共享目录 IPC，Windows host 可与 WSL Argus 通信，不监听网络端口。默认当前浏览器配置文件内所有 HTTP(S) 标签页（含新弹窗），操作目标仍显式选择；browser session UUID + tab ID 防重启误选；不提取 DOM。Runtime browser resource 必须写 `backend: extension`；先 install/bind，见 `docs/browser-extension.md`。仅能声称已执行的平台测试，Windows/WSL 桥接、导航和截图已实机验证。测试：`tests/extension_demo`，可选 `ARGUS_TEST_CHROME`。
+`extensions/argus-browser/` + `argus/browser_bridge.py` + `platforms/browser_extension.py`：Native Messaging + 私有共享目录 IPC，Windows host 可与 WSL Argus 通信，不监听网络端口。默认当前浏览器配置文件内所有 HTTP(S) 标签页（含新弹窗），操作目标仍显式选择；browser session UUID + tab ID 防重启误选；不提取 DOM。Runtime browser resource 必须写 `backend: extension`；先安装桥，再用 `device connect` 连接，见 `docs/browser-extension.md`。仅能声称已执行的平台测试，Windows/WSL 桥接、导航和截图已实机验证。测试：`tests/extension_demo`，可选 `ARGUS_TEST_CHROME`。
 
 ## Mobile discovery and simulator provisioning
 
-`argus/mobile.py` provides `mobile devices/connect/install/boot`. Discovery covers
+`argus/mobile.py` implements mobile adapters behind `device list/connect/install/boot`. Discovery covers
 adb devices, devicectl physical iOS devices and simctl simulators. Explicit IDs
 and persistent session aliases are separate. Local iOS requires full Xcode on
 macOS; remote devices use an explicit Appium URL and ID. Installer never force
@@ -179,6 +179,21 @@ overwrites AVDs; driver installation failures must propagate. SDK licensing is
 interactive unless `--accept-licenses` is explicitly supplied. adb is used only
 for discovery/lifecycle here, not visual control. Tests: `tests/mobile_demo`;
 see `docs/mobile.md` for platform requirements and actual validation coverage.
+
+`mobile_host.py` selects install/boot hosts and performs a read-only preflight.
+WSL without usable KVM defaults to Windows; `--host local/windows` overrides it.
+`--dry-run` must not install anything. Android SDK consent precedes downloads;
+noninteractive installs require `--accept-licenses`. Only stdlib worker files are
+copied to Windows, never project configuration or credentials. Windows Appium is
+loopback-only; `mobile_relay.py` routes WSL HTTP via the Windows worker's stdio,
+with tokenized local URLs and no automatic replay on ambiguous transport failure.
+Do not silently enable Windows features or reboot. Installer verification uses a
+real screenshot after connecting; mocked host tests are not emulator validation.
+Windows tools must use `toolchain.background_options()`; private Appium Node
+processes preload `windows_no_console.cjs` so adb/logcat never open consoles.
+Use a private Windows adb port, propagated via Appium's `adbPort`, to avoid WSL
+forwarding port 5037. WSL-to-Windows API 35 installation, screenshot, Settings
+launch, tap and text input have been exercised; iOS remains mock-tested only.
 
 ## Unified control
 

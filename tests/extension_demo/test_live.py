@@ -105,8 +105,8 @@ class ExtensionLive(unittest.TestCase):
                 platform.select_page(pid)
                 # Real CLI reconnect and durable Runtime handoff use the same adapter.
                 env_cli = {**os.environ, "ARGUS_HOME_DIR":str(root/"argus-home")}
-                bound = subprocess.run([sys.executable,"-m","argus.browser_bridge","bind",
-                    "--directory",str(root/"bridge"),"--serial","daily-web"],
+                bound = subprocess.run([sys.executable,"-m","argus.cli","device","connect","--platform","browser","--backend","extension",
+                    "--bridge-directory",str(root/"bridge"),"--serial","daily-web"],
                     env=env_cli,capture_output=True,text=True,timeout=10)
                 self.assertEqual(bound.returncode,0,bound.stderr)
                 out = subprocess.run([sys.executable,"-m","argus.cli","device","pages",

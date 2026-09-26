@@ -221,8 +221,8 @@ argus status <run_id>                     # inspect one run
 
 # Project management
 argus list                                # list targets
-argus devices                             # list iOS simulators
-argus setup                               # create & boot a simulator
+argus device list --platform ios                             # list iOS simulators
+argus device install --platform ios --boot                               # create & boot a simulator
 
 # Figma
 argus figma gen-tests <figma-url> -o tests.feature
@@ -543,7 +543,7 @@ argus run my-app --report                     # 自动 HTML 报告
 argus run my-app --device s1 s2 s3 --apk app.apk --report
 argus run my-app --bg                         # 后台跑
 argus status [<run_id>]                         # 看后台任务
-argus list / argus devices / argus setup        # 列 target / 列模拟器 / 建并启动模拟器
+argus list / argus device list --platform ios / argus device install --platform ios --boot        # 列 target / 列模拟器 / 建并启动模拟器
 argus figma gen-tests <url> -o tests.feature         # 从 Figma 生成用例
 argus probes list                               # 列非视觉断言插件（埋点等）
 argus probes check <name> check=<意图> --wait    # 单发调试一个插件（不起设备）
@@ -605,10 +605,12 @@ The optional [browser extension backend](docs/browser-extension.md) connects Arg
 
 ### Phones and simulators
 
-Use `argus mobile devices` to discover Android devices and iOS devices/simulators,
-then `argus mobile connect --platform android --device DEVICE_ID --session phone`.
-`argus mobile install --platform android --boot --connect` provisions an Android
+Use `argus device list` to discover Android devices and iOS devices/simulators,
+then `argus device connect --platform android --device DEVICE_ID --session phone`.
+`argus device install --platform android --host auto --boot --connect` provisions an Android
 emulator and automation tools; `--platform ios` requires a Mac with full Xcode.
+In WSL without KVM, Android setup runs on the Windows host automatically. Use
+`--dry-run` to inspect prerequisites before downloads; SDK license consent is required.
 See [mobile setup](docs/mobile.md) for licenses, host prerequisites and remote
 Windows/Mac Appium connections from WSL.
 

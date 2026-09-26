@@ -15,7 +15,6 @@ from pathlib import Path
 from .agent import Agent
 from .config import init_config, load_config, PROJECT_ROOT
 from .logger import get_logger, set_level
-from .simulator import boot, create_device, list_devices
 
 log = get_logger("cli")
 
@@ -250,8 +249,6 @@ def main():
 
     from .runtime.cli import register as register_workflow
     register_workflow(sub)
-    from .mobile import register as register_mobile
-    register_mobile(sub)
 
     # argus init
     sub.add_parser("init", help="Create default .env config file")
@@ -267,15 +264,6 @@ def main():
                        help="Site URL for browser targets (written into README)")
     new_p.add_argument("--force", action="store_true",
                        help="Overwrite if tests/<name>/ already exists")
-
-    # argus devices
-    devices_p = sub.add_parser("devices", help="List available simulators")
-    devices_p.add_argument("--json", action="store_true", help="Emit JSON to stdout (machine-readable)")
-
-    # argus setup
-    setup_p = sub.add_parser("setup", help="Create and boot a simulator")
-    setup_p.add_argument("--name", default=None)
-    setup_p.add_argument("--type", default=None, dest="device_type")
 
     # argus run <test case file or inline text>
     run_p = sub.add_parser("run", help="Run test case(s)")
@@ -337,7 +325,7 @@ def main():
     # argus device <...> — 通用设备驱动原语（常驻 Appium session + 跨进程重连）
     # 任何能跑 shell 的 agent 都能调；每条命令默认输出 JSON 到 stdout。
     dev_p = sub.add_parser("device",
-                           help="Drive a device via persistent Appium session (agent-callable; JSON out)")
+                           help="Control mobile, desktop and browser sessions (JSON output)")
     dev_sub = dev_p.add_subparsers(dest="device_command")
     from .control import register as register_control
     register_control(dev_sub)
@@ -450,21 +438,11 @@ def main():
     if args.command == "workflow":
         from .runtime.cli import dispatch
         dispatch(args)
-    elif args.command == "mobile":
-        from .mobile import dispatch
-        dispatch(args)
     elif args.command == "init":
         init_config()
     elif args.command == "new":
         cmd_new(args.name, args.platform, package=args.package, url=args.url,
                 force=args.force)
-    elif args.command == "devices":
-        cmd_devices(getattr(args, "json", False))
-    elif args.command == "setup":
-        cfg = load_config()["simulator"]
-        name = args.name or cfg["device_name"]
-        device_type = args.device_type or cfg["device_type"]
-        cmd_setup(name, device_type)
     elif args.command == "mcp":
         from . import toolchain
         if args.mcp_command == "init":
@@ -1073,19 +1051,6 @@ def cmd_list_targets(as_json: bool = False):
         print(f"  {r['target']:<18s} {r['cases']:<8d} {r['reports']:<8d} {r['desc']}")
 
 
-def cmd_devices(as_json: bool = False):
-    devices = list_devices()
-    if as_json:
-        print(json.dumps([{"name": d.name, "state": d.state, "udid": d.udid}
-                          for d in devices], ensure_ascii=False))
-        return
-    if not devices:
-        print("No simulators found. Run: argus setup")
-        return
-    for d in devices:
-        print(f"  {d.name:25s} {d.state:10s} {d.udid}")
-
-
 def cmd_device(args):
     """通用设备驱动 CLI —— 走常驻 Appium session（跨进程按 session_id 重连），
     每条命令输出 JSON 到 stdout，供任何能跑 shell 的 agent 机读驱动设备。"""
@@ -1205,24 +1170,6 @@ def cmd_device(args):
         elif plat is not None and getattr(plat, "platform_name", "") in {"mac", "windows"}:
             plat.teardown()
 
-
-
-def cmd_setup(name: str, device_type: str):
-    for d in list_devices():
-        if d.name == name:
-            print(f"Device '{name}' already exists (udid={d.udid})")
-            if d.state == "Shutdown":
-                print("Booting...")
-                boot(d.udid)
-                print("Done. Simulator is running.")
-            return
-
-    print(f"Creating '{name}' ({device_type})...")
-    udid = create_device(name=name, device_type=device_type)
-    print(f"Created: {udid}")
-    print("Booting...")
-    boot(udid)
-    print("Done. Simulator is running.")
 
 
 def _read_target_url(target_dir: Path) -> str | None:

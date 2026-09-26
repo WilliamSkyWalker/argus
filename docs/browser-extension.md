@@ -66,18 +66,18 @@ library; Windows does not need the rest of Argus or Playwright installed.
 From the environment where Argus runs:
 
 ```bash
-python3 -m argus.browser_bridge bind \
-  --directory "$HOME/.argus/browser-bridge" --serial daily-web
+python3 -m argus.cli device connect --platform browser --backend extension \
+  --bridge-directory "$HOME/.argus/browser-bridge" --serial daily-web
 python3 -m argus.cli device pages --serial daily-web
 python3 -m argus.cli device select-page PAGE_ID --serial daily-web
 python3 -m argus.cli device screenshot --serial daily-web --out /tmp/page.png
 python3 -m argus.cli device navigate https://www.baidu.com --serial daily-web
 ```
 
-For WSL, use the **Windows directory's WSL path** in `bind`, for example
+For WSL, use the **Windows directory's WSL path** in `device connect --bridge-directory`, for example
 `/mnt/c/Users/YOUR_USER/AppData/Local/Argus/browser-bridge`. Installing the host
-inside WSL alone does not register it with Windows Chrome. A new bind refuses to
-overwrite an existing device session. Subsequent device commands reconnect
+inside WSL alone does not register it with Windows Chrome. Connecting refuses to
+overwrite a session belonging to another platform or bridge. Subsequent device commands reconnect
 through the saved directory. No Playwright package is required for this backend.
 
 The first connection auto-selects only when exactly one website tab is available. Otherwise

@@ -58,12 +58,18 @@ def _step(n: int, total: int, msg: str) -> None:
     print(f"\n\033[1m[{n}/{total}] {msg}\033[0m", flush=True)
 
 
+def background_options() -> dict:
+    """Keep Windows console helpers invisible; never hide a GUI application."""
+    return {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
+
 def _run(cmd: list[str], env: dict | None = None, cwd: str | None = None,
          timeout: int = 900) -> subprocess.CompletedProcess:
     """跑子命令，实时不重要——拿结果即可。失败抛异常带 stderr 便于诊断。"""
     log.debug("run: %s", " ".join(cmd))
     return subprocess.run(cmd, env=env, cwd=cwd, timeout=timeout,
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          **background_options())
 
 
 # ── 平台/架构 ────────────────────────────────────────────────
@@ -126,8 +132,8 @@ def detect_system_node() -> str | None:
 def _latest_lts_version(sysname: str, arch: str) -> str:
     """从 nodejs.org 拉最新 LTS 版本号；失败用兜底。"""
     try:
-        with urllib.request.urlopen("https://nodejs.org/dist/index.json", timeout=15) as r:
-            data = json.load(r)
+        from .mobile import fetch
+        data = json.loads(fetch("https://nodejs.org/dist/index.json", timeout=15))
         wanted = f"{sysname}-{arch}" + ("-zip" if sysname == "win" else "")
         lts = [d for d in data if d.get("lts") and wanted in d.get("files", [])]
         if lts:
@@ -154,8 +160,9 @@ def install_sandbox_node() -> str:
     NODE_DIR.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as td:
         tgz = Path(td) / "node.tar.gz"
-        urllib.request.urlretrieve(url, tgz)
-        from .mobile import unpack
+        from .mobile import download, unpack, fetch
+        checksums = dict((line.split()[1], line.split()[0]) for line in fetch(f"https://nodejs.org/dist/{ver}/SHASUMS256.txt").decode().splitlines() if line.strip())
+        download(url, tgz, checksums[f"{name}.{extension}"])
         unpack(tgz, td)
         src = Path(td) / name
         # 解压结果搬进 NODE_DIR（扁平化：NODE_DIR/bin/node）
@@ -208,6 +215,12 @@ def install_appium(node_bin: str) -> str:
     if not pkg.exists():
         pkg.write_text('{"name":"argus-runtime","private":true}\n')
     env = _node_env(node_bin)
+    existing = _appium_local_bin()
+    if existing.is_file():
+        version = _run([*([node_bin] if existing.suffix == ".js" else []), str(existing), "--version"], env=env)
+        if version.returncode == 0 and version.stdout.strip().startswith("3."):
+            _ok(f"复用 Appium: {existing}")
+            return str(existing)
     npm = os.path.join(os.path.dirname(node_bin), "npm")
     _say(f"  npm install {_APPIUM_SPEC}（本地，沙盒内，不动全局）…")
     npm_cmd = [node_bin, str(Path(node_bin).parent / "node_modules/npm/bin/npm-cli.js")] if os.name == "nt" else [npm]

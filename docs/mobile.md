@@ -1,6 +1,6 @@
 # Phones and mobile simulators
 
-`argus mobile` discovers local devices, connects them through the existing Appium
+`argus device` discovers local devices, connects them through the existing Appium
 visual driver, and provisions Android/iOS simulators. It does not reset the phone
 or launch an app on connection. Screenshots, touch and typing remain Appium
 operations; adb/simctl are used here for discovery and simulator lifecycle only.
@@ -8,12 +8,12 @@ operations; adb/simctl are used here for discovery and simulator lifecycle only.
 ## Discover and connect
 
 ```bash
-python3 -m argus.cli mobile devices
-python3 -m argus.cli mobile devices --platform android
-python3 -m argus.cli mobile devices --platform ios
+python3 -m argus.cli device list
+python3 -m argus.cli device list --platform android
+python3 -m argus.cli device list --platform ios
 
-python3 -m argus.cli mobile connect --platform android --device DEVICE_ID --session phone
-python3 -m argus.cli mobile connect --platform ios --device DEVICE_UDID --session iphone
+python3 -m argus.cli device connect --platform android --device DEVICE_ID --session phone
+python3 -m argus.cli device connect --platform ios --device DEVICE_UDID --session iphone
 python3 -m argus.cli device screenshot --serial phone --out phone.png
 ```
 
@@ -48,17 +48,28 @@ is not a complete Android SDK installation.
 ## One-command Android setup
 
 ```bash
-python3 -m argus.cli mobile install --platform android --name Argus --boot --connect
+python3 -m argus.cli device install --platform android --host auto --dry-run
+python3 -m argus.cli device install --platform android --host auto --name Argus --boot --connect --session phone
 ```
 
 This prepares Java (reusing Java 17+ or downloading a private Temurin JDK 21),
 Android command-line tools, platform-tools, SDK platform/build-tools, emulator, an API 35 Google APIs system
 image, an AVD, and isolated Node/Appium/UiAutomator2. It then boots the AVD, waits
-for Android boot completion and opens an Appium session. Download size is several
+for Android boot completion, opens an Appium session, and saves a verification
+screenshot under the caller's Argus runtime directory. Download size is several
 GB; SDK/package failures return an error instead of reporting success.
 
-SDK licenses are presented interactively. For unattended use after reviewing the
-[Android SDK terms](https://developer.android.com/studio#downloads), explicitly
+The plan shows the host, paths, components, available disk space and acceleration
+blockers before installation. `--dry-run` only inspects; it does not download or
+install anything. Provisioning requires at least 12 GiB free space. Installed
+components and matching AVDs are reused; failed downloads can be retried by
+rerunning the command. Partial SDK downloads are managed by Google's SDK manager.
+Download counters and periodic SDK installation messages go to stderr; stdout
+contains the final JSON result. Archives downloaded directly by Argus are
+SHA-256 checked (Node uses its official checksum manifest).
+
+SDK license acceptance is requested interactively before downloads. For unattended
+use after reviewing the [Android SDK terms](https://developer.android.com/studio/terms), explicitly
 pass `--accept-licenses`. Use `--api 36` to request another published API image (installer: API 30+).
 Use `--headless` to omit the simulator window. Omit `--boot --connect` to install
 without starting a device; `--connect` alone implies boot.
@@ -80,7 +91,7 @@ host. See [Android acceleration requirements](https://developer.android.com/stud
 On a Mac with full Xcode installed and selected:
 
 ```bash
-python3 -m argus.cli mobile install --platform ios --name Argus --boot --connect
+python3 -m argus.cli device install --platform ios --name Argus --boot --connect
 ```
 
 This runs Xcode first-launch setup, downloads an iOS runtime with
@@ -98,8 +109,9 @@ See [Apple's component installation guide](https://developer.apple.com/documenta
 ## Boot an existing simulator
 
 ```bash
-python3 -m argus.cli mobile boot --platform android Argus
-python3 -m argus.cli mobile boot --platform ios SIMULATOR_UDID
+python3 -m argus.cli device boot --platform android Argus
+python3 -m argus.cli device boot --platform android --host windows Argus --connect --session phone
+python3 -m argus.cli device boot --platform ios SIMULATOR_UDID
 ```
 
 Android reuses the exact running AVD by name; iOS reuses an already booted
@@ -109,18 +121,48 @@ the emulator available for inspection, with Android startup logs in
 
 ## Windows, WSL and remote hosts
 
-For Windows USB devices or the Windows Android Emulator, run discovery/install
-and Appium natively on Windows. WSL discovery sees only devices exposed to its
-own adb server (for example USB devices explicitly forwarded to WSL). Installing
-inside WSL does not install an emulator on the Windows host. WSL acceleration
-may be unavailable; a native Windows emulator avoids that dependency.
+`install/boot --host auto` selects Windows when running in WSL without usable
+`/dev/kvm`; otherwise it uses the current OS. `--host windows` explicitly selects
+the Windows host from WSL, and `--host local` disables that fallback. This is local
+WSL interop, not an installer for arbitrary remote machines. Windows host support
+currently requires x64 Windows, WSL interop and PowerShell.
+
+The Windows worker installs a private embedded Python and automation tools under
+`%LOCALAPPDATA%\Argus\mobile`. It reuses a Windows SDK from `ANDROID_HOME`,
+`ANDROID_SDK_ROOT` or the standard Android SDK location, if available. Otherwise
+the SDK is installed under that private directory. It never modifies the global
+PATH. Only the stdlib worker source files are copied; project configs and secrets
+are not copied to Windows.
+
+Windows Hypervisor Platform must be enabled and the hypervisor running. The
+preflight reports missing acceleration before downloading; enabling Windows
+features, BIOS virtualization or rebooting remains a user action.
+
+With `--connect`, Windows Appium listens only on Windows loopback. A tokenized
+WSL loopback relay forwards requests through Windows Python stdio; no firewall
+rule or mirrored-networking setting is needed. Failed requests are not replayed.
+The worker uses a persistent private Windows adb port and supplies it to Appium,
+avoiding WSL's forwarding of the default adb port without stopping other adb servers.
+Background Windows tools use hidden consoles. Argus's private Appium process also
+preloads a small Node helper to hide adb/logcat child consoles; the emulator GUI
+remains visible. Emulator metrics and crash-report prompts are disabled for this
+automated launch; startup errors remain in the emulator log.
+Use the resulting `--session` with screenshot/tap/input/open commands as usual.
+Appium and the relay persist for later CLI commands. `device disconnect` ends the
+Appium session but leaves the emulator and host services running. After a reboot,
+run `device boot ... --connect` to establish a new session; use a fresh session
+alias if the old one belongs to a previous server endpoint.
+
+`device list` still discovers devices through the caller's local adb server;
+Windows-hosted sessions appear under `device sessions`. Windows USB discovery
+from WSL requires a separately configured adb/USB connection.
 
 Argus in WSL/Linux can connect to devices managed by a Mac or Windows Appium host:
 
 ```bash
-python3 -m argus.cli mobile connect --platform ios --device DEVICE_UDID \
+python3 -m argus.cli device connect --platform ios --device DEVICE_UDID \
   --server-url http://mac-host.example:4723 --session iphone
-python3 -m argus.cli mobile connect --platform android --device DEVICE_ID \
+python3 -m argus.cli device connect --platform android --device DEVICE_ID \
   --server-url http://windows-host.example:4723 --session phone
 ```
 
@@ -143,7 +185,11 @@ python3 -m unittest discover -s tests/mobile_demo -v
 ```
 
 Tests use fake command responses and Appium adapters to verify discovery,
-selection, identity/signing propagation, installation sequencing, reuse and
-failure handling. Local WSL discovery was exercised, but no device was visible.
-Full emulator downloads/boots, Windows SDK execution and Mac/iPhone operations
-have not been verified on real hardware in this development session.
+selection, host routing, license refusal, preflight blockers, installation
+sequencing, session identity, screenshot verification and transport failure handling.
+The WSL-to-Windows path has been exercised end to end: SDK/tool installation,
+API 35 emulator boot, Appium connection, screenshot, opening Android Settings,
+coordinate tapping and entering a search query. A 21-call Windows helper check
+and a separate 45-second window observation found no visible helper consoles
+after the console fix. Mac/iPhone operations remain unverified on real hardware;
+mocked tests are not hardware validation.

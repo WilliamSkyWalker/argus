@@ -126,6 +126,8 @@ class AppiumPlatform(Platform):
         else:
             opts = UiAutomator2Options()
             opts.automation_name = "UiAutomator2"
+            if cfg.get("adb_port") is not None:
+                opts.set_capability("adbPort", int(cfg["adb_port"]))
             if device:
                 opts.udid = device
             pkg = cfg.get("package") or config.get("android", {}).get("package")

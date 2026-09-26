@@ -215,14 +215,12 @@ def install(directory, extension_id, browser):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    for command in ("host", "install", "bind"):
+    for command in ("host", "install"):
         p = sub.add_parser(command)
         p.add_argument("--directory", required=True)
         if command == "install":
             p.add_argument("--extension-id", required=True)
             p.add_argument("--browser", choices=["chrome", "edge"], default="chrome")
-        if command == "bind":
-            p.add_argument("--serial", required=True)
     args, extra = parser.parse_known_args()  # Chrome appends the extension origin to host argv.
     if extra and args.command != "host":
         parser.error("unexpected arguments: " + " ".join(extra))
@@ -234,16 +232,6 @@ def main():
         serve(args.directory)
     elif args.command == "install":
         print(json.dumps(install(args.directory, args.extension_id, args.browser)))
-    else:
-        from argus.platforms import device_session as ds
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", args.serial):
-            raise ValueError("invalid session serial")
-        pages = Client(args.directory).call("pages")
-        if ds.load_state(args.serial):
-            raise ValueError("session already exists; use a new serial")
-        ds.save_state(args.serial, {"kind": "browser", "browser_backend": "extension",
-                                   "bridge_directory": str(Path(args.directory).expanduser().resolve())})
-        print(json.dumps({"serial": args.serial, "pages": pages}))
 
 
 if __name__ == "__main__":

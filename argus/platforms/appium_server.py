@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import time
 import tempfile
+from pathlib import Path
 import urllib.request
 from urllib.parse import urlparse
 
@@ -151,10 +152,15 @@ class AppiumServerManager:
         log.info("启动 Appium server: %s (node bin=%s, ANDROID_HOME=%s)",
                  appium_bin, node_bin_dir, android_home or "<none>")
         logf = open(self._cfg.get("log_path", _SPAWN_LOG), "ab")
+        from ..toolchain import background_options
+        node_prefix = [sb.get("node_bin") or "node"] if appium_bin.endswith(".js") else []
+        if os.name == "nt" and node_prefix:
+            node_prefix += ["--require", str(Path(__file__).resolve().parent.parent / "windows_no_console.cjs")]
         self._proc = subprocess.Popen(
-            [*([sb.get("node_bin") or "node"] if appium_bin.endswith(".js") else []), appium_bin, "--address", host, "--port", port, "--log-level", "info:info"],
+            [*node_prefix, appium_bin, "--address", host, "--port", port, "--log-level", "info:info"],
             stdout=logf, stderr=logf, env=env,
             start_new_session=os.name != "nt",   # 脱离 argus 进程组，避免信号误杀/被杀
+            **background_options(),
         )
         self._owned = True
 

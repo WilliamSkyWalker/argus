@@ -167,7 +167,6 @@ def dispatch(args):
     command=args.device_command
     try:
         if command in {"install","boot"}:
-            args.mobile_command=command
             mobile.dispatch(args)
             return
         if command=="list": result=discover(args.platform)

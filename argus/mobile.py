@@ -15,6 +15,7 @@ import sys
 import tarfile
 import tempfile
 import time
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -58,15 +59,40 @@ def command(args):
     if os.name == "nt" and args[0].lower().endswith((".bat", ".cmd")):
         if any(any(c in a for c in '%!"\r\n') for a in args):
             raise ValueError("Unsupported characters in Windows SDK command arguments")
-        return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c",
-                '"' + " ".join('"' + a + '"' for a in args) + '"']
+        # Pass a raw Windows command line: list2cmdline would backslash-escape
+        # the /c payload's quotes, which cmd.exe does not interpret as escapes.
+        prefix = subprocess.list2cmdline([os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c"])
+        return prefix + ' "' + " ".join('"' + a + '"' for a in args) + '"'
     return args
 
 
-def run(args, *, timeout=30, input=None):
-    result = subprocess.run(command(args), capture_output=True, text=True,
-                            encoding="utf-8", errors="replace", env=environment(),
-                            timeout=timeout, input=input)
+def run(args, *, timeout=30, input=None, progress=False):
+    if progress:
+        process = subprocess.Popen(command(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   stdin=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+                                   env=environment(), **toolchain.background_options())
+        started = time.monotonic()
+        try:
+            while True:
+                remaining = timeout - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(args, timeout)
+                try:
+                    stdout, stderr = process.communicate(input=input, timeout=min(15, remaining))
+                    result = subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+                    break
+                except subprocess.TimeoutExpired:
+                    input = None  # communicate continues buffering; never send input twice.
+                    print(f"Waiting for {Path(str(args[0])).name} ({int(time.monotonic()-started)}s)",
+                          file=sys.stderr, flush=True)
+        except BaseException:
+            process.kill()
+            process.communicate()
+            raise
+    else:
+        result = subprocess.run(command(args), capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", env=environment(),
+                                timeout=timeout, input=input, **toolchain.background_options())
     if result.returncode:
         raise RuntimeError(f"{Path(str(args[0])).name} failed ({result.returncode}): " +
                            (result.stderr or result.stdout)[-3000:])
@@ -158,7 +184,7 @@ def discover(which="all"):
     return {"devices":devices,"android_avds":avds,"diagnostics":diagnostics}
 
 
-def connect(which, device=None, session=None, server_url=None, team_id=None):
+def connect(which, device=None, session=None, server_url=None, team_id=None, adb_port=None):
     from .platforms import device_session as ds
     if not server_url:
         if which == "ios":
@@ -174,6 +200,8 @@ def connect(which, device=None, session=None, server_url=None, team_id=None):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", serial):
         raise ValueError("Use --session with a safe session name")
     cfg = {"device":device, "os":which}
+    if adb_port is not None:
+        cfg["adb_port"] = adb_port
     if server_url:
         cfg.update(server_url=server_url,auto_start=False)
     if team_id or os.environ.get("IOS_TEAM_ID"):
@@ -198,10 +226,39 @@ CMD_TOOLS = {
     "mac-arm64":("mac_arm64", "835b62a26162b229b441d1f6d4680383815a270809eb33522c0d480fa5002c4e")}
 
 
+def fetch(url, timeout=30):
+    """Small vendor metadata, with the same proxy fallback as archive downloads."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        curl = shutil.which("curl.exe" if os.name == "nt" else "curl")
+        if exc.code != 403 or not curl:
+            raise
+        return subprocess.run([curl, "--fail", "--silent", "--show-error", "--location",
+                               "--max-time", str(timeout), url], check=True,
+                              stdout=subprocess.PIPE, **toolchain.background_options()).stdout
+
+
 def download(url, target, sha256):
     print(f"Downloading {url}",file=sys.stderr,flush=True)
-    with urllib.request.urlopen(url,timeout=60) as response, open(target,"wb") as out:
-        shutil.copyfileobj(response,out)
+    try:
+        with urllib.request.urlopen(url,timeout=60) as response, open(target,"wb") as out:
+            downloaded = 0
+            last = time.monotonic()
+            while chunk := response.read(1024 * 1024):
+                out.write(chunk)
+                downloaded += len(chunk)
+                if time.monotonic() - last >= 5:
+                    print(f"  {downloaded // (1024 * 1024)} MiB downloaded", file=sys.stderr, flush=True)
+                    last = time.monotonic()
+    except urllib.error.HTTPError as exc:
+        # Some corporate proxies reject urllib but support the system curl client.
+        curl = shutil.which("curl.exe" if os.name == "nt" else "curl")
+        if exc.code != 403 or not curl:
+            raise
+        subprocess.run([curl, "--fail", "--location", "--max-time", "600", "--output", str(target), url], check=True,
+                       **toolchain.background_options())
     with open(target,"rb") as stream:
         digest=hashlib.file_digest(stream,"sha256").hexdigest()
     if digest != sha256:
@@ -229,15 +286,15 @@ def ensure_java():
     env=environment()
     java=shutil.which(executable("java"),path=env["PATH"])
     if java:
-        version=subprocess.run([java,"-version"],capture_output=True,text=True,timeout=10)
+        version=subprocess.run([java,"-version"],capture_output=True,text=True,timeout=10,
+                               **toolchain.background_options())
         match=re.search(r'version "(\d+)',version.stderr+version.stdout)
         if version.returncode==0 and match and int(match[1])>=17:
             return
     host={"Darwin":"mac","Linux":"linux","Windows":"windows"}[platform.system()]
     arch="aarch64" if platform.machine().lower() in {"arm64","aarch64"} else "x64"
     url=f"https://api.adoptium.net/v3/assets/latest/21/hotspot?architecture={arch}&image_type=jdk&os={host}"
-    with urllib.request.urlopen(url,timeout=30) as r:
-        package=json.load(r)[0]["binary"]["package"]
+    package=json.loads(fetch(url))[0]["binary"]["package"]
     with tempfile.TemporaryDirectory() as tmp:
         archive=Path(tmp)/"jdk.archive"
         download(package["link"],archive,package["checksum"])
@@ -254,7 +311,7 @@ def ensure_java():
 def sdk_tool(name):
     binary=sdk_root()/"cmdline-tools/latest/bin"/(name+(".bat" if os.name == "nt" else ""))
     if not binary.is_file():
-        raise RuntimeError("SDK command-line tools missing; run mobile install --platform android")
+        raise RuntimeError("SDK command-line tools missing; run argus device install --platform android")
     return str(binary)
 
 
@@ -291,7 +348,7 @@ def install_android(name, api=35, accept_licenses=False):
     abi="arm64-v8a" if arm else "x86_64"
     image=f"system-images;android-{api};google_apis;{abi}"
     print("Installing emulator and system image (may take several minutes)",file=sys.stderr,flush=True)
-    run([sdk_tool("sdkmanager"),f"--sdk_root={root}","platform-tools","emulator",f"platforms;android-{api}","build-tools;35.0.0",image],timeout=3600,input="y\n"*200 if accept_licenses else "n\n")
+    run([sdk_tool("sdkmanager"),f"--sdk_root={root}","platform-tools","emulator",f"platforms;android-{api}","build-tools;35.0.0",image],timeout=3600,input="y\n"*200 if accept_licenses else "n\n",progress=True)
     existing=run([root/"emulator"/executable("emulator"),"-list-avds"]).splitlines()
     if name in existing:
         avd_home=Path(os.environ.get("ANDROID_AVD_HOME", str(Path(os.environ.get("ANDROID_USER_HOME",Path.home()/".android"))/"avd")))
@@ -326,7 +383,7 @@ def install_ios(name):
     runtime=max(candidates,key=lambda r:tuple(int(x) for x in r["version"].split(".")))
     matches=[d for d in ios_simulators() if d["name"] == name and d["runtime"] == runtime["identifier"]]
     if len(matches)>1:
-        raise RuntimeError("Multiple matching simulators; choose an existing UDID with mobile boot")
+        raise RuntimeError("Multiple matching simulators; choose an existing UDID with argus device boot")
     if matches:
         udid=matches[0]["id"]
     else:
@@ -356,15 +413,22 @@ def boot_device(which, device, timeout=240, headless=False):
     safe_name(device)
     emulator=sdk_root()/"emulator"/executable("emulator")
     if device not in run([emulator,"-list-avds"]).splitlines():
-        raise ValueError("AVD missing; run mobile install first")
+        raise ValueError("AVD missing; run argus device install first")
     # Reuse the exact running AVD, never another emulator.
     serial=None
-    for row in android_devices():
-        if row["type"]=="emulator" and row["connectable"]:
-            avd=run([adb(),"-s",row["id"],"emu","avd","name"]).splitlines()[0]
-            if avd == device:
-                serial=row["id"]
-                break
+    # A newly started adb server needs a moment to discover existing emulators.
+    # Do not race that discovery by launching the same AVD a second time.
+    for attempt in range(6):
+        for row in android_devices():
+            if row["type"]=="emulator" and row["connectable"]:
+                avd=run([adb(),"-s",row["id"],"emu","avd","name"]).splitlines()[0]
+                if avd == device:
+                    serial=row["id"]
+                    break
+        if serial is not None:
+            break
+        if attempt < 5:
+            time.sleep(1)
     proc=None
     if serial is None:
         run([emulator,"-accel-check"])
@@ -376,11 +440,16 @@ def boot_device(which, device, timeout=240, headless=False):
         log=home()/f"emulator-{device}.log"
         log.parent.mkdir(parents=True,exist_ok=True)
         with log.open("ab") as stream:
-            proc=subprocess.Popen([str(emulator),"-avd",device,"-port",str(port),*( ["-no-window"] if headless else [])],
+            proc=subprocess.Popen([str(emulator),"-avd",device,"-port",str(port),
+                "-no-metrics","-crash-report-mode","disabled",*( ["-no-window"] if headless else [])],
                 env=environment(),stdout=stream,stderr=stream,stdin=subprocess.DEVNULL,
                 start_new_session=os.name!="nt")
     deadline=time.monotonic()+timeout
+    last_progress=deadline-timeout
     while time.monotonic()<deadline:
+        if time.monotonic()-last_progress >= 15:
+            print(f"Waiting for Android boot completion: {serial}",file=sys.stderr,flush=True)
+            last_progress=time.monotonic()
         if proc and proc.poll() is not None:
             raise RuntimeError("Emulator exited; inspect " + str(log))
         try:
@@ -395,24 +464,13 @@ def boot_device(which, device, timeout=240, headless=False):
     raise RuntimeError(f"Boot timed out for {serial}; emulator left running for inspection")
 
 
-def register(sub):
-    parser=sub.add_parser("mobile",help="Discover/connect phones and provision simulators")
-    commands=parser.add_subparsers(dest="mobile_command",required=True)
-    p=commands.add_parser("devices")
-    p.add_argument("--platform",choices=["all","android","ios"],default="all")
-    p=commands.add_parser("connect")
-    p.add_argument("--platform",choices=["android","ios"],required=True)
-    p.add_argument("--device")
-    p.add_argument("--session")
-    p.add_argument("--server-url")
-    p.add_argument("--team-id")
-    register_install_boot(commands)
-
-
 def register_install_boot(commands):
     p=commands.add_parser("install")
     p.add_argument("--platform",choices=["android","ios"],required=True)
     p.add_argument("--name",default="Argus")
+    p.add_argument("--host",choices=["auto","local","windows"],default="auto")
+    p.add_argument("--dry-run",action="store_true",help="Inspect the host and installation plan without installing")
+    p.add_argument("--session",help="Session alias when using --connect")
     p.add_argument("--api",type=int,default=35)
     p.add_argument("--accept-licenses",action="store_true")
     p.add_argument("--boot",action="store_true")
@@ -421,31 +479,32 @@ def register_install_boot(commands):
     p=commands.add_parser("boot")
     p.add_argument("--platform",choices=["android","ios"],required=True)
     p.add_argument("device",help="Android AVD name or iOS simulator name/UDID")
+    p.add_argument("--host",choices=["auto","local","windows"],default="auto")
+    p.add_argument("--connect",action="store_true")
+    p.add_argument("--session",help="Session alias when using --connect")
     p.add_argument("--headless",action="store_true")
     p.add_argument("--timeout",type=int,default=240)
 
 
+def provision(args):
+    """Native-host install after preflight and license confirmation."""
+    result=install_android(args.name,args.api,True) if args.platform=="android" else install_ios(args.name)
+    with contextlib.redirect_stdout(sys.stderr):
+        node=toolchain.ensure_node()
+        appium=toolchain.install_appium(node)
+        toolchain.install_drivers(node,appium,ios=args.platform=="ios")
+    if args.boot or args.connect:
+        result["boot"]=boot_device(args.platform,result.get("device",args.name),headless=args.headless)
+        if args.connect:
+            result["connection"]=connect(args.platform,result["boot"]["device"],args.session)
+    return result
+
+
 def dispatch(args):
+    from .mobile_host import execute
     try:
-        kind=args.mobile_command
-        if kind == "devices": result=discover(args.platform)
-        elif kind == "connect":
-            result=connect(args.platform,args.device,args.session,args.server_url,args.team_id)
-        elif kind == "boot":
-            result=boot_device(args.platform,args.device,args.timeout,args.headless)
-        else:
-            result=install_android(args.name,args.api,args.accept_licenses) if args.platform=="android" else install_ios(args.name)
-            # Existing isolated toolchain installer supplies Appium and its drivers.
-            with contextlib.redirect_stdout(sys.stderr):
-                node=toolchain.ensure_node()
-                appium=toolchain.install_appium(node)
-                toolchain.install_drivers(node,appium,ios=args.platform=="ios")
-            if args.boot or args.connect:
-                booted=boot_device(args.platform,result.get("device",args.name),headless=args.headless)
-                result["boot"]=booted
-                if args.connect:
-                    result["connection"]=connect(args.platform,booted["device"])
-        print(json.dumps(result,ensure_ascii=False))
-    except (OSError,ValueError,RuntimeError,subprocess.SubprocessError) as exc:
+        print(json.dumps(execute(args),ensure_ascii=False))
+    except Exception as exc:
+        # CLI boundary also normalizes Appium/Selenium connection failures.
         print(json.dumps({"error":str(exc)},ensure_ascii=False))
         raise SystemExit(2) from exc

@@ -1,5 +1,10 @@
 from argparse import Namespace
+import contextlib
+import io
+import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -16,6 +21,30 @@ def args(**kwargs):
 
 
 class ControlTests(unittest.TestCase):
+    def test_removed_entry_points_are_rejected(self):
+        for module, command in [('argus.cli', 'mobile'), ('argus.cli', 'devices'),
+                                ('argus.cli', 'setup'), ('argus.browser_bridge', 'bind')]:
+            with self.subTest(command=command):
+                result = subprocess.run([sys.executable, '-m', module, command],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('invalid choice', result.stderr)
+
+    def test_unified_cli_routes_mobile_discovery_and_boot(self):
+        from argus.cli import main
+        for command, method, response in [
+            (['list', '--platform', 'android'], 'discover', {'devices': []}),
+            (['boot', '--platform', 'android', '--host', 'local', 'Example'], 'boot_device', {'state': 'ready'}),
+        ]:
+            with self.subTest(command=command), patch.object(control.mobile, method, return_value=response) as call:
+                output = io.StringIO()
+                with patch.object(sys, 'argv', ['argus', 'device', *command]), contextlib.redirect_stdout(output):
+                    main()
+                call.assert_called_once()
+                data = json.loads(output.getvalue())
+                for key, value in response.items():
+                    self.assertEqual(data[key], value)
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

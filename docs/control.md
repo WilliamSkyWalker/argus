@@ -2,7 +2,11 @@
 
 Use `argus device` for mobile, desktop and browser control. Each connected target
 has a named session; shared actions use `--session` (`--serial` remains an alias).
-Legacy `mobile`, `browser_bridge bind`, and `device start` commands remain usable.
+Standalone `argus mobile`, `argus devices`, `argus setup`, and
+`argus.browser_bridge bind` have been removed. Use `device list`, `device connect`,
+`device install`, and `device boot` instead. `device list` always emits JSON.
+`device start/stop` remain within this unified command group. The browser bridge's
+`install/host` commands remain for native-host registration and Chrome startup.
 
 ```bash
 python3 -m argus.cli device list
@@ -31,6 +35,7 @@ python3 -m argus.cli device open https://example.com --session web
 
 # Simulator provisioning uses the same entry point
 python3 -m argus.cli device install --platform android --boot --connect
+python3 -m argus.cli device install --platform android --host auto --dry-run
 python3 -m argus.cli device install --platform ios --boot --connect
 python3 -m argus.cli device boot --platform android Argus
 
@@ -47,6 +52,10 @@ python3 -m argus.cli device disconnect --session web
 browser bindings; it does not attach to every browser or take screenshots.
 `sessions` lists saved configuration, not a live health check. Diagnostics for an
 unavailable platform do not hide results from another platform.
+
+`install/boot --host auto` can provision Android on the Windows host when WSL has
+no usable KVM. `--host local` opts out; `--host windows` selects it explicitly.
+See [host installation](mobile.md) for SDK consent, progress and prerequisites.
 
 `disconnect` marks the session unavailable until an explicit `connect`. It ends
 an Appium session, but does not close the phone, simulator, desktop application
