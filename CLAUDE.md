@@ -210,6 +210,10 @@ it is not cross-process cancellation or global extension revocation. Tests:
 See `docs/architecture.md`. QA engine modules live under `argus/qa/`, image
 processing under `argus/vision/`, device lifecycle/toolchain/Windows workers under
 `argus/devices/`, and Figma/browser bridge integrations under `argus/integrations/`.
+CLI command families live under `argus/commands/`; `cli.py` only registers and
+dispatches. Shared case discovery, device preparation and scheduling live in
+`qa/cases.py`, `qa/device_setup.py` and `qa/execution.py`. MCP imports these
+owning modules directly, without old CLI helper aliases.
 Use these paths in imports. Root CLI/config/logger and browser bridge command
 compatibility entry points remain. Windows worker bundles preserve the nested
 package structure; `tests/mobile_demo/test_bundle.py` verifies isolated imports.

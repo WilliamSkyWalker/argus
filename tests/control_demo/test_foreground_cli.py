@@ -19,7 +19,7 @@ class ForegroundCLITests(unittest.TestCase):
         with patch.object(sys, 'argv', ['argus', 'device', *command]), \
              patch.object(ds, 'load_state', return_value=state), \
              patch.object(ds, 'attach_desktop', return_value=controller) as attach, \
-             patch('argus.cli.time.sleep'), contextlib.redirect_stdout(output):
+             patch('argus.commands.device.time.sleep'), contextlib.redirect_stdout(output):
             try:
                 main()
             except SystemExit:

@@ -7,7 +7,8 @@ initializers do not eagerly import engines or optional host dependencies.
 
 | Package | Responsibility |
 | --- | --- |
-| `qa/` | Gherkin parsing, scenario planning, visual decision loop, verdict validation, failure analysis and reports |
+| `commands/` | Command registration, argument handling and CLI output, grouped by command family |
+| `qa/` | Case discovery, device preparation, sequential/concurrent scheduling, Gherkin parsing, scenario planning, visual decision loop, verdict validation, failure analysis and reports |
 | `vision/` | Image grids, element grounding and stable-frame sampling |
 | `devices/` | Unified device management, discovery, emulator/toolchain provisioning and Windows mobile worker/relay |
 | `platforms/` | Device action and screenshot adapters: Appium, browsers, desktop and experimental RDP; persistent session attachment |
@@ -20,10 +21,10 @@ initializers do not eagerly import engines or optional host dependencies.
 
 ## Execution paths
 
-- QA: `cli` → `qa.gherkin` → `qa.planner` → `qa.agent`/`qa.brain` → `platforms`.
+- QA: `cli` → `commands.run` → `qa.cases`/`qa.execution` → `qa.gherkin` → `qa.planner` → `qa.agent`/`qa.brain` → `platforms`.
   The loop uses `vision`, screenshot `skills` and optional `probes`; `qa.report`
   renders results and `qa.healer` analyzes failures.
-- Device control: `cli` → `devices.control` → `platforms.device_session` → native
+- Device control: `cli` → `commands.device` → `devices.control` → `platforms.device_session` → native
   adapter. `devices.mobile` owns discovery and provisioning, with `mobile_host`
   choosing local or Windows execution.
 - Workflow: `runtime.engine` → `runtime.resources` → platform adapters or SQLite.
@@ -55,7 +56,21 @@ from the repository root. Keep these paths in sync when changing package layout.
 
 ## Regression checks
 
-Run unittest discovery for `tests/control_demo`, `tests/mobile_demo`,
+Run unittest discovery for `tests/cli_demo`, `tests/control_demo`, `tests/mobile_demo`,
 `tests/runtime_demo`, `tests/browser_demo` and `tests/extension_demo`.
 Real browser tests require `ARGUS_TEST_CHROME`; mocked tests do not establish
 real desktop or mobile device compatibility.
+
+## CLI responsibilities
+
+`cli.py` only builds the parser and dispatches commands. Each module in
+`commands/` owns registration and execution for one family: devices, QA runs,
+background runs/status, targets, probes, Figma and toolchain setup. Workflow
+registration stays in `runtime/cli.py`. Building help does not import the QA agent.
+
+Shared case discovery and filtering live in `qa/cases.py`; device readiness,
+APK installation and Android reset live in `qa/device_setup.py`.
+`qa/execution.py` owns sequential, Grid and multi-device scheduling. These paths
+share skip decisions, empty result construction and browser/Android preparation.
+MCP imports the owning modules directly; old private helpers in `argus.cli` have
+no compatibility aliases. Update callers when moving these internal interfaces.

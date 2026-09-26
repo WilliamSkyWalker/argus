@@ -133,7 +133,7 @@ class ControlTests(unittest.TestCase):
         controller.teardown.assert_not_called()
 
     def test_cli_releases_selenium_service_after_failed_action(self):
-        from argus.cli import cmd_device
+        from argus.commands.device import cmd_device
         ds.save_state('test', {'kind': 'browser'})
         controller = Mock(spec=['platform_name', '_driver', 'press_key'])
         controller.platform_name = 'browser'
@@ -145,12 +145,12 @@ class ControlTests(unittest.TestCase):
         controller._driver.quit.assert_not_called()
 
     def test_inline_auto_report_does_not_write_sentinel_filename(self):
-        from argus import cli
+        from argus.commands import run as cli
         with patch.object(cli, 'load_config', return_value={'llm': {'api_key': 'placeholder'}}), \
                 patch.object(cli, '_resolve_test_target', return_value=(['example'], None)), \
                 patch.object(cli, '_load_preconditions', return_value=''), \
                 patch.object(cli, '_load_accounts', return_value=[]), \
-                patch.object(cli, '_run_sequential', return_value=[]), \
+                patch('argus.qa.execution._run_sequential', return_value=[]), \
                 patch.object(cli, '_probes_mode', return_value=''), \
                 patch.dict(cli.os.environ, {'ARGUS_SHARD': ''}), \
                 patch('argus.qa.report.save_html') as html, \

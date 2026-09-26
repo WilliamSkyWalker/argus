@@ -14,7 +14,7 @@ MCP-aware 客户端不用每次 spawn ``python3 -m argus.cli`` 就能：
 
 stdio 注意事项:
 - FastMCP 用 stdout 跑 JSON-RPC，任何 print() 都会污染 protocol stream。
-- argus.logger 已经走 stderr 没问题；cli.py 里面 _launch_background /
+- argus.logger 已经走 stderr 没问题；commands.background 的 _launch_background 和 qa.device_setup 的
   _install_apk_on_devices / _ensure_devices_connected 有 print，本模块通过
   ``_silenced_stdout`` 把它们的 stdout 重定向到 stderr（客户端 debug log 可见）。
 """
@@ -41,16 +41,10 @@ try:                                          # mcp >= 2.0
 except ImportError:                           # mcp 1.x
     from mcp.server.fastmcp import FastMCP as _MCPServerClass
 
-from ..cli import (
-    RUNS_DIR,
-    TESTS_DIR,
-    _check_run_status,
-    _ensure_devices_connected,
-    _install_apk_on_devices,
-    _launch_background,
-    _resolve_report_path,
-    _resolve_test_target,
-)
+from argus.commands.background import RUNS_DIR, _check_run_status, _launch_background, _resolve_report_path
+from argus.qa.cases import TESTS_DIR, _resolve_test_target
+from argus.qa.device_setup import _ensure_devices_connected, _install_apk_on_devices
+
 from argus.qa.gherkin import parse_feature_file
 from argus.devices.simulator import boot, create_device, list_devices as _list_ios_devices
 
@@ -61,7 +55,7 @@ mcp = _MCPServerClass("argus")
 def _silenced_stdout():
     """Redirect stdout → stderr for the duration of the block.
 
-    Used to wrap helpers in cli.py that print human-readable progress —
+    Used to wrap command helpers that print human-readable progress —
     we keep the messages visible in MCP client debug logs (which surface
     stderr) without corrupting the stdio JSON-RPC channel.
     """
