@@ -58,7 +58,8 @@ class AgentServiceTests(unittest.TestCase):
         patcher.start(); self.addCleanup(patcher.stop)
         self.device = Device()
         for session in ('phone', 'mail', 'admin'):
-            ds.save_state(session, {'kind': 'browser', 'browser_backend':'playwright'})
+            ds.save_state(session, {'kind': 'browser', 'browser_backend':'extension',
+                                    'bridge_directory':str(self.root / ('bridge-' + session))})
         patcher = patch.object(ds, 'attach_browser', return_value=self.device)
         self.attach = patcher.start(); self.addCleanup(patcher.stop)
 
@@ -73,6 +74,48 @@ class AgentServiceTests(unittest.TestCase):
         self.assertTrue(result['ok'])
         self.assertEqual(self.device.calls, [('tap',20,30), ('tap',40,50)])
         self.assertEqual([c.args[0] for c in self.attach.call_args_list], ['mail','mail'])
+
+    def test_mcp_rejects_playwright_before_connect_or_dispatch(self):
+        from argus.mcp import server
+        ds.save_state('pw', {'kind':'browser', 'browser_backend':'playwright'})
+        with patch('argus.devices.service.execute') as execute, patch('argus.devices.control.connect') as connect:
+            results = [server.device_tap(1, 2, 'pw'),
+                       server.device_command('start', 'new', {'os':'browser', 'backend':'playwright'}),
+                       server.device_connect('browser', 'new', {'backend':'playwright'}),
+                       server.device_connect('browser', 'pw'),
+                       server.device_resume('pw', 'returned')]
+            for result in results:
+                self.assertFalse(result['ok'], result)
+                self.assertEqual(result['error_type'], 'UnsupportedBackendError')
+            execute.assert_not_called()
+            connect.assert_not_called()
+        content = server.device_observe('pw')
+        self.assertEqual([item.type for item in content], ['text'])
+        listing = server.device_sessions()
+        self.assertNotIn('pw', [row['session'] for row in listing['sessions']])
+        self.assertEqual(listing['unavailable_sessions'][0]['session'], 'pw')
+        self.assertTrue(service.execute('tap', 'pw', x=1, y=2)['ok'])
+
+    def test_mcp_defaults_new_browser_to_extension(self):
+        from argus.mcp import server
+        with patch('argus.devices.control.connect', return_value={'ok':True}) as connect:
+            server.device_connect('browser', 'new', {'bridge_directory':'/tmp/bridge'})
+            self.assertEqual(connect.call_args.args[0].backend, 'extension')
+
+    def test_mcp_blocks_playwright_task_recovery_but_allows_audit_and_cancel(self):
+        from argus.mcp import server
+        ds.save_state('pw', {'kind':'browser', 'browser_backend':'playwright'})
+        store = Store(self.root / 'policy-runtime')
+        with patch('argus.runtime.interactive.default_store', return_value=store):
+            rejected = server.agent_task('create', options={'bindings':{'web':'pw'}})
+            self.assertEqual(rejected['error_type'], 'UnsupportedBackendError')
+            runtime = InteractiveRuntime(store)
+            task = runtime.create_task({'web':'pw'})
+            ds.clear_state('pw')  # Stored workflow backend still prevents a bypass.
+            rejected = server.agent_task('recover', task['id'])
+            self.assertEqual(rejected['error_type'], 'UnsupportedBackendError')
+            self.assertEqual(server.agent_task('status', task['id'])['id'], task['id'])
+            self.assertEqual(server.agent_task('cancel', task['id'], {'note':'End test'})['status'], 'cancelled')
 
     def test_percent_image_crop_mapping_and_stale_target(self):
         shot = service.execute('screenshot', 'mail', crop=[20,10,80,60])

@@ -182,10 +182,11 @@ def attach(serial: str | None, quiet: bool = False) -> "object | None":
         # 探活：读一下 window size，失败说明 session 已过期
         drv.get_window_size()
         return _platform_from_driver(drv, state.get("os", "android"), state)
+    except ImportError as e:
+        raise RuntimeError('Mobile Python dependencies are missing; install the mobile extra') from e
     except Exception as e:
         if not quiet:
             log.warning("重连 session 失败（可能已过期，重新 start）: %s", e)
-        clear_state(serial)
         return None
 
 

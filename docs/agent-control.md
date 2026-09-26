@@ -1,8 +1,16 @@
 # External agent operation
 
-Argus provides the same persistent sessions to CLI and MCP. The device profile needs no model API key. New input commands do not implicitly create Android sessions if a binding is missing or expired.
+Argus shares persistent sessions between CLI and MCP for supported backends. Playwright is CLI-only: MCP rejects Playwright connections, observations, actions and task execution, and lists these bindings under `unavailable_sessions`. MCP browser connections default to the extension backend. The device profile needs no model API key. New input commands do not implicitly create Android sessions if a binding is missing or expired.
 
 ## Install in a project
+
+For external Claude Code/Codex operation, prefer the managed plugin installer:
+
+```bash
+python3 scripts/install_agent_plugin.py --client both
+```
+
+It installs the runtime, native plugins, shared skill and MCP configuration together. Restart the client and describe the UI task; no manual skill-loading prompt or MCP path configuration is needed. See [plugin installation](../plugins/argus-device/README.md) for prerequisites, platform extras and validation limits. The commands below are the lower-level Python-package installation route.
 
 Build/install this checkout with Python 3.10+:
 
@@ -21,7 +29,7 @@ An MCP client can start `argus-mcp --profile device` using the environment's exe
 ## Sessions and observations
 
 ```bash
-argus device connect --platform browser --backend playwright --session mail
+argus device connect --platform browser --backend extension --bridge-directory /path/to/bridge --session mail
 argus device connect --platform android --device DEVICE_ID --session phone
 argus device connect --platform windows --app 'Test Admin' --session admin
 argus device capabilities --session mail
@@ -77,7 +85,7 @@ All device operations write local JSONL facts under `$ARGUS_HOME_DIR/operations`
 |---|---|
 | CLI/MCP session sharing, mapping, handoff, uncertain dispatch | Offline contract tests |
 | Cross-resource task recovery and request deduplication | Offline tests with simulated devices |
-| Browser / Playwright | Local Chromium: CLI/MCP interoperation, two-page task, subprocess recovery and handoff verified |
+| Browser / Playwright | CLI/Runtime only; MCP rejects this backend. Local Chromium two-page task, subprocess recovery and handoff tested |
 | Installed wheel outside checkout | Clean Python 3.12 virtual environment without system site packages; `browser,mcp` extras, CLI/doctor/MCP startup and live Chromium integration passed; no Appium, Selenium or OpenAI installed |
 | Android / iOS physical devices | Existing adapters; new complete task path requires device validation |
 | Windows via WSL PowerShell runner | Isolated live background fixture: input, reconnect, window ID/process/bounds rejection; foreground, cursor and clipboard preserved. Foreground integration not run |

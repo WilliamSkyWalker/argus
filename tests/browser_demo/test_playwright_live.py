@@ -122,17 +122,18 @@ finally: p.disconnect()
                     out = subprocess.run(command + ["pages", "--serial", "web"], env=env,
                                          capture_output=True, text=True, check=True, timeout=30)
                     self.assertEqual(len(json.loads(out.stdout)["pages"]), 2)
-                    # Shared service: CLI input and MCP observation target the same saved page.
+                    # Playwright remains a CLI backend; MCP must reject it explicitly.
                     from argus.mcp import server as mcp_server
                     from argus.runtime.interactive import InteractiveRuntime
                     out = subprocess.run(command + ["tap", "30", "25", "--session", "web"], env=env,
                                          capture_output=True, text=True, check=True, timeout=30)
                     self.assertTrue(json.loads(out.stdout)["dispatched"])
                     result = mcp_server.device_input(" through MCP", serial="web")
-                    self.assertTrue(result["ok"], result)
+                    self.assertFalse(result["ok"], result)
+                    self.assertEqual(result["error_type"], "UnsupportedBackendError")
                     observed = mcp_server.device_screenshot(serial="web")
-                    self.assertEqual(observed["page_id"], original)
-                    self.assertEqual([c.type for c in mcp_server.device_observe("web")], ["text", "image"])
+                    self.assertFalse(observed["ok"])
+                    self.assertEqual([c.type for c in mcp_server.device_observe("web")], ["text"])
 
                     # Two resources share one live browser but retain distinct selected pages.
                     device_session.save_state("mail", {"kind":"browser", "browser_backend":"playwright",

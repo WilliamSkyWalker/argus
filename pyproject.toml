@@ -28,4 +28,4 @@ argus-mcp = "argus.mcp.server:main"
 include = ["argus*"]
 
 [tool.setuptools.package-data]
-argus = ["platforms/*.ps1", "skills/**/*.md", "skills/**/*.json", "skills/**/*.txt"]
+argus = ["platforms/*.ps1", "devices/*.cjs", "skills/**/*.md", "skills/**/*.json", "skills/**/*.txt"]

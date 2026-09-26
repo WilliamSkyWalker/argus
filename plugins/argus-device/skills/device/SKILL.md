@@ -5,6 +5,10 @@ description: Operate connected phones, browser pages and desktop windows through
 
 # Visual operation with Argus
 
+When this plugin is installed, use its MCP tools directly; do not ask the user to configure MCP paths or read this skill manually. Start by discovering sessions and observing the relevant target. If no suitable session exists, connect it explicitly using the user's target; ask only for missing target information. The managed installer supplies the Python runtime. Device provisioning, application login and OS permissions may still require setup or human handoff.
+
+Playwright is not supported in MCP mode. Use the browser extension backend for browser tasks; do not switch to CLI Playwright as a fallback. `device_sessions` separates CLI-only Playwright bindings into `unavailable_sessions`; these are not connected MCP targets. Reconnect the extension and explicitly select a live page when its saved page ID expires.
+
 Use the same named session in CLI and MCP. `serial` in legacy tools is a session alias, not necessarily a hardware serial. Discover saved bindings with `device_sessions` or `argus device sessions`; connect explicitly with `device_connect` or `argus device connect`. Never replace an expired session implicitly.
 
 Query `device_command(command="capabilities", session=...)` or `argus device capabilities --session ...` before relying on an optional action. Capabilities describe the backend; they do not prove the current application accepted input.

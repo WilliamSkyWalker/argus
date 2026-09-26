@@ -161,6 +161,25 @@ def ios_physical():
 
 def discover(which="all"):
     devices, diagnostics = [], []
+    local_online = False
+    wsl_android = (which in {"all", "android"} and platform.system() == 'Linux'
+                   and 'microsoft' in platform.release().lower())
+    if wsl_android:
+        try:
+            local_online = any(row['connectable'] for row in android_devices())
+        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
+            pass
+    if wsl_android and not local_online:
+        from . import mobile_host
+        try:
+            worker = mobile_host.prepare_windows(mobile_host.windows_info())
+            result = mobile_host.call_windows(worker, 'discover')
+            result['host'] = 'windows'
+            if which == 'all':
+                result['diagnostics'].append({'source':'ios', 'message':'Local iOS discovery requires macOS/Xcode'})
+            return result
+        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            diagnostics.append({'source':'windows_android', 'message':str(exc)})
     sources = []
     if which in {"all", "android"}:
         sources.append(("android", android_devices))
@@ -194,6 +213,10 @@ def connect(which, device=None, session=None, server_url=None, team_id=None, adb
         if len(choices) != 1:
             raise RuntimeError("Select exactly one online device with --device; boot a simulator or authorize/unlock the phone first. Discovery: " + json.dumps(result))
         device = choices[0]["id"]
+        if which == 'android' and result.get('host') == 'windows':
+            from . import mobile_host
+            worker = mobile_host.prepare_windows(mobile_host.windows_info())
+            return mobile_host.connect_windows(worker, device, session or device)
     elif not device:
         raise ValueError("--device is required with a remote Appium server")
     serial = session or device

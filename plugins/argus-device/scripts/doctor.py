@@ -231,6 +231,11 @@ def check_runner(root: Path | None) -> None:
 # ── main ──────────────────────────────────────────────────────────
 
 def main() -> int:
+    managed = Path(__file__).resolve().parents[1] / 'managed_runtime.json'
+    if managed.is_file():
+        python = json.loads(managed.read_text())['python']
+        if os.path.abspath(sys.executable) != os.path.abspath(python):
+            os.execv(python, [python, '-I', str(Path(__file__).resolve()), *sys.argv[1:]])
     ap = argparse.ArgumentParser(prog="argus-doctor")
     ap.add_argument("--profile", choices=("device", "full"), default="device",
                     help="device = device driving only; full = also check .env / tests/")

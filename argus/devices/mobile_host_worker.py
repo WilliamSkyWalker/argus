@@ -137,6 +137,8 @@ def execute(payload):
         return request_appium(payload["port"], payload["base_path"], payload["method"],
                               payload["path"], payload.get("body"))
     configure_adb(payload["home"])
+    if operation == 'discover':
+        return mobile.discover('android')
     if operation == "server":
         return ensure_server()
     if operation == "boot":

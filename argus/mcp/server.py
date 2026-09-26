@@ -565,39 +565,16 @@ async def cancel_run(run_id: str) -> dict:
 
 @mcp.tool()
 def list_devices() -> dict:
-    """列所有可用设备：iOS simulator (xcrun simctl) + Android (adb devices -l)."""
-    ios_out: list[dict] = []
-    try:
-        for d in _list_ios_devices():
-            ios_out.append({"name": d.name, "udid": d.udid, "state": d.state})
-    except Exception as e:
-        ios_out = [{"error": str(e)}]
+    """Discover mobile devices on the current host, including Windows Android from WSL.
+    iOS discovery is only performed on macOS; platform diagnostics are returned separately.
+    """
+    from argus.devices.mobile import discover
+    with _silenced_stdout():
+        result = discover()
+    return {**result,
+            "android_devices": [dict(row, serial=row["id"]) for row in result["devices"] if row.get("platform") == "android"],
+            "ios_simulators": [dict(row, udid=row["id"]) for row in result["devices"] if row.get("platform") == "ios" and row.get("type") == "simulator"]}
 
-    android_out: list[dict] = []
-    adb = shutil.which("adb") or os.path.expanduser(
-        "~/Library/Android/sdk/platform-tools/adb"
-    )
-    try:
-        out = subprocess.run(
-            [adb, "devices", "-l"], capture_output=True, text=True, timeout=5,
-        ).stdout
-        for line in out.splitlines()[1:]:
-            line = line.strip()
-            if not line:
-                continue
-            parts = line.split()
-            if len(parts) >= 2:
-                android_out.append({
-                    "serial": parts[0],
-                    "state": parts[1],
-                    "info": " ".join(parts[2:]),
-                })
-    except FileNotFoundError:
-        android_out = [{"error": "adb not found on PATH"}]
-    except Exception as e:
-        android_out = [{"error": str(e)}]
-
-    return {"ios_simulators": ios_out, "android_devices": android_out}
 
 
 @mcp.tool()
@@ -693,6 +670,15 @@ def setup_simulator(name: str | None = None,
 
 def _device(command, serial=None, **options):
     from argus.devices.service import execute
+    from .backend_policy import check, UnsupportedBackendError
+    try:
+        check(serial, options.get('backend'))
+    except UnsupportedBackendError as exc:
+        return {"ok": False, "error": str(exc), "error_type": type(exc).__name__,
+                "session": serial, "outcome": "not_dispatched"}
+    if command == 'start' and options.get('os') == 'browser' and not options.get('backend'):
+        from argus.platforms import device_session as ds
+        options['backend'] = (ds.load_state(serial) or {}).get('browser_backend', 'extension')
     with _silenced_stdout():
         return execute(command, serial, **options)
 
@@ -701,26 +687,40 @@ def _device(command, serial=None, **options):
 def device_sessions() -> dict:
     """List persisted mobile, browser and desktop sessions shared with CLI."""
     from argus.devices.control import sessions
-    return {"sessions": sessions()}
+    rows = sessions()
+    excluded = [dict(row, reason="Playwright is CLI-only; not supported through MCP")
+                for row in rows if row.get('backend') == 'playwright']
+    return {"sessions": [row for row in rows if row.get('backend') != 'playwright'],
+            "unavailable_sessions": excluded}
 
 
 @mcp.tool()
 def device_command(command: str, session: str, options: dict | None = None) -> dict:
     """Shared CLI commands: start, stop, pages, select-page, new-page, close-page,
     open, navigate, capabilities, wait. Use device_connect for a new binding.
+    Playwright is not supported through MCP; use a browser extension session.
     """
     return _device(command, session, **(options or {}))
 
 
 @mcp.tool()
 def device_connect(platform: str, session: str, options: dict | None = None) -> dict:
-    """Bind Android/iOS, browser, or a desktop window to a persistent named session."""
+    """Bind Android/iOS, browser, or a desktop window. Browsers default to extension;
+    Playwright is not supported through MCP. Extension needs bridge_directory.
+    """
     from argparse import Namespace
     from argus.devices.control import connect
     defaults = dict(device=None, server_url=None, team_id=None, app=None, backend=None,
                     bridge_directory=None, page_id=None)
     defaults.update(options or {})
     try:
+        if platform not in {'android', 'ios', 'browser', 'desktop', 'windows', 'mac'}:
+            raise ValueError('Unknown platform')
+        from .backend_policy import check
+        check(session, defaults.get('backend'))
+        if platform == 'browser' and not defaults.get('backend'):
+            from argus.platforms import device_session as ds
+            defaults['backend'] = (ds.load_state(session) or {}).get('browser_backend', 'extension')
         with _silenced_stdout():
             return connect(Namespace(platform=platform, session=session, **defaults))
     except Exception as exc:
@@ -809,6 +809,8 @@ def device_handoff(session: str, instructions: str, reason: str = "login") -> di
     from argparse import Namespace
     from argus.devices.control import handoff
     try:
+        from .backend_policy import check
+        check(session)
         return handoff(Namespace(session=session, instructions=instructions, reason=reason))
     except Exception as exc:
         return {"ok": False, "error": str(exc), "error_type": type(exc).__name__}
@@ -820,6 +822,8 @@ def device_resume(session: str, note: str) -> dict:
     from argparse import Namespace
     from argus.devices.control import resume
     try:
+        from .backend_policy import check
+        check(session)
         return resume(Namespace(session=session, note=note))
     except Exception as exc:
         return {"ok": False, "error": str(exc), "error_type": type(exc).__name__}
@@ -834,6 +838,8 @@ def agent_task(command: str, task_id: str | None = None, options: dict | None = 
     """
     from argus.runtime.interactive import call
     try:
+        from .backend_policy import check_task
+        check_task(command, task_id, options or {})
         with _silenced_stdout():
             result = call(command, task_id, **(options or {}))
         if command in {"observe", "submit", "resume", "recover"}:

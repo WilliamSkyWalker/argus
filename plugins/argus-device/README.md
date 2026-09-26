@@ -2,27 +2,35 @@
 
 Visual control for Android/iOS, browser pages and desktop windows. An external programming agent decides each step; Argus provides shared CLI/MCP sessions, observations, actions, human handoff and durable task records. No LLM API key or test suite is required.
 
-## Install
+## Install for Claude Code or Codex
 
-Install the plugin in Claude Code:
+From this checkout, run one installer in WSL/Linux or macOS (Python 3.10+ and the selected client CLI must already be available):
 
+```bash
+python3 scripts/install_agent_plugin.py --client both
+# Or --client claude / --client codex
 ```
+
+The installer creates an isolated Python environment, installs MCP dependencies, and registers a native `argus-device@argus-managed` plugin using each client's plugin CLI. The plugin includes the shared skill and an MCP server with an absolute interpreter path. It works from ordinary project directories without `ARGUS_HOME`, `PYTHONPATH`, manual MCP configuration, or a prompt asking the agent to read a file. Nothing is downloaded during MCP startup.
+
+Start a new client session after installation and say: **“Use Argus to inspect my connected devices, then help me operate a test application.”** The agent discovers sessions, connects the requested target and follows the bundled observation/action protocol. Client permission prompts still apply.
+
+MCP does not support Playwright. Browser tasks use the extension backend; saved Playwright sessions are listed separately as unavailable through MCP. Use `--install-browser` only to add Playwright/Chromium for separate CLI work, or `--mobile` to add mobile Python dependencies. Android/iOS toolchains, application login and OS input permissions remain platform setup requirements. Native Windows/macOS installation is not yet live-verified; WSL installation and both clients' plugin ingestion are tested. No model API key is required by Argus.
+
+The installer also runs as a standalone downloaded Python file: outside a checkout it downloads the repository's `main` archive without requiring Git. This is a source-channel installer, not a signed binary or a published package-index release. Its remote path becomes available only after this change is published.
+
+Managed files live under `~/.local/share/argus/agent-plugin`. Re-run the installer after updating the source to install a new runtime and refresh the plugin cache. Existing runtimes are retained for running clients; session/task data stays under `~/.argus`. `--prepare-only` prepares files without registering clients. `--root PATH` selects another managed installation directory.
+
+Do not enable an older `argus-device@argus-plugins` installation or a manually configured Argus MCP server alongside the managed plugin: use one integration per client to avoid duplicate tools. The installer does not remove unrelated or existing client configurations.
+
+The older Claude marketplace installation still exists for manually managed Python environments:
+
+```text
 /plugin marketplace add WilliamSkyWalker/argus
 /plugin install argus-device@argus-plugins
 ```
 
-Install Argus into the Python environment used by the plugin. For this source version:
-
-```bash
-pip install '/path/to/argus[browser,mcp]'
-python -m playwright install chromium
-```
-
-You can also install a built `argus_agent_control` wheel with the same extras. This source change does not publish a PyPI release. Only add `mobile` when using Android/iOS, `selenium` for that browser backend, and `mac` or `windows` for native desktop dependencies. WSL Windows control uses the bundled PowerShell runner.
-
-An installed package supplies `argus` and `argus-mcp`; `ARGUS_HOME` is unnecessary. A source checkout without installation can still use `ARGUS_HOME`. Keep the agent's working directory at the user's project.
-
-Mobile users additionally prepare the selected device toolchain with `argus device install --help`. Browser and desktop users do not need Appium. Run `/argus-device:doctor --session NAME` for an existing connection, or `--platform browser|android|ios|desktop` for dependency checks.
+That route alone does not provision Python dependencies. Prefer the managed installer for the complete setup.
 
 ## Operate
 

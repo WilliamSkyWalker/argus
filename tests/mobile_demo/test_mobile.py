@@ -12,6 +12,31 @@ from argus.platforms import device_session as ds
 
 
 class MobileTests(unittest.TestCase):
+    def test_wsl_discovery_uses_windows_host_when_linux_adb_missing(self):
+        from argus.devices import mobile_host
+        result = {'devices':[{'id':'emulator-5554','platform':'android','connectable':True}],
+                  'android_avds':['Argus'],'diagnostics':[]}
+        with patch.object(mobile.platform, 'system', return_value='Linux'), \
+             patch.object(mobile.platform, 'release', return_value='microsoft-WSL2'), \
+             patch.object(mobile, 'android_devices', return_value=[]), \
+             patch.object(mobile.toolchain, 'detect_adb', return_value=None), \
+             patch.object(mobile_host, 'windows_info', return_value={}), \
+             patch.object(mobile_host, 'prepare_windows', return_value={'python':'host-python'}), \
+             patch.object(mobile_host, 'call_windows', return_value=result) as call:
+            found = mobile.discover('android')
+        self.assertEqual(found['host'], 'windows')
+        self.assertEqual(found['devices'][0]['id'], 'emulator-5554')
+        self.assertEqual(call.call_args.args[1], 'discover')
+
+    def test_missing_mobile_dependency_keeps_named_binding(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(ds, 'STATE_DIR', Path(tmp)):
+            state = {'os':'android', 'server_url':'http://localhost:4723', 'session_id':'saved'}
+            ds.save_state('phone', state)
+            with patch.object(ds, '_attach_driver', side_effect=ImportError('appium')):
+                with self.assertRaisesRegex(RuntimeError, 'dependencies'):
+                    ds.attach('phone')
+            self.assertEqual(ds.load_state('phone'), state)
+
     def test_android_online_unauthorized_offline(self):
         raw='List of devices attached\nphone device product:test model:Example_Phone\nemulator-5554 device model:sdk\nlocked unauthorized\nlost offline\n'
         with patch.object(mobile,'run',return_value=raw):
