@@ -37,12 +37,12 @@ library; Windows does not need the rest of Argus or Playwright installed.
    Linux/macOS, from the repository:
 
    ```bash
-   python3 -m argus.browser_bridge install \
+   python3 -m argus.integrations.browser_bridge install \
      --extension-id YOUR_EXTENSION_ID \
      --directory "$HOME/.argus/browser-bridge"
    ```
 
-   Windows PowerShell, with a permanent copy of `argus/browser_bridge.py`:
+   Windows PowerShell, with a permanent copy of `argus/integrations/browser_bridge.py`:
 
    ```powershell
    py -3 C:\Argus\browser_bridge.py install `

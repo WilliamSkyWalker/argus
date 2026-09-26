@@ -8,9 +8,10 @@ import platform
 
 from PIL import Image
 
-from ..grid import draw_coordinate_grid, img_to_png_bytes
+from argus.vision.grid import draw_coordinate_grid, img_to_png_bytes
 from ..logger import get_logger
 from .base import Platform
+from .selenium_grid import cleanup_grid_sessions
 
 log = get_logger("browser")
 
@@ -70,7 +71,7 @@ class BrowserPlatform(Platform):
         if grid_url:
             # Clean up stale sessions unless caller already did it
             if not browser_cfg.get("_skip_grid_cleanup"):
-                self._cleanup_grid_sessions(grid_url)
+                cleanup_grid_sessions(grid_url)
             # Remote — Selenium Grid / Hub
             self._driver = self._create_remote_driver(webdriver, browser_type,
                                                        headless, grid_url)
@@ -104,30 +105,6 @@ class BrowserPlatform(Platform):
                 self._viewport_height = actual[1]
         except Exception as e:
             log.warning("无法检测实际视口: %s", e)
-
-    def _cleanup_grid_sessions(self, grid_url: str) -> None:
-        """Kill all existing sessions on the Grid before starting a new one."""
-        import json
-        import urllib.request
-        try:
-            status_url = grid_url.rstrip("/") + "/status"
-            with urllib.request.urlopen(status_url, timeout=5) as resp:
-                data = json.loads(resp.read())
-            nodes = data.get("value", {}).get("nodes", [])
-            for node in nodes:
-                for slot in node.get("slots", []):
-                    session = slot.get("session")
-                    if session:
-                        sid = session["sessionId"]
-                        log.info("清理残留 session: %s", sid)
-                        delete_url = grid_url.rstrip("/") + f"/session/{sid}"
-                        req = urllib.request.Request(delete_url, method="DELETE")
-                        try:
-                            urllib.request.urlopen(req, timeout=5)
-                        except Exception:
-                            pass
-        except Exception as e:
-            log.debug("Grid 清理跳过: %s", e)
 
     def _create_local_driver(self, webdriver, browser_type: str, headless: bool):
         """Create a local WebDriver instance."""
@@ -277,11 +254,7 @@ class BrowserPlatform(Platform):
         self._driver.forward()
 
     def hover(self, x: int, y: int) -> None:
-        from selenium.webdriver.common.action_chains import ActionChains
-        anchor = self._ensure_anchor()
-        ActionChains(self._driver) \
-            .move_to_element_with_offset(anchor, x, y) \
-            .perform()
+        self._move_to(x, y)
 
     def _handle_platform_action(self, action: dict) -> None:
         action_type = action["type"]

@@ -20,7 +20,7 @@ import subprocess
 import time
 
 from ..logger import get_logger
-from .base import Platform
+from .desktop import DesktopPlatform
 
 log = get_logger("desktop.win")
 
@@ -45,16 +45,8 @@ _PROMPT_SEGMENT = """你正在操作一台 Windows 桌面上的**某个被测 Ap
 - 桌面元素小，点按钮/菜单项/关闭钮时看清中心再给点
 - 输入前先 tap 目标输入框使其聚焦，再 input"""
 
-# pyautogui 的按键名（跨平台基本一致）
-_KEY_MAP = {
-    "enter": "enter", "return": "enter", "delete": "backspace", "backspace": "backspace",
-    "tab": "tab", "space": "space", "escape": "esc", "esc": "esc",
-    "up": "up", "down": "down", "left": "left", "right": "right",
-    "home": "home", "end": "end", "pageup": "pageup", "pagedown": "pagedown",
-}
 
-
-class DesktopWinPlatform(Platform):
+class DesktopWinPlatform(DesktopPlatform):
     """Windows 桌面驱动：窗口级截图 + 前台保持 + pyautogui 物理像素坐标注入。"""
 
     def __init__(self):
@@ -259,14 +251,6 @@ class DesktopWinPlatform(Platform):
         img.save(buf, format="PNG")
         return buf.getvalue()
 
-    def screenshot_png(self) -> bytes:
-        return self.screenshot_raw()
-
-    @property
-    def screen_size(self) -> tuple[int, int]:
-        """被测窗口的物理像素尺寸——brain 的 x_pct/y_pct 相对它换算。"""
-        return (self._win_w, self._win_h)
-
     @property
     def scale(self) -> float:
         """DPI-aware 下截图与坐标同在物理像素，无额外缩放。仅供报告一致性。"""
@@ -276,43 +260,6 @@ class DesktopWinPlatform(Platform):
 
     def _to_global(self, x: int, y: int) -> tuple[int, int]:
         return (int(self._win_x + x), int(self._win_y + y))
-
-    def tap(self, x: int, y: int) -> None:
-        gx, gy = self._to_global(x, y)
-        self._pg.click(gx, gy)
-
-    def long_press(self, x: int, y: int, duration: float = 1.0) -> None:
-        gx, gy = self._to_global(x, y)
-        self._pg.mouseDown(gx, gy)
-        time.sleep(max(0.1, duration))
-        self._pg.mouseUp(gx, gy)
-
-    def swipe(self, x1: int, y1: int, x2: int, y2: int) -> None:
-        gx1, gy1 = self._to_global(x1, y1)
-        gx2, gy2 = self._to_global(x2, y2)
-        self._pg.moveTo(gx1, gy1)
-        self._pg.dragTo(gx2, gy2, duration=0.4, button="left")
-
-    def scroll_up(self) -> None:
-        # pyautogui.scroll 单位是滚轮 notch（正=上）；跨平台一致，与 mac 取同量级
-        self._pg.scroll(5)
-
-    def scroll_down(self) -> None:
-        self._pg.scroll(-5)
-
-    def input_text(self, text: str) -> None:
-        """剪贴板 + Ctrl+V（支持中文）。前台方案下焦点在被测窗口，粘贴落到聚焦控件。"""
-        if not text:
-            return
-        try:
-            self._set_clipboard(text)
-            self._pg.hotkey("ctrl", "v")
-        except Exception as e:
-            log.warning("剪贴板粘贴失败，退回 typewrite(仅 ASCII): %s", e)
-            try:
-                self._pg.typewrite(text, interval=0.02)
-            except Exception as e2:
-                log.warning("typewrite 也失败: %s", e2)
 
     def _set_clipboard(self, text: str) -> None:
         """写剪贴板。优先 win32clipboard（pywin32 自带），回落 pyperclip。"""
@@ -329,28 +276,8 @@ class DesktopWinPlatform(Platform):
             import pyperclip
             pyperclip.copy(text)
 
-    def press_key(self, key: str) -> None:
-        k = _KEY_MAP.get(str(key).strip().lower())
-        if k is None:
-            log.warning("press_key 不识别: %r", key)
-            return
-        self._pg.press(k)
-
     def open_target(self, target: str) -> None:
         self._launch_app(target)
-
-    def is_ime_visible(self) -> bool:
-        return False
-
-    def _handle_platform_action(self, action: dict) -> None:
-        atype = action["type"]
-        if atype == "long_press":
-            w, h = self.screen_size
-            x = max(0, min(int(action.get("x", 0)), w - 1))
-            y = max(0, min(int(action.get("y", 0)), h - 1))
-            self.long_press(x, y, float(action.get("duration", 1.0)))
-        else:
-            raise ValueError(f"Unknown action type for Windows desktop: {atype}")
 
     # --- Platform identity ---
 

@@ -7,8 +7,8 @@ import re
 import shutil
 import subprocess
 
-from . import mobile
-from .platforms import device_session as ds
+from argus.devices import mobile
+from argus.platforms import device_session as ds
 
 
 def desktop_platform(value):
@@ -63,7 +63,7 @@ def discover(which):
         except (ImportError,OSError,ValueError,RuntimeError,subprocess.SubprocessError) as exc:
             result["diagnostics"].append({"source":"desktop","message":str(exc)})
     # Browser discovery lists saved bindings, without reconnecting or changing focus.
-    result["browsers"]=[s for s in result["sessions"] if s["platform"]=="browser"]
+    result["browsers"]=[s for s in result["sessions"] if s.get("platform")=="browser"]
     return result
 
 
@@ -87,7 +87,7 @@ def connect(args):
             size=list(plat.screen_size)
             ds.save_state(serial,state)
             return {"connected":True,"session":serial,"platform":kind,"screen_size":size}
-        finally: plat.teardown()
+        finally: ds.release_controller(plat, kind)
     backend=args.backend or (old or {}).get("browser_backend","playwright")
     plat=None
     try:
@@ -101,7 +101,7 @@ def connect(args):
             plat=ds.attach_browser(serial,manage_pages=True)
         elif backend == "extension":
             if not args.bridge_directory: raise ValueError("Extension connections require --bridge-directory")
-            from .browser_bridge import Client
+            from argus.integrations.browser_bridge import Client
             directory=str(Path(args.bridge_directory).expanduser().resolve())
             Client(directory).call("pages")
             ds.save_state(serial,{"kind":"browser","browser_backend":"extension","bridge_directory":directory})
@@ -118,15 +118,7 @@ def connect(args):
         if old: ds.save_state(serial,old)
         raise
     finally:
-        release(plat)
-
-
-def release(plat):
-    if plat is None: return
-    if hasattr(plat,"disconnect"): plat.disconnect()
-    elif hasattr(plat,"_driver"):
-        service=getattr(plat._driver,"service",None)
-        if service: service.stop()
+        ds.release_controller(plat, "browser")
 
 
 def disconnect(serial):

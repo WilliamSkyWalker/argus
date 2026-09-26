@@ -12,7 +12,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from .agent import Agent
+from argus.qa.agent import Agent
 from .config import init_config, load_config, PROJECT_ROOT
 from .logger import get_logger, set_level
 
@@ -327,7 +327,7 @@ def main():
     dev_p = sub.add_parser("device",
                            help="Control mobile, desktop and browser sessions (JSON output)")
     dev_sub = dev_p.add_subparsers(dest="device_command")
-    from .control import register as register_control
+    from argus.devices.control import register as register_control
     register_control(dev_sub)
     d_start = dev_sub.add_parser("start", help="Create/reuse a device session")
     d_start.add_argument("--serial", "--session", default=None)
@@ -444,7 +444,7 @@ def main():
         cmd_new(args.name, args.platform, package=args.package, url=args.url,
                 force=args.force)
     elif args.command == "mcp":
-        from . import toolchain
+        from argus.devices import toolchain
         if args.mcp_command == "init":
             toolchain.mcp_init(ios_team_id=args.ios_team_id, device=args.device,
                                force_node=args.force_node, skip_ios=args.skip_ios)
@@ -1059,7 +1059,7 @@ def cmd_device(args):
 
     cmd = args.device_command
     if cmd in {"list", "sessions", "connect", "disconnect", "install", "boot"}:
-        from .control import dispatch
+        from argus.devices.control import dispatch
         return dispatch(args)
     serial = getattr(args, "serial", None)
 
@@ -1165,10 +1165,7 @@ def cmd_device(args):
         _out({"ok": False, "error": str(exc)})
         raise SystemExit(2) from exc
     finally:
-        if plat is not None and hasattr(plat, "disconnect"):
-            plat.disconnect()
-        elif plat is not None and getattr(plat, "platform_name", "") in {"mac", "windows"}:
-            plat.teardown()
+        ds.release_controller(plat)
 
 
 
@@ -1435,7 +1432,7 @@ def _find_target_dir(p: Path) -> Path | None:
 
 def _collect_feature_cases(path: Path) -> list[str]:
     """从一个 .feature 文件或含 .feature 的目录（递归）收集 case body。"""
-    from . import gherkin
+    from argus.qa import gherkin
     if path.is_file() and path.suffix == ".feature":
         return gherkin.parse_feature_to_cases(path)
     if path.is_dir():
@@ -1608,6 +1605,8 @@ def cmd_run(test: str, platform: str | None = None, url: str | None = None,
     # get_logger 也被层层 wrap，长进程（如 MCP server）下持续泄漏）
     run_log_handler: logging.FileHandler | None = None
     orig_get_logger = None
+    if report_path == "__auto__" and not target_dir:
+        report_path = None  # No target: never treat the auto sentinel as a filename.
     if report_path == "__auto__" and target_dir:
         # Auto report 路径：tests 下第一级目录的 reports/<ts>/ 子目录
         # 示例：my-app/mobile/01-login/foo.feature → tests/my-app/reports/<ts>/foo-<ts>.html
@@ -1729,7 +1728,7 @@ def cmd_run(test: str, platform: str | None = None, url: str | None = None,
 
         # Export report if requested
         if report_path:
-            from .report import save_html, save_json
+            from argus.qa.report import save_html, save_json
             if report_path.endswith(".json"):
                 save_json(results, report_path)
             else:
@@ -1788,7 +1787,7 @@ def _maybe_heal(agent, case_text: str, result: dict) -> None:
     if result.get("result") not in ("fail", "timeout", "error"):
         return
     try:
-        from .healer import analyze_failure
+        from argus.qa.healer import analyze_failure
         steps_detail = result.get("steps_detail") or []
         # 取最后一张有截图的 step 截图给 healer 看
         last_png = None
@@ -2211,7 +2210,8 @@ def _run_concurrent(cfg: dict, test_cases: list[str], url: str | None,
     # Clean up Grid sessions once before creating agents
     grid_url = cfg.get("browser", {}).get("grid_url", "")
     if grid_url:
-        _cleanup_grid_once(grid_url)
+        from .platforms.selenium_grid import cleanup_grid_sessions
+        cleanup_grid_sessions(grid_url)
 
     # Disable per-agent Grid cleanup
     cfg_no_cleanup = copy.deepcopy(cfg)
@@ -2314,31 +2314,6 @@ def _run_concurrent(cfg: dict, test_cases: list[str], url: str | None,
     return results
 
 
-def _cleanup_grid_once(grid_url: str):
-    """Clean up all stale Grid sessions (called once before creating agents)."""
-    import json
-    import urllib.request
-    try:
-        status_url = grid_url.rstrip("/") + "/status"
-        with urllib.request.urlopen(status_url, timeout=5) as resp:
-            data = json.loads(resp.read())
-        nodes = data.get("value", {}).get("nodes", [])
-        for node in nodes:
-            for slot in node.get("slots", []):
-                session = slot.get("session")
-                if session:
-                    sid = session["sessionId"]
-                    log.info("清理残留 session: %s", sid)
-                    delete_url = grid_url.rstrip("/") + f"/session/{sid}"
-                    req = urllib.request.Request(delete_url, method="DELETE")
-                    try:
-                        urllib.request.urlopen(req, timeout=5)
-                    except Exception:
-                        pass
-    except Exception as e:
-        log.debug("Grid 清理跳过: %s", e)
-
-
 # ── Figma commands ────────────────────────────────────────────
 
 
@@ -2367,8 +2342,8 @@ def cmd_figma(args):
 
 def cmd_figma_frames(token: str, url: str, page: str | None = None):
     """List all frames in a Figma file."""
-    from .figma import parse_figma_url
-    from .figma_via_mcp import get_figma_client
+    from argus.integrations.figma import parse_figma_url
+    from argus.integrations.figma_via_mcp import get_figma_client
     client = get_figma_client(token)
     file_key, _ = parse_figma_url(url) if "figma.com" in url else (url, None)
 
@@ -2387,7 +2362,7 @@ def cmd_figma_frames(token: str, url: str, page: str | None = None):
 def cmd_figma_gen_tests(token: str, url: str, llm_config: dict,
                          output: str | None = None):
     """Generate test cases from Figma design."""
-    from .figma_ops import gen_tests_from_figma
+    from argus.integrations.figma_ops import gen_tests_from_figma
 
     if not llm_config.get("api_key"):
         print("Error: LLM API key not configured. Set LLM_API_KEY in .env")
@@ -2409,7 +2384,7 @@ def cmd_figma_review(token: str, url: str, cfg: dict,
                       screenshot_path: str | None = None,
                       output: str | None = None):
     """Visual review: compare Figma design with actual screenshot."""
-    from .figma_ops import visual_review, review_with_platform
+    from argus.integrations.figma_ops import visual_review, review_with_platform
 
     llm_config = cfg["llm"]
     if not llm_config.get("api_key"):

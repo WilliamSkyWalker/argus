@@ -4,7 +4,7 @@ import io
 
 from PIL import Image
 
-from ..browser_bridge import Client
+from argus.integrations.browser_bridge import Client
 from .base import Platform
 from .browser import BROWSER_PROMPT_SEGMENT
 from .browser_playwright import PageSelectionError

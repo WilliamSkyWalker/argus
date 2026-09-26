@@ -26,6 +26,23 @@ log = get_logger("device.session")
 STATE_DIR = Path(os.environ.get("ARGUS_HOME_DIR", Path.home() / ".argus")) / "device-sessions"
 
 
+def release_controller(plat, kind=None):
+    """Release a temporary controller without ending the persistent device session."""
+    if plat is None:
+        return
+    kind = kind or getattr(plat, "platform_name", None)
+    if kind in {"mac", "windows"}:
+        plat.teardown()
+    elif hasattr(plat, "disconnect"):
+        plat.disconnect()
+    elif kind == "browser":
+        # ChromeDriver may be temporary, but Chrome belongs to the saved session.
+        service = getattr(getattr(plat, "_driver", None), "service", None)
+        if service:
+            service.stop()
+    # Appium sessions remain alive for the next command; never call quit here.
+
+
 def _key(serial: str | None) -> str:
     return serial or "default"
 

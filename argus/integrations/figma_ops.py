@@ -11,9 +11,9 @@ import time
 
 from openai import OpenAI
 
-from .figma import FigmaNode, node_to_summary, parse_figma_url
-from .figma_via_mcp import get_figma_client
-from .logger import get_logger
+from argus.integrations.figma import FigmaNode, node_to_summary, parse_figma_url
+from argus.integrations.figma_via_mcp import get_figma_client
+from argus.logger import get_logger
 
 log = get_logger("figma_ops")
 

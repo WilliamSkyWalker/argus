@@ -3,7 +3,7 @@
 Use `argus device` for mobile, desktop and browser control. Each connected target
 has a named session; shared actions use `--session` (`--serial` remains an alias).
 Standalone `argus mobile`, `argus devices`, `argus setup`, and
-`argus.browser_bridge bind` have been removed. Use `device list`, `device connect`,
+`argus.integrations.browser_bridge bind` have been removed. Use `device list`, `device connect`,
 `device install`, and `device boot` instead. `device list` always emits JSON.
 `device start/stop` remain within this unified command group. The browser bridge's
 `install/host` commands remain for native-host registration and Chrome startup.
@@ -91,3 +91,18 @@ See [mobile setup](mobile.md) and [browser extension setup](browser-extension.md
 for installation requirements. This unifies CLI/session routing; existing MCP
 registration is unchanged. Tests in `tests/control_demo` use mocked platform
 adapters; real mobile and desktop hardware validation remains environment-dependent.
+
+Implementation boundaries: `platforms/device_session.py::release_controller`
+owns temporary controller cleanup for the CLI, connection management and Runtime.
+It releases desktop controllers, disconnects Playwright/extension controllers,
+and stops temporary Selenium services while preserving persistent sessions.
+`mobile.py::provision_runtime` shares SDK, Appium and optional boot orchestration
+between native installs and the Windows worker; each host adapter owns connection
+setup. QA Grid startup uses `platforms/selenium_grid.py::cleanup_grid_sessions`
+from both single-browser and parallel runs.
+Desktop drivers share pointer actions, scrolling, key aliases, clipboard input
+and long-press dispatch in `platforms/desktop.py::DesktopPlatform`. Native
+adapters retain window discovery/capture, coordinate conversion, clipboard
+access and paste modifiers (Command on macOS, Ctrl on Windows). Tests cover
+negative window origins, Retina scale, Unicode paste and clipboard fallback
+without sending input to a real desktop.

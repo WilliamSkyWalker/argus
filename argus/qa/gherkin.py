@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .logger import get_logger
+from argus.logger import get_logger
 
 log = get_logger("gherkin")
 

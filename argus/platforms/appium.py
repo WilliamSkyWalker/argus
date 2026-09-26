@@ -23,7 +23,7 @@ import time
 
 from PIL import Image
 
-from ..grid import draw_coordinate_grid, img_to_png_bytes
+from argus.vision.grid import draw_coordinate_grid, img_to_png_bytes
 from ..logger import get_logger
 from .base import Platform
 

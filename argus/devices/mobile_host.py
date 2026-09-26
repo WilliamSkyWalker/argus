@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 
-from . import mobile
+from argus.devices import mobile
 
 PYTHON_URL = "https://www.python.org/ftp/python/3.13.13/python-3.13.13-embed-amd64.zip"
 PYTHON_SHA256 = "8766a8775746235e23cf5aee5027ab1060bb981d93110577adcf3508aa0cbd55"
@@ -152,16 +152,19 @@ def prepare_windows(details, install=False):
             if (root / "python").exists():
                 raise RuntimeError("Incomplete Windows Python directory; inspect " + str(root / "python"))
             shutil.move(str(Path(tmp) / "python"), root / "python")
-    sources = {name: (Path(__file__).parent / name).read_bytes() for name in
-               ("__init__.py", "mobile.py", "toolchain.py", "logger.py", "mobile_host_worker.py", "windows_no_console.cjs")}
+    package = Path(__file__).resolve().parent.parent
+    sources = {name: (package / name).read_bytes() for name in
+               ("__init__.py", "logger.py", "devices/__init__.py", "devices/mobile.py",
+                "devices/toolchain.py", "devices/mobile_host_worker.py", "devices/windows_no_console.cjs")}
     digest = hashlib.sha256(b"".join(sources.values())).hexdigest()[:20]
     bundle = root / "workers" / digest / "argus"
     bundle.mkdir(parents=True, exist_ok=True)
     for name, content in sources.items():
         target = bundle / name
         if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
-    return {"python": str(python), "script": wsl_path(bundle / "mobile_host_worker.py", windows=True),
+    return {"python": str(python), "script": wsl_path(bundle / "devices" / "mobile_host_worker.py", windows=True),
             "home": details["home"], "sdk_root": details["sdk_root"]}
 
 
@@ -181,7 +184,7 @@ def call_windows(host, operation, **params):
 
 
 def connect_windows(host, device, session):
-    from .mobile_relay import ensure_relay
+    from argus.devices.mobile_relay import ensure_relay
     server = call_windows(host, "server")
     url = ensure_relay(host, server["port"], server["base_path"])
     return mobile.connect("android", device, session, url, adb_port=server["adb_port"])
@@ -226,7 +229,7 @@ def execute(args):
         result = mobile.provision(args)
     result["host"] = details["host"]
     if args.connect:
-        from .platforms import device_session as ds
+        from argus.platforms import device_session as ds
         connection = result["connection"]
         plat = ds.attach(connection["session"])
         if plat is None:

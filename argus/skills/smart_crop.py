@@ -12,7 +12,7 @@ from __future__ import annotations
 from PIL import Image
 
 from .base import Skill, SkillContext, SkillResult
-from ..grid import draw_region_grid, img_to_png_bytes
+from argus.vision.grid import draw_region_grid, img_to_png_bytes
 from ..logger import get_logger
 
 log = get_logger("skills.crop")

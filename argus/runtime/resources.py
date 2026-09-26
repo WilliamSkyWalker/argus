@@ -177,16 +177,8 @@ class VisualResource:
     def close(self):
         if self.platform is None:
             return
-        if self.spec["kind"] in {"mac", "windows"}:
-            self.platform.teardown()
-        elif self.spec["kind"] == "browser":
-            # Stop only the temporary ChromeDriver, not the user's persistent Chrome.
-            if hasattr(self.platform, "disconnect"):
-                self.platform.disconnect()
-            else:
-                service = getattr(self.platform._driver, "service", None)
-                if service:
-                    service.stop()
+        from ..platforms.device_session import release_controller
+        release_controller(self.platform, self.spec["kind"])
         self.platform = None
 
 

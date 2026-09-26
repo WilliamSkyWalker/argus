@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
-from . import toolchain
+from argus.devices import toolchain
 
 
 def home():
@@ -185,7 +185,7 @@ def discover(which="all"):
 
 
 def connect(which, device=None, session=None, server_url=None, team_id=None, adb_port=None):
-    from .platforms import device_session as ds
+    from argus.platforms import device_session as ds
     if not server_url:
         if which == "ios":
             require_mac()
@@ -486,22 +486,33 @@ def register_install_boot(commands):
     p.add_argument("--timeout",type=int,default=240)
 
 
-def provision(args):
-    """Native-host install after preflight and license confirmation."""
-    result=install_android(args.name,args.api,True) if args.platform=="android" else install_ios(args.name)
+def provision_runtime(which, name, api=35, *, boot=False, headless=False):
+    """Install on the executing host after preflight and license confirmation.
+
+    Shared by the native CLI and the stdlib Windows worker. Connecting remains
+    the caller's responsibility because Windows connections use a local relay.
+    """
+    result=install_android(name,api,True) if which=="android" else install_ios(name)
     with contextlib.redirect_stdout(sys.stderr):
         node=toolchain.ensure_node()
         appium=toolchain.install_appium(node)
-        toolchain.install_drivers(node,appium,ios=args.platform=="ios")
-    if args.boot or args.connect:
-        result["boot"]=boot_device(args.platform,result.get("device",args.name),headless=args.headless)
-        if args.connect:
-            result["connection"]=connect(args.platform,result["boot"]["device"],args.session)
+        toolchain.install_drivers(node,appium,ios=which=="ios")
+    if boot:
+        result["boot"]=boot_device(which,result.get("device",name),headless=headless)
+    return result
+
+
+def provision(args):
+    """Native-host install and optional connection."""
+    result=provision_runtime(args.platform,args.name,args.api,
+                             boot=args.boot or args.connect,headless=args.headless)
+    if args.connect:
+        result["connection"]=connect(args.platform,result["boot"]["device"],args.session)
     return result
 
 
 def dispatch(args):
-    from .mobile_host import execute
+    from argus.devices.mobile_host import execute
     try:
         print(json.dumps(execute(args),ensure_ascii=False))
     except Exception as exc:

@@ -52,7 +52,7 @@ BDD .feature test case (hand-written, or Figma-generated)
 
 The diagram shows the ordinary visual-decision path. Platform drivers execute actions inside the loop. Probe steps take their verdict directly from plugins, and consecutive visual assertions can be checked as a batch with per-assertion evidence. Healer adds a root-cause report after failure; it does not repair the application or case, or change the original verdict.
 
-Execution guards and defaults (from `argus/config.py` and `argus/agent.py`):
+Execution guards and defaults (from `argus/config.py` and `argus/qa/agent.py`):
 
 - The main guard is **15 counted turns without step progress**. The old per-step action cap is disabled (`PER_STEP_SUB_ACTION_LIMIT=-1`); the scenario loop-turn cap is also disabled by default (`AGENT_MAX_STEPS=0`, positive values enable it).
 - Ordinary decisions must report the **exact pending step index**. Three consecutive validator rejections fail the step. Rejected decisions execute no action but still count toward loop/no-progress limits.
@@ -329,7 +329,7 @@ Related knobs: `AGENT_LOCATE_RETRY` (consecutive no-effect taps before the locat
 ## Project layout
 
 ```
-argus/            core engine (agent, brain, planner, healer, validators, gherkin, skills, probes, platforms, mcp, drive)
+argus/            packages: qa, vision, devices, platforms, runtime, integrations, skills, probes, mcp, drive
 tests/            test targets (each a folder of .feature/.md cases + _preconditions.md + _accounts.json + reports)
 .mcp.json         lets Claude Code auto-mount the argus MCP server
 CLAUDE.md         deep architecture & behavior notes (read this to contribute)
@@ -398,7 +398,7 @@ BDD .feature 测试用例（手写，或 Figma 生成）
 
 上图展示普通视觉决策路径；平台驱动在循环内执行动作。Probe 步骤由插件裁决，连续视觉断言可合并调用并逐条检查证据。Healer 只附加失败根因分析，不自动修复应用或用例，也不改变原始测试结果。
 
-当前执行保护与默认值（以 `argus/config.py`、`argus/agent.py` 为准）：
+当前执行保护与默认值（以 `argus/config.py`、`argus/qa/agent.py` 为准）：
 
 - 主要保护是**连续 15 个计数轮次未推进步骤**。旧的每步动作次数上限已禁用（`PER_STEP_SUB_ACTION_LIMIT=-1`）；scenario 总循环轮数上限默认也禁用（`AGENT_MAX_STEPS=0`，正数启用）。
 - 普通决策必须返回**当前待执行步骤序号**，由框架推进。连续 3 次校验拒绝判失败；拒绝不执行动作，但仍计入循环轮数和无进展计数。
@@ -625,3 +625,5 @@ Use the same `--session` with screenshot, tap, input, key, scroll and open;
 Argus is licensed under the [MIT License](LICENSE). Third-party dependencies remain under their respective licenses.
 
 Argus 采用 MIT 许可证，允许商用、修改和再分发，须保留版权及许可声明。第三方依赖遵循各自的许可证。
+
+Module responsibilities and execution paths: [Architecture](docs/architecture.md).

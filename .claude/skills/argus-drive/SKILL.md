@@ -1,6 +1,6 @@
 ---
 name: argus-drive
-description: 把当前 Claude Code 会话当 argus 的另一种 driver — 你(Claude)当 brain，`argus device` CLI(Appium)当 platform，对话 turn 当主循环，跑 .feature/.md 用例并出 argus 风格 HTML 报告(复用 argus.report)。支持单 case debug / 单 feature / 目录批量(过滤 @auto+@partial，跳 @manual) + 断点续跑 + 状态复用。
+description: 把当前 Claude Code 会话当 argus 的另一种 driver — 你(Claude)当 brain，`argus device` CLI(Appium)当 platform，对话 turn 当主循环，跑 .feature/.md 用例并出 argus 风格 HTML 报告(复用 argus.qa.report)。支持单 case debug / 单 feature / 目录批量(过滤 @auto+@partial，跳 @manual) + 断点续跑 + 状态复用。
 ---
 
 # argus-drive

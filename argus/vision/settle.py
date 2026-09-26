@@ -18,7 +18,7 @@ import time
 
 from PIL import Image, ImageChops
 
-from .logger import get_logger
+from argus.logger import get_logger
 
 log = get_logger("settle")
 

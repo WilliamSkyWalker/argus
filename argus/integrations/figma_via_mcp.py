@@ -31,8 +31,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .figma import FigmaNode, _parse_node
-from .logger import get_logger
+from argus.integrations.figma import FigmaNode, _parse_node
+from argus.logger import get_logger
 
 log = get_logger("figma_via_mcp")
 
@@ -215,7 +215,7 @@ def _probe_figma_mcp(cfg: Any, mapping: dict) -> str | None:
 
     返回 None 表示可用；否则返回失败原因字符串（供 fallback 日志）。
     """
-    from .mcp.client import MCPClientSync
+    from argus.mcp.client import MCPClientSync
     try:
         tool_names = {t["name"] for t in MCPClientSync(cfg).list_tools()}
     except Exception as e:
@@ -239,8 +239,8 @@ def get_figma_client(token: str = "", server_name: str = "figma",
     Returns:
       MCPFigmaClient 或 FigmaClient — 调用方按统一接口用即可
     """
-    from .figma import FigmaClient
-    from .mcp.client import MCPRegistry
+    from argus.integrations.figma import FigmaClient
+    from argus.mcp.client import MCPRegistry
 
     if prefer_mcp:
         try:

@@ -44,7 +44,7 @@ def _parse_node_version(path: str) -> tuple:
 def _sandbox() -> dict:
     """argus mcp init 装的沙盒工具链路径（未装则空 dict）。"""
     try:
-        from ..toolchain import sandbox_paths
+        from argus.devices.toolchain import sandbox_paths
         return sandbox_paths()
     except Exception:
         return {}
@@ -81,7 +81,7 @@ def _default_android_home() -> str | None:
     ):
         if cand and os.path.isdir(cand):
             return cand
-    from ..mobile import sdk_root
+    from argus.devices.mobile import sdk_root
     root = sdk_root()
     return str(root) if root.is_dir() else None
 
@@ -126,7 +126,7 @@ class AppiumServerManager:
         port = str(parsed.port or 4723)
         host = parsed.hostname or "127.0.0.1"
 
-        from ..mobile import environment
+        from argus.devices.mobile import environment
         env = environment()
         # 关键：把 appium 所在 node 的 bin 放 PATH 最前，令 shebang 命中对的 node
         node_bin_dir = os.path.dirname(appium_bin)
@@ -152,10 +152,10 @@ class AppiumServerManager:
         log.info("启动 Appium server: %s (node bin=%s, ANDROID_HOME=%s)",
                  appium_bin, node_bin_dir, android_home or "<none>")
         logf = open(self._cfg.get("log_path", _SPAWN_LOG), "ab")
-        from ..toolchain import background_options
+        from argus.devices.toolchain import background_options
         node_prefix = [sb.get("node_bin") or "node"] if appium_bin.endswith(".js") else []
         if os.name == "nt" and node_prefix:
-            node_prefix += ["--require", str(Path(__file__).resolve().parent.parent / "windows_no_console.cjs")]
+            node_prefix += ["--require", str(Path(__file__).resolve().parent.parent / "devices" / "windows_no_console.cjs")]
         self._proc = subprocess.Popen(
             [*node_prefix, appium_bin, "--address", host, "--port", port, "--log-level", "info:info"],
             stdout=logf, stderr=logf, env=env,

@@ -11,7 +11,7 @@ import io
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from .base import Skill, SkillContext, SkillResult
-from ..grid import img_to_png_bytes
+from argus.vision.grid import img_to_png_bytes
 from ..logger import get_logger
 
 log = get_logger("skills.diff")

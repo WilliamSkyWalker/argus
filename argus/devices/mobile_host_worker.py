@@ -80,7 +80,7 @@ def configure_adb(home):
 
 
 def ensure_server():
-    from argus import mobile, toolchain
+    from argus.devices import mobile, toolchain
     root = mobile.home()
     state = root / "host-appium.json"
     if state.is_file():
@@ -130,8 +130,8 @@ def execute(payload):
     os.environ["ANDROID_HOME"] = payload["sdk_root"]
     os.environ["ANDROID_SDK_ROOT"] = payload["sdk_root"]
     # Embeddable Python ignores PYTHONPATH; add only this immutable code bundle.
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from argus import mobile, toolchain
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from argus.devices import mobile
     operation = payload["operation"]
     if operation == "http":
         return request_appium(payload["port"], payload["base_path"], payload["method"],
@@ -143,13 +143,9 @@ def execute(payload):
         return mobile.boot_device("android", payload["device"], payload.get("timeout", 240), payload.get("headless", False))
     if operation != "install" or payload.get("accept_licenses") is not True:
         raise ValueError("Installation requires explicit SDK license acceptance")
-    result = mobile.install_android(payload["name"], payload["api"], True)
-    node = toolchain.ensure_node()
-    appium = toolchain.install_appium(node)
-    toolchain.install_drivers(node, appium, ios=False)
-    if payload.get("boot"):
-        result["boot"] = mobile.boot_device("android", payload["name"], headless=payload.get("headless", False))
-    return result
+    return mobile.provision_runtime("android", payload["name"], payload["api"],
+                                    boot=payload.get("boot", False),
+                                    headless=payload.get("headless", False))
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from argus import mobile, mobile_host, mobile_host_worker, mobile_relay
+from argus.devices import mobile, mobile_host, mobile_host_worker, mobile_relay
 
 
 def install_args(**changes):
@@ -21,7 +21,7 @@ def install_args(**changes):
 
 class HostTests(unittest.TestCase):
     def test_windows_helpers_request_no_console(self):
-        from argus import toolchain
+        from argus.devices import toolchain
         with patch.object(mobile, "environment", return_value={}), patch.object(toolchain.os, "name", "nt"), patch.object(toolchain.subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True), patch.object(toolchain.subprocess, "run", return_value=Mock(returncode=0, stdout="", stderr="")) as run:
             mobile.run(["adb.exe", "version"])
             self.assertEqual(run.call_args.kwargs["creationflags"], 0x08000000)

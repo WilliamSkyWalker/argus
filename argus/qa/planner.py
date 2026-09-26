@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from .logger import get_logger
+from argus.logger import get_logger
 
 log = get_logger("planner")
 

@@ -167,11 +167,11 @@ BROWSER_HEADLESS / VIEWPORT_* / SELENIUM_GRID_URL ; FIGMA_TOKEN ; SKILLS_ENABLED
 
 ## Existing browser extension backend
 
-`extensions/argus-browser/` + `argus/browser_bridge.py` + `platforms/browser_extension.py`：Native Messaging + 私有共享目录 IPC，Windows host 可与 WSL Argus 通信，不监听网络端口。默认当前浏览器配置文件内所有 HTTP(S) 标签页（含新弹窗），操作目标仍显式选择；browser session UUID + tab ID 防重启误选；不提取 DOM。Runtime browser resource 必须写 `backend: extension`；先安装桥，再用 `device connect` 连接，见 `docs/browser-extension.md`。仅能声称已执行的平台测试，Windows/WSL 桥接、导航和截图已实机验证。测试：`tests/extension_demo`，可选 `ARGUS_TEST_CHROME`。
+`extensions/argus-browser/` + `argus/integrations/browser_bridge.py` + `platforms/browser_extension.py`：Native Messaging + 私有共享目录 IPC，Windows host 可与 WSL Argus 通信，不监听网络端口。默认当前浏览器配置文件内所有 HTTP(S) 标签页（含新弹窗），操作目标仍显式选择；browser session UUID + tab ID 防重启误选；不提取 DOM。Runtime browser resource 必须写 `backend: extension`；先安装桥，再用 `device connect` 连接，见 `docs/browser-extension.md`。仅能声称已执行的平台测试，Windows/WSL 桥接、导航和截图已实机验证。测试：`tests/extension_demo`，可选 `ARGUS_TEST_CHROME`。
 
 ## Mobile discovery and simulator provisioning
 
-`argus/mobile.py` implements mobile adapters behind `device list/connect/install/boot`. Discovery covers
+`argus/devices/mobile.py` implements mobile adapters behind `device list/connect/install/boot`. Discovery covers
 adb devices, devicectl physical iOS devices and simctl simulators. Explicit IDs
 and persistent session aliases are separate. Local iOS requires full Xcode on
 macOS; remote devices use an explicit Appium URL and ID. Installer never force
@@ -197,10 +197,19 @@ launch, tap and text input have been exercised; iOS remains mock-tested only.
 
 ## Unified control
 
-`argus/control.py` extends `argus device` with list/connect/sessions/disconnect,
+`argus/devices/control.py` extends `argus device` with list/connect/sessions/disconnect,
 install/boot and common open/scroll commands. `--session` aliases `--serial`.
 Desktop bindings persist app+OS and reconnect short-lived controllers; Runtime
 accepts desktop `session` resources as well as inline `app`. Disconnect preserves
 endpoint configuration and blocks subsequent actions until explicit reconnect;
 it is not cross-process cancellation or global extension revocation. Tests:
 `tests/control_demo`. User guide: `docs/control.md`.
+
+## Package layout
+
+See `docs/architecture.md`. QA engine modules live under `argus/qa/`, image
+processing under `argus/vision/`, device lifecycle/toolchain/Windows workers under
+`argus/devices/`, and Figma/browser bridge integrations under `argus/integrations/`.
+Use these paths in imports. Root CLI/config/logger and browser bridge command
+compatibility entry points remain. Windows worker bundles preserve the nested
+package structure; `tests/mobile_demo/test_bundle.py` verifies isolated imports.

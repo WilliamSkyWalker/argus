@@ -19,7 +19,7 @@ import subprocess
 import time
 
 from ..logger import get_logger
-from .base import Platform
+from .desktop import DesktopPlatform
 
 log = get_logger("desktop.mac")
 
@@ -44,16 +44,12 @@ _PROMPT_SEGMENT = """你正在操作一台 macOS 桌面上的**某个被测 App*
 - 桌面元素小，点按钮/菜单项/关闭钮时看清中心再给点
 - 输入前先 tap 目标输入框使其聚焦，再 input"""
 
-_KEY_MAP = {
-    "enter": "enter", "return": "enter", "delete": "backspace", "backspace": "backspace",
-    "tab": "tab", "space": "space", "escape": "esc", "esc": "esc",
-    "up": "up", "down": "down", "left": "left", "right": "right",
-    "home": "home", "end": "end", "pageup": "pageup", "pagedown": "pagedown",
-}
 
-
-class DesktopMacPlatform(Platform):
+class DesktopMacPlatform(DesktopPlatform):
     """macOS 桌面驱动：窗口级截图 + 前台保持 + pyautogui 全局坐标注入。"""
+
+    paste_modifier = "command"
+    desktop_label = "macOS"
 
     def __init__(self):
         self._pg = None          # pyautogui
@@ -185,14 +181,6 @@ class DesktopMacPlatform(Platform):
         png = rep.representationUsingType_properties_(AK.NSBitmapImageFileTypePNG, None)
         return bytes(png)
 
-    def screenshot_png(self) -> bytes:
-        return self.screenshot_raw()
-
-    @property
-    def screen_size(self) -> tuple[int, int]:
-        """被测窗口的逻辑尺寸——brain 的 x_pct/y_pct 相对它换算。"""
-        return (self._win_w, self._win_h)
-
     @property
     def scale(self) -> float:
         """截图物理像素 / 窗口逻辑宽。Retina 屏 2.0，普通屏 1.0。"""
@@ -205,65 +193,12 @@ class DesktopMacPlatform(Platform):
     def _to_global(self, x: int, y: int) -> tuple[int, int]:
         return (int(round(self._win_x + x)), int(round(self._win_y + y)))
 
-    def tap(self, x: int, y: int) -> None:
-        gx, gy = self._to_global(x, y)
-        self._pg.click(gx, gy)
-
-    def long_press(self, x: int, y: int, duration: float = 1.0) -> None:
-        gx, gy = self._to_global(x, y)
-        self._pg.mouseDown(gx, gy)
-        time.sleep(max(0.1, duration))
-        self._pg.mouseUp(gx, gy)
-
-    def swipe(self, x1: int, y1: int, x2: int, y2: int) -> None:
-        gx1, gy1 = self._to_global(x1, y1)
-        gx2, gy2 = self._to_global(x2, y2)
-        self._pg.moveTo(gx1, gy1)
-        self._pg.dragTo(gx2, gy2, duration=0.4, button="left")
-
-    def scroll_up(self) -> None:
-        self._pg.scroll(5)
-
-    def scroll_down(self) -> None:
-        self._pg.scroll(-5)
-
-    def input_text(self, text: str) -> None:
-        """剪贴板 pbcopy + ⌘V（支持中文）。前台方案下焦点在被测 App，粘贴落到聚焦控件。"""
-        if not text:
-            return
-        try:
-            pb = shutil.which("pbcopy") or "/usr/bin/pbcopy"
-            subprocess.run([pb], input=text.encode("utf-8"), check=True, timeout=5)
-            self._pg.hotkey("command", "v")
-        except Exception as e:
-            log.warning("剪贴板粘贴失败，退回 typewrite(仅 ASCII): %s", e)
-            try:
-                self._pg.typewrite(text, interval=0.02)
-            except Exception as e2:
-                log.warning("typewrite 也失败: %s", e2)
-
-    def press_key(self, key: str) -> None:
-        k = _KEY_MAP.get(str(key).strip().lower())
-        if k is None:
-            log.warning("press_key 不识别: %r", key)
-            return
-        self._pg.press(k)
+    def _set_clipboard(self, text: str) -> None:
+        pb = shutil.which("pbcopy") or "/usr/bin/pbcopy"
+        subprocess.run([pb], input=text.encode("utf-8"), check=True, timeout=5)
 
     def open_target(self, target: str) -> None:
         self._open_app(target)
-
-    def is_ime_visible(self) -> bool:
-        return False
-
-    def _handle_platform_action(self, action: dict) -> None:
-        atype = action["type"]
-        if atype == "long_press":
-            w, h = self.screen_size
-            x = max(0, min(int(action.get("x", 0)), w - 1))
-            y = max(0, min(int(action.get("y", 0)), h - 1))
-            self.long_press(x, y, float(action.get("duration", 1.0)))
-        else:
-            raise ValueError(f"Unknown action type for macOS desktop: {atype}")
 
     # --- Platform identity ---
 

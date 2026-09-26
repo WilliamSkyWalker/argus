@@ -51,8 +51,8 @@ from ..cli import (
     _resolve_report_path,
     _resolve_test_target,
 )
-from ..gherkin import parse_feature_file
-from ..simulator import boot, create_device, list_devices as _list_ios_devices
+from argus.qa.gherkin import parse_feature_file
+from argus.devices.simulator import boot, create_device, list_devices as _list_ios_devices
 
 mcp = _MCPServerClass("argus")
 

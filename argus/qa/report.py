@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from .logger import get_logger
+from argus.logger import get_logger
 
 log = get_logger("report")
 

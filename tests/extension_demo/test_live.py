@@ -10,7 +10,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
-from argus.browser_bridge import install
+from argus.integrations.browser_bridge import install
 from argus.platforms import device_session as ds
 from argus.runtime import Runtime, Store
 import subprocess

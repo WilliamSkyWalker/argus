@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock, patch
 import zipfile
 
-from argus import mobile
+from argus.devices import mobile
 from argus.platforms import device_session as ds
 
 
@@ -138,7 +138,7 @@ class MobileTests(unittest.TestCase):
             self.assertEqual(p.setup.call_args.args[0]['appium']['team_id'],'TEAM_PLACEHOLDER')
 
     def test_driver_install_failure_is_not_success(self):
-        from argus import toolchain
+        from argus.devices import toolchain
         with tempfile.TemporaryDirectory() as tmp, patch.object(toolchain,'APPIUM_HOME',Path(tmp)), patch.object(toolchain,'_run',side_effect=[Mock(stdout='{}',returncode=0),Mock(stderr='install failed',returncode=1)]):
             with self.assertRaisesRegex(RuntimeError,'install failed'):
                 toolchain.install_drivers('/node','/appium',ios=False)

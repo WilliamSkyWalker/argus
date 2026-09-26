@@ -23,7 +23,7 @@ import base64
 import json
 import re
 
-from .logger import get_logger
+from argus.logger import get_logger
 
 log = get_logger("locator")
 

@@ -11,11 +11,11 @@ import sys
 import time
 import urllib.request
 
-from . import mobile
+from argus.devices import mobile
 
 
 def relay_request(config, method, path, body):
-    from .mobile_host import call_windows
+    from argus.devices.mobile_host import call_windows
     return call_windows(config["host"], "http", port=config["port"], base_path=config["base_path"],
                         method=method, path=path, body=base64.b64encode(body).decode() if body else None)
 
@@ -90,8 +90,8 @@ def ensure_relay(host, port, base_path):
         config_path.chmod(0o600)
         log_path = root / (identity + ".log")
         with log_path.open("ab") as output:
-            process = subprocess.Popen([sys.executable, "-m", "argus.mobile_relay", str(config_path)],
-                                       cwd=str(Path(__file__).resolve().parent.parent), stdin=subprocess.DEVNULL,
+            process = subprocess.Popen([sys.executable, "-m", "argus.devices.mobile_relay", str(config_path)],
+                                       cwd=str(Path(__file__).resolve().parents[2]), stdin=subprocess.DEVNULL,
                                        stdout=output, stderr=output, start_new_session=True)
         for _ in range(50):
             if process.poll() is not None:

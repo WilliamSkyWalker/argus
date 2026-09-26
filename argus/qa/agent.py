@@ -27,17 +27,16 @@ import time
 
 from PIL import Image
 
-from .brain import Brain
-from .locator import ElementLocator
-from .logger import get_logger
-from .planner import plan_scenario
-from .platforms import create_platform
-from .probes import (MAX_ATTEMPTS_PER_STEP, MIN_POLL_INTERVAL_S, ProbeContext,
-                     ProbeRunner, ProbeSpec, summarize_data)
-from .probes.spec import parse_directive_line
-from .settle import wait_settled, sample_then_frames
-from .skills import SkillContext, create_pipeline, run_pipeline
-from .step_validator import validate_step_progress, validate_assertion_batch
+from argus.qa.brain import Brain
+from argus.vision.locator import ElementLocator
+from argus.logger import get_logger
+from argus.qa.planner import plan_scenario
+from argus.platforms import create_platform
+from argus.probes import MAX_ATTEMPTS_PER_STEP, MIN_POLL_INTERVAL_S, ProbeContext, ProbeRunner, ProbeSpec, summarize_data
+from argus.probes.spec import parse_directive_line
+from argus.vision.settle import wait_settled, sample_then_frames
+from argus.skills import SkillContext, create_pipeline, run_pipeline
+from argus.qa.step_validator import validate_step_progress, validate_assertion_batch
 
 log = get_logger("agent")
 
@@ -82,7 +81,7 @@ _CASE_ID_RE = re.compile(r'^\s*###\s+(\S+)')
 def _extract_steps_and_probes(case_text: str) -> tuple[list[str], dict[int, ProbeSpec]]:
     """从 case body 提取 Scenario step 列表 + step 级 probe 声明（不含 Background）。
 
-    匹配 argus.gherkin.render_case 输出格式：
+    匹配 argus.qa.gherkin.render_case 输出格式：
         - **Steps**:
           Given xxx
           When xxx
@@ -169,7 +168,7 @@ class Agent:
     def __init__(self, config: dict | None = None):
         log.info("Agent.__init__ 开始")
 
-        from .config import load_config
+        from argus.config import load_config
         cfg = config or load_config()
         self.cfg = cfg   # probe 上下文要用（包名 / 设备 / 平台）
         log.info("配置已加载: platform=%s", cfg.get("platform", "ios"))
@@ -186,7 +185,7 @@ class Agent:
         # 已被 .gitignore，所以不会误启用到 CI；本地开发要用时手动放 example 复制版。
         mcp_registry = None
         try:
-            from .mcp.client import MCPRegistry
+            from argus.mcp.client import MCPRegistry
             candidate_registry = MCPRegistry.from_config()
             if candidate_registry.servers:
                 mcp_registry = candidate_registry

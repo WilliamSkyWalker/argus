@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from argus import control
+from argus.devices import control
 from argus.platforms import device_session as ds
 from argus.runtime.resources import VisualResource
 from argus.runtime.schema import validate
@@ -23,7 +23,7 @@ def args(**kwargs):
 class ControlTests(unittest.TestCase):
     def test_removed_entry_points_are_rejected(self):
         for module, command in [('argus.cli', 'mobile'), ('argus.cli', 'devices'),
-                                ('argus.cli', 'setup'), ('argus.browser_bridge', 'bind')]:
+                                ('argus.cli', 'setup'), ('argus.integrations.browser_bridge', 'bind')]:
             with self.subTest(command=command):
                 result = subprocess.run([sys.executable, '-m', module, command],
                                         capture_output=True, text=True)
@@ -110,3 +110,51 @@ class ControlTests(unittest.TestCase):
         with patch.object(ds,'attach') as attach:
             self.assertEqual(control.sessions()[0]['platform'],'windows')
             attach.assert_not_called()
+
+    def test_browser_discovery_tolerates_corrupt_session(self):
+        (ds.STATE_DIR / 'broken.json').write_text('{')
+        ds.save_state('web', {'kind': 'browser'})
+        result = control.discover('browser')
+        self.assertEqual([s['session'] for s in result['browsers']], ['web'])
+        self.assertIn('error', result['sessions'][0])
+
+    def test_release_preserves_persistent_sessions(self):
+        for kind in ('android', 'ios', 'browser', 'mac', 'windows'):
+            with self.subTest(kind=kind):
+                controller = Mock(spec=['platform_name', '_driver', 'teardown'])
+                controller.platform_name = kind
+                ds.release_controller(controller)
+                controller._driver.quit.assert_not_called()
+                self.assertEqual(controller.teardown.call_count, int(kind in {'mac', 'windows'}))
+                self.assertEqual(controller._driver.service.stop.call_count, int(kind == 'browser'))
+        controller = Mock(spec=['disconnect', 'teardown'])
+        ds.release_controller(controller, 'browser')
+        controller.disconnect.assert_called_once()
+        controller.teardown.assert_not_called()
+
+    def test_cli_releases_selenium_service_after_failed_action(self):
+        from argus.cli import cmd_device
+        ds.save_state('test', {'kind': 'browser'})
+        controller = Mock(spec=['platform_name', '_driver', 'press_key'])
+        controller.platform_name = 'browser'
+        controller.press_key.side_effect = RuntimeError('input failed')
+        with patch.object(ds, 'attach_browser', return_value=controller), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                cmd_device(Namespace(device_command='key', serial='test', key='enter'))
+        controller._driver.service.stop.assert_called_once()
+        controller._driver.quit.assert_not_called()
+
+    def test_inline_auto_report_does_not_write_sentinel_filename(self):
+        from argus import cli
+        with patch.object(cli, 'load_config', return_value={'llm': {'api_key': 'placeholder'}}), \
+                patch.object(cli, '_resolve_test_target', return_value=(['example'], None)), \
+                patch.object(cli, '_load_preconditions', return_value=''), \
+                patch.object(cli, '_load_accounts', return_value=[]), \
+                patch.object(cli, '_run_sequential', return_value=[]), \
+                patch.object(cli, '_probes_mode', return_value=''), \
+                patch.dict(cli.os.environ, {'ARGUS_SHARD': ''}), \
+                patch('argus.qa.report.save_html') as html, \
+                patch('argus.qa.report.save_json') as json_report, contextlib.redirect_stdout(io.StringIO()):
+            cli.cmd_run('example', report_path='__auto__')
+            html.assert_not_called()
+            json_report.assert_not_called()

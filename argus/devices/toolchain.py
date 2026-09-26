@@ -27,7 +27,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-from .logger import get_logger
+from argus.logger import get_logger
 
 log = get_logger("toolchain")
 
@@ -132,7 +132,7 @@ def detect_system_node() -> str | None:
 def _latest_lts_version(sysname: str, arch: str) -> str:
     """从 nodejs.org 拉最新 LTS 版本号；失败用兜底。"""
     try:
-        from .mobile import fetch
+        from argus.devices.mobile import fetch
         data = json.loads(fetch("https://nodejs.org/dist/index.json", timeout=15))
         wanted = f"{sysname}-{arch}" + ("-zip" if sysname == "win" else "")
         lts = [d for d in data if d.get("lts") and wanted in d.get("files", [])]
@@ -160,7 +160,7 @@ def install_sandbox_node() -> str:
     NODE_DIR.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as td:
         tgz = Path(td) / "node.tar.gz"
-        from .mobile import download, unpack, fetch
+        from argus.devices.mobile import download, unpack, fetch
         checksums = dict((line.split()[1], line.split()[0]) for line in fetch(f"https://nodejs.org/dist/{ver}/SHASUMS256.txt").decode().splitlines() if line.strip())
         download(url, tgz, checksums[f"{name}.{extension}"])
         unpack(tgz, td)

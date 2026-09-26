@@ -28,7 +28,7 @@ journal 由 Claude 在跑测过程中用 Write 工具维护，结构如下：
 
 只做两件事：
 1. 把 step 里的 `screenshot` 字段（文件路径）替换成 `screenshot_png` 字节
-2. 调 argus.report.save_html
+2. 调 argus.qa.report.save_html
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ import json
 import sys
 from pathlib import Path
 
-from ..report import save_html
+from argus.qa.report import save_html
 
 
 def _load_results(journal_path: Path) -> list[dict]:

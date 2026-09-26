@@ -7,8 +7,8 @@ import time
 
 from openai import OpenAI
 
-from .grid import img_to_png_bytes, draw_coordinate_grid
-from .logger import get_logger
+from argus.vision.grid import img_to_png_bytes, draw_coordinate_grid
+from argus.logger import get_logger
 
 log = get_logger("brain")
 
@@ -306,7 +306,7 @@ def _image_block(png_bytes: bytes) -> dict:
 class Brain:
     def __init__(self, llm_config: dict | None = None, platform=None,
                  mcp_registry=None):
-        from .config import load_config
+        from argus.config import load_config
         cfg = llm_config or load_config()["llm"]
         # Optional headers (OpenRouter etiquette: HTTP-Referer + X-Title for
         # attribution on its leaderboard). Other providers ignore them.
@@ -341,7 +341,7 @@ class Brain:
         子进程 spawn 慢，所以只在 Brain 初始化时拉一次。运行期间 server 增减
         需要重启 Agent（与 argus 当前的"每跑一批重新 boot"工作流契合）。
         """
-        from .mcp.client import to_openai_tools
+        from argus.mcp.client import to_openai_tools
 
         all_tools: list[dict] = []
         for server_name, tools in self.mcp_registry.list_all_tools_sync().items():
@@ -745,7 +745,7 @@ class Brain:
         后续由元素定位小模型逐个定位执行、大模型不再逐个介入。返回 [{type,target,value,key},…]；
         LLM/解析失败返回 []（调用方回退到 brain 逐步决策）。
         """
-        from .planner import _sanitize_act
+        from argus.qa.planner import _sanitize_act
         prompt = (
             "你是测试执行规划器。下面给你**当前 App 截图**和**一个操作步骤的文字描述**。\n"
             "把这个步骤拆成在当前屏幕上要**依次执行的原子操作序列**"

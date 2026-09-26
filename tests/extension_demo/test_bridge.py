@@ -11,7 +11,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from argus.browser_bridge import Client, atomic_json, read_frame, write_frame
+from argus.integrations.browser_bridge import Client, atomic_json, read_frame, write_frame
 from argus.platforms.browser_extension import ExtensionBrowserPlatform
 from argus.platforms.browser_playwright import PageSelectionError
 from argus.platforms import device_session as ds
@@ -31,8 +31,18 @@ class BridgeTests(unittest.TestCase):
             read_frame(io.BytesIO(b"\x01"))
 
     def test_real_host_roundtrip_chunks_and_stale_epoch(self):
+        self._host_roundtrip(["-m", "argus.integrations.browser_bridge"])
+
+    def test_legacy_module_host_roundtrip(self):
+        self._host_roundtrip(["-m", "argus.browser_bridge"])
+
+    def test_installed_legacy_script_host_roundtrip(self):
+        script = Path(__file__).resolve().parents[2] / "argus" / "browser_bridge.py"
+        self._host_roundtrip(["-I", "-S", str(script)])
+
+    def _host_roundtrip(self, entry):
         with tempfile.TemporaryDirectory() as tmp:
-            proc = subprocess.Popen([sys.executable, "-m", "argus.browser_bridge", "host", "--directory", tmp],
+            proc = subprocess.Popen([sys.executable, *entry, "host", "--directory", tmp],
                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             try:
                 status = Path(tmp) / "status.json"

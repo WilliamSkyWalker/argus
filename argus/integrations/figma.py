@@ -6,7 +6,7 @@ import urllib.request
 import urllib.error
 from dataclasses import dataclass, field
 
-from .logger import get_logger
+from argus.logger import get_logger
 
 log = get_logger("figma")
 
