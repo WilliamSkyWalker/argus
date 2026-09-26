@@ -2,6 +2,14 @@
 
 [License: MIT](LICENSE)
 
+**Claude/Codex/Qoder/QoderCN + Chrome extension beta distribution:** see the [installer and release guide](distribution/README.md).
+The versioned installer prepares MCP, native Agent plugins and the browser bridge without Git.
+Release artifacts can be built locally; Web Store publication is still pending.
+
+**Standalone desktop application:** [Qt/PySide6 build and usage guide](docs/desktop.md).
+Configure your own vision-model API, connect sessions and run recorded tasks from a window.
+Packaged builds include Python; pyenv is not required.
+
 > A vision-based AI agent that replaces the human QA tester.
 
 Argus reads a **BDD `.feature` test case** (Gherkin / Cucumber), **looks at the screen** (iOS / Android / Browser / desktop), decides what to do, performs the action, and judges pass/fail on its own — the way a human tester would, but driven by a vision LLM.

@@ -283,7 +283,10 @@ def download(url, target, sha256):
         subprocess.run([curl, "--fail", "--location", "--max-time", "600", "--output", str(target), url], check=True,
                        **toolchain.background_options())
     with open(target,"rb") as stream:
-        digest=hashlib.file_digest(stream,"sha256").hexdigest()
+        hasher = hashlib.sha256()
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            hasher.update(block)
+        digest = hasher.hexdigest()
     if digest != sha256:
         raise RuntimeError("Download checksum mismatch: " + url)
 

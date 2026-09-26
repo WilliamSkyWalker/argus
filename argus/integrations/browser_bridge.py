@@ -17,6 +17,8 @@ import uuid
 
 HOST = "com.argus.browser"
 MAX_FRAME = 1024 * 1024
+PROTOCOL = 1
+VERSION = "0.4.0"
 
 
 def atomic_json(path, value):
@@ -64,8 +66,10 @@ class Client:
 
     def call(self, operation, **arguments):
         status = json.loads((self.directory / "status.json").read_text())
+        if status.get('protocol') != PROTOCOL:
+            raise RuntimeError('Browser bridge protocol mismatch; update the local host and reload the extension')
         if not status.get("connected"):
-            raise RuntimeError("Connect the Argus browser extension first")
+            raise RuntimeError(status.get('error') or "Connect the Argus browser extension first")
         rid = uuid.uuid4().hex
         request = self.directory / (rid + ".request")
         response = self.directory / (rid + ".response")
@@ -124,8 +128,18 @@ def _serve_locked(directory, source, sink):
 
     threading.Thread(target=reader, daemon=True).start()
     status = directory / "status.json"
-    atomic_json(status, {"connected": True, "epoch": epoch})
+    info = {"connected": False, "epoch": epoch, "protocol": PROTOCOL, "host_version": VERSION}
+    atomic_json(status, info)
     try:
+        write_frame(sink, {'type':'hello', 'protocol':PROTOCOL, 'version':VERSION})
+        try:
+            hello = incoming.get(timeout=10)
+        except queue.Empty:
+            raise RuntimeError('Extension handshake timed out; update/reload the extension')
+        if not isinstance(hello, dict) or hello.get('type') != 'hello' or hello.get('protocol') != PROTOCOL:
+            raise RuntimeError('Extension protocol mismatch; update/reload the extension and local host')
+        info.update(connected=True, extension_version=hello.get('version'))
+        atomic_json(status, info)
         while True:
             if not incoming.empty():
                 item = incoming.get_nowait()
@@ -166,8 +180,10 @@ def _serve_locked(directory, source, sink):
                     atomic_json(response, {"error": str(exc) or "extension timeout; outcome unknown"})
                     return  # terminate transport; no subsequent dispatch after ambiguity
             time.sleep(.05)
+    except RuntimeError as exc:
+        info['error'] = str(exc)
     finally:
-        atomic_json(status, {"connected": False, "epoch": epoch})
+        atomic_json(status, {**info, "connected": False})
 
 
 def install(directory, extension_id, browser):
@@ -176,6 +192,9 @@ def install(directory, extension_id, browser):
     directory = Path(directory).expanduser().resolve()
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     script = str(Path(__file__).resolve())
+    command = ([sys.executable, '--native-host', '--directory', str(directory)]
+               if getattr(sys, 'frozen', False) else
+               [sys.executable, script, 'host', '--directory', str(directory)])
     if os.name == "nt":
         launcher = directory / "host.cmd"
         # cmd expands percent even inside quotes; reject paths that cannot be represented safely.
@@ -183,13 +202,13 @@ def install(directory, extension_id, browser):
             raise ValueError("installation paths contain unsupported shell characters")
         launcher.write_text('@echo off\nchcp 65001 >nul\nsetlocal DisableDelayedExpansion\n' +
                             " ".join('"' + arg + '"' for arg in
-                                     [sys.executable, script, "host", "--directory", str(directory)]) + '\n',
+                                     command) + '\n',
                             encoding="utf-8")
     else:
         import shlex
         launcher = directory / "host.sh"
         launcher.write_text("#!/bin/sh\nexec " + shlex.join(
-            [sys.executable, script, "host", "--directory", str(directory)]) + "\n")
+            command) + "\n")
         launcher.chmod(0o700)
     manifest = {"name": HOST, "description": "Argus existing browser bridge",
                 "path": str(launcher), "type": "stdio",
@@ -212,14 +231,45 @@ def install(directory, extension_id, browser):
     return {"installed": True, "directory": str(directory), "manifest": str(manifest_path)}
 
 
+def uninstall(directory, browser):
+    """Unregister only this installation; preserve bridge data and executables."""
+    directory = Path(directory).expanduser().resolve()
+    manifest = directory / (HOST + '.json')
+    if os.name == 'nt':
+        import winreg
+        vendor = 'Google\\Chrome' if browser == 'chrome' else 'Microsoft\\Edge'
+        key_path = rf'Software\{vendor}\NativeMessagingHosts\{HOST}'
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+                current = winreg.QueryValueEx(key, '')[0]
+            if Path(current).resolve() != manifest:
+                raise RuntimeError('Native host registration belongs to another installation; left unchanged')
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+        except FileNotFoundError:
+            pass
+    else:
+        if sys.platform == 'darwin':
+            root = Path.home() / 'Library/Application Support' / ('Google/Chrome' if browser == 'chrome' else 'Microsoft Edge')
+        else:
+            root = Path.home() / '.config' / ('google-chrome' if browser == 'chrome' else 'microsoft-edge')
+        target = root / 'NativeMessagingHosts' / (HOST + '.json')
+        if target.exists():
+            current = json.loads(target.read_text())
+            if Path(current['path']).parent.resolve() != directory:
+                raise RuntimeError('Native host registration belongs to another installation; left unchanged')
+            target.unlink()
+    return {'unregistered':True, 'directory':str(directory), 'data_preserved':True}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    for command in ("host", "install"):
+    for command in ("host", "install", "uninstall"):
         p = sub.add_parser(command)
         p.add_argument("--directory", required=True)
         if command == "install":
             p.add_argument("--extension-id", required=True)
+        if command != 'host':
             p.add_argument("--browser", choices=["chrome", "edge"], default="chrome")
     args, extra = parser.parse_known_args()  # Chrome appends the extension origin to host argv.
     if extra and args.command != "host":
@@ -232,6 +282,8 @@ def main():
         serve(args.directory)
     elif args.command == "install":
         print(json.dumps(install(args.directory, args.extension_id, args.browser)))
+    elif args.command == 'uninstall':
+        print(json.dumps(uninstall(args.directory, args.browser)))
 
 
 if __name__ == "__main__":

@@ -127,7 +127,8 @@ def _connect(args):
             ds.save_state(serial,state)
             plat=ds.attach_browser(serial,manage_pages=True)
         elif backend == "extension":
-            if not args.bridge_directory: raise ValueError("Extension connections require --bridge-directory")
+            if not args.bridge_directory:
+                raise ValueError("Install the browser bridge first or provide --bridge-directory")
             from argus.integrations.browser_bridge import Client
             directory=str(Path(args.bridge_directory).expanduser().resolve())
             Client(directory).call("pages")
@@ -164,6 +165,10 @@ def connect(args):
     if state.get("handoff"):
         return {"connected": False, "session": args.session, **state["handoff"]}
     keys = session_keys(args.session, state)
+    if args.platform == 'browser' and (args.backend or state.get('browser_backend')) == 'extension' and not args.bridge_directory:
+        default = ds.STATE_DIR.parent / 'browser-bridge.json'
+        if not state and default.is_file():
+            args.bridge_directory = json.loads(default.read_text())['directory']
     if args.platform in {"desktop", "windows", "mac"}:
         keys.append("desktop:local")
     if getattr(args, "device", None):

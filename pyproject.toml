@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "argus-agent-control"
-version = "0.1.0"
+version = "0.4.0"
 description = "Persistent visual control sessions for external programming agents"
 requires-python = ">=3.10"
 readme = "README.md"
@@ -17,15 +17,21 @@ selenium = ["selenium>=4"]
 mobile = ["Appium-Python-Client>=4", "uiautomator2>=3.5,<4"]
 mcp = ["mcp>=1.2,<3"]
 qa = ["openai>=1"]
+desktop = ["PySide6-Essentials>=6.8,<7", "keyring>=25,<26"]
 windows = ["pyautogui>=0.9; sys_platform == 'win32'", "pywin32>=306; sys_platform == 'win32'"]
 mac = ["pyautogui>=0.9; sys_platform == 'darwin'", "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'", "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'"]
 
 [project.scripts]
 argus = "argus.cli:main"
 argus-mcp = "argus.mcp.server:main"
+argus-desktop = "argus.desktop.app:main"
 
 [tool.setuptools.packages.find]
 include = ["argus*"]
 
 [tool.setuptools.package-data]
 argus = ["platforms/*.ps1", "devices/*.cjs", "skills/**/*.md", "skills/**/*.json", "skills/**/*.txt"]
+
+[tool.setuptools.data-files]
+"share/argus/browser-extension" = ["extensions/argus-browser/manifest.json", "extensions/argus-browser/background.js", "extensions/argus-browser/network.js", "extensions/argus-browser/popup.html", "extensions/argus-browser/popup.js", "extensions/argus-browser/LICENSE"]
+"share/argus/browser-extension/icons" = ["extensions/argus-browser/icons/*.png"]

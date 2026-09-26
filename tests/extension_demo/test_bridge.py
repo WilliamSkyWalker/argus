@@ -45,9 +45,14 @@ class BridgeTests(unittest.TestCase):
             proc = subprocess.Popen([sys.executable, *entry, "host", "--directory", tmp],
                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             try:
+                hello = read_frame(proc.stdout)
+                self.assertEqual(hello['protocol'], 1)
+                write_frame(proc.stdin, {'type':'hello', 'protocol':1, 'version':'test'})
                 status = Path(tmp) / "status.json"
                 end = time.monotonic() + 5
-                while not status.exists() and time.monotonic() < end:
+                while time.monotonic() < end:
+                    if status.exists() and json.loads(status.read_text()).get('connected'):
+                        break
                     time.sleep(.02)
                 self.assertTrue(status.exists())
                 errors = []
@@ -80,7 +85,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_timeout_does_not_retry(self):
         with tempfile.TemporaryDirectory() as tmp:
-            atomic_json(Path(tmp)/"status.json", {"connected":True,"epoch":"test"})
+            atomic_json(Path(tmp)/"status.json", {"connected":True,"epoch":"test", "protocol":1})
             with self.assertRaisesRegex(RuntimeError,"outcome may be unknown"):
                 Client(tmp, timeout=.15).call("tap", page_id="test:1",x=1,y=2)
             self.assertEqual(list(Path(tmp).glob("*.request")),[])

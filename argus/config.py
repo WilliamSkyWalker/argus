@@ -1,11 +1,21 @@
-"""Configuration management — loads from project .env file"""
+"""User/project configuration, independent of the installed package directory."""
 
 import os
 import re
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ENV_FILE = PROJECT_ROOT / ".env"
+ENV_FILE = Path.cwd() / ".env"
+
+
+def config_files():
+    """User defaults, then explicit file or working-project .env; never site-packages."""
+    user = Path(os.environ.get('ARGUS_HOME_DIR', Path.home()/'.argus')) / 'config.env'
+    explicit = os.environ.get('ARGUS_CONFIG_FILE')
+    project = Path(explicit).expanduser().resolve() if explicit else ENV_FILE
+    if explicit and not project.is_file():
+        raise FileNotFoundError(f'ARGUS_CONFIG_FILE does not exist: {project}')
+    return list(dict.fromkeys([user, project]))
 
 DEFAULT_CONFIG = {
     "PLATFORM": "ios",
@@ -193,10 +203,12 @@ def _probes_mode(raw: str | None) -> str:
 
 
 def load_config() -> dict:
-    """Load config: defaults → .env file → environment variables (highest priority)."""
+    """Load defaults → user config → project/explicit file → environment."""
     values = DEFAULT_CONFIG.copy()
-    if ENV_FILE.exists():
-        for line in ENV_FILE.read_text().splitlines():
+    for env_file in config_files():
+        if not env_file.is_file():
+            continue
+        for line in env_file.read_text(encoding='utf-8').splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
@@ -349,14 +361,20 @@ def load_config() -> dict:
     }
 
 
-def init_config():
+def init_config(user=False):
     """Create default .env file if it doesn't exist."""
-    if ENV_FILE.exists():
-        print(f"Config already exists: {ENV_FILE}")
+    path = (Path(os.environ.get('ARGUS_HOME_DIR', Path.home()/'.argus')) / 'config.env'
+            if user else Path(os.environ['ARGUS_CONFIG_FILE']).expanduser().resolve()
+            if os.environ.get('ARGUS_CONFIG_FILE') else ENV_FILE)
+    if path.exists():
+        print(f"Config already exists: {path}")
         return
     lines = []
     for key, val in DEFAULT_CONFIG.items():
         lines.append(f"{key}={val}")
-    ENV_FILE.write_text("\n".join(lines) + "\n")
-    print(f"Config created: {ENV_FILE}")
-    print("Please edit .env to add your API key.")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+        stream.write("\n".join(lines) + "\n")
+    print(f"Config created: {path}")
+    print("Model API credentials are needed only for the built-in QA/API mode, not external Agent device control.")

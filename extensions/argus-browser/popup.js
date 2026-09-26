@@ -2,6 +2,7 @@ async function update(type) {
   try {
     const data = await chrome.runtime.sendMessage({type});
     document.getElementById("status").textContent =
+      "Argus " + chrome.runtime.getManifest().version + "\n" +
       (data.connected ? "Connected" : "Disconnected") + (data.error ? "\n" + data.error : "") +
       "\n\nAvailable tabs:\n" + (data.pages || []).map(p => p.title + "\n" + p.page_id).join("\n\n");
   } catch (error) { document.getElementById("status").textContent = String(error); }

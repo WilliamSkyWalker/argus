@@ -6,7 +6,7 @@ const networkPaused = new Set();
 const networkStarting = new Map();
 async function startNetwork(tabId, explicit = false) {
   if (explicit) networkPaused.delete(tabId);
-  if (!port || networkPaused.has(tabId)) return;
+  if (!port || !negotiated || networkPaused.has(tabId)) return;
   if (network.tabs.get(tabId)?.active) return;
   if (networkStarting.has(tabId)) return networkStarting.get(tabId);
   const ticket = generation;
@@ -30,6 +30,8 @@ async function autoNetwork(tabId) {
   catch (error) { network.begin(tabId); network.end(tabId, String(error.message || error)); }
 }
 let port = null;
+const PROTOCOL = 1;
+let negotiated = false;
 let connectionError = "Disconnected";
 let chain = Promise.resolve();
 const attached = new Set();
@@ -60,7 +62,7 @@ function webURL(url) { return /^https?:\/\//i.test(url || ""); }
 async function pages() {
   await permissions;
   const data = await state();
-  if (!port) return [];
+  if (!port || !negotiated) return [];
   const tabs = await chrome.tabs.query({});
   return tabs.filter(t => !data.blocked.includes(t.id) && webURL(t.pendingUrl || t.url)).map(t => ({
     page_id: `${data.epoch}:${t.id}`, url: t.pendingUrl || t.url, title: t.title || "",
@@ -100,12 +102,29 @@ async function connect() {
   await updateBlocked(() => []);
   const current = chrome.runtime.connectNative("com.argus.browser");
   port = current;
+  negotiated = false;
   connectionError = "";
+  let accept, reject;
+  const handshake = new Promise((resolve, fail) => { accept = resolve; reject = fail; });
+  const timer = setTimeout(() => reject(new Error('Bridge handshake timed out. Update the local host and reload this extension.')), 10000);
   current.onDisconnect.addListener(() => {
-    connectionError = chrome.runtime.lastError?.message || "Disconnected";
-    if (port === current) { port = null; generation++; void detachAll(); }
+    const disconnectError = chrome.runtime.lastError?.message || "Disconnected";
+    if (port === current) connectionError = disconnectError;
+    if (port === current) { port = null; negotiated = false; generation++; void detachAll(); }
+    reject(new Error(connectionError));
   });
   current.onMessage.addListener(request => {
+    if (request.type === 'hello') {
+      if (request.protocol !== PROTOCOL) {
+        reject(new Error('Bridge protocol mismatch. Update the local host and extension together.'));
+        return;
+      }
+      current.postMessage({type:'hello', protocol:PROTOCOL, version:chrome.runtime.getManifest().version});
+      negotiated = true;
+      accept();
+      return;
+    }
+    if (!negotiated) { reject(new Error('Local host needs an update: no compatible handshake.')); return; }
     const ticket = generation;
     chain = chain.then(async () => {
       let response;
@@ -123,6 +142,14 @@ async function connect() {
       }
     }).catch(error => { connectionError = String(error); });
   });
+  try { await handshake; }
+  catch (error) {
+    connectionError = String(error.message || error);
+    if (port === current) { port = null; negotiated = false; generation++; }
+    current.disconnect();
+    await detachAll();
+    throw error;
+  } finally { clearTimeout(timer); }
   // Default capture covers every controllable existing tab, without a second prompt.
   await Promise.all((await pages()).map(p => autoNetwork(Number(p.page_id.split(':').at(-1)))));
 }
@@ -249,13 +276,13 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (message.type === "connect") await connect();
     else if (message.type === "release") {
       generation++;
-      const old = port; port = null;
+      const old = port; port = null; negotiated = false;
       await updateBlocked(() => []);
       old?.disconnect();
       await detachAll();
       connectionError = "Control released";
     }
-    return {connected:!!port,error:connectionError,pages:await pages()};
+    return {connected:!!port && negotiated,error:connectionError,pages:await pages(),protocol:PROTOCOL,version:chrome.runtime.getManifest().version};
   })().then(reply, error => reply({error:String(error.message || error)}));
   return true;
 });

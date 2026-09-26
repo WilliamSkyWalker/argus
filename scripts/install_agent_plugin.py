@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install a managed Argus runtime and native Claude/Codex plugins.
+"""Install Argus for Claude, Codex, Qoder and QoderCN with scoped tool authorization.
 
 Run from a checkout, or download this script alone: it fetches a source archive
 without requiring Git. No dependency downloads take place during MCP startup.
@@ -11,6 +11,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -22,7 +23,8 @@ import zipfile
 
 NAME = "argus-device"
 MARKETPLACE = "argus-managed"
-REPOSITORY = "https://codeload.github.com/WilliamSkyWalker/argus/zip/refs/heads/main"
+# Replaced with immutable release coordinates by build_release.py.
+RELEASE = None
 
 
 def run(args, **kwargs):
@@ -32,26 +34,124 @@ def run(args, **kwargs):
 
 def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.argus-')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
-def source_root(explicit, temporary):
+def client_directory(client):
+    defaults = {'claude':'.claude', 'qoder':'.qoder', 'qodercn':'.qoder-cn'}
+    variables = {'claude':'CLAUDE_CONFIG_DIR', 'qoder':'QODER_CONFIG_DIR', 'qodercn':'QODERCN_CONFIG_DIR'}
+    return Path(os.environ.get(variables[client], Path.home()/defaults[client])).expanduser().resolve()
+
+
+def client_available(client):
+    if client in ('claude', 'codex'):
+        return bool(shutil.which(client))
+    aliases = ('qoder', 'qodercli') if client == 'qoder' else ('qodercn', 'qoder-cn', 'qoderclicn')
+    root = client_directory(client)
+    return any(shutil.which(name) for name in aliases) or (root/'settings.json').is_file() or (root/'bin').is_dir()
+
+
+def configure_client(client, market):
+    """Default scoped authorization; Qoder also gets MCP + the shared Skill."""
+    directory = client_directory(client)
+    settings = directory/'settings.json'
+    receipt_path = directory/'argus-install.json'
+    value = json.loads(settings.read_text()) if settings.exists() else {}
+    receipt = json.loads(receipt_path.read_text()) if receipt_path.exists() else {}
+    owner = str(Path(market).resolve())
+    if receipt and receipt.get('owner') != owner:
+        raise ValueError(f'{client}: Argus is owned by another installation: {receipt_path}')
+    receipt = {**receipt, 'owner':owner, 'client':client}
+    if client == 'claude':
+        allow = value.setdefault('permissions', {}).setdefault('allow', [])
+        added = receipt.setdefault('added_rules', [])
+        for rule in ('mcp__argus__*', 'mcp__plugin_argus-device_argus__*'):
+            if rule not in allow:
+                allow.append(rule)
+                if rule not in added:
+                    added.append(rule)
+    else:
+        source = Path(market)/'plugins'/NAME
+        server = json.loads((source/'.mcp.json').read_text())['mcpServers']['argus']
+        server = {**server, 'trust':True}
+        servers = value.setdefault('mcpServers', {})
+        existing = servers.get('argus')
+        if existing is not None and existing != receipt.get('server') and existing != server:
+            raise ValueError(f'{client}: an independently configured argus server exists; left unchanged')
+        skill = directory/'skills'/'argus-device'/'SKILL.md'
+        content = (source/'skills/device/SKILL.md').read_bytes()
+        if skill.exists() and hashlib.sha256(skill.read_bytes()).hexdigest() != receipt.get('skill_sha256'):
+            raise ValueError(f'{client}: existing Skill is not managed by this installer: {skill}')
+        receipt.update(server=server, skill_sha256=hashlib.sha256(content).hexdigest())
+        servers['argus'] = server
+        skill.parent.mkdir(parents=True, exist_ok=True)
+        skill.write_bytes(content)
+    directory.mkdir(parents=True, exist_ok=True)
+    if settings.exists():
+        backup = settings.with_name('settings.json.before-argus')
+        if not backup.exists():
+            fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, 'wb') as stream:
+                stream.write(settings.read_bytes())
+    write_json(receipt_path, receipt)
+    write_json(settings, value)
+    return directory
+
+
+def unconfigure_client(client, market):
+    directory = client_directory(client)
+    receipt_path = directory/'argus-install.json'
+    if not receipt_path.exists():
+        return
+    receipt = json.loads(receipt_path.read_text())
+    if receipt.get('owner') != str(Path(market).resolve()):
+        raise ValueError(f'{client}: another installation owns the configuration')
+    settings = directory/'settings.json'
+    value = json.loads(settings.read_text()) if settings.exists() else {}
+    if client == 'claude':
+        allow = value.get('permissions', {}).get('allow', [])
+        for rule in receipt.get('added_rules', []):
+            if rule in allow:
+                allow.remove(rule)
+    else:
+        servers = value.get('mcpServers', {})
+        if servers.get('argus') == receipt.get('server'):
+            servers.pop('argus', None)
+        skill = directory/'skills'/'argus-device'/'SKILL.md'
+        if skill.exists() and hashlib.sha256(skill.read_bytes()).hexdigest() == receipt.get('skill_sha256'):
+            skill.unlink()
+    write_json(settings, value)
+    receipt_path.unlink()
+
+
+def source_root(explicit, temporary, archive_path=None):
     if explicit:
         root = Path(explicit).expanduser().resolve()
-    elif (Path(__file__).resolve().parents[1] / 'pyproject.toml').is_file():
+    elif not archive_path and (Path(__file__).resolve().parents[1] / 'pyproject.toml').is_file():
         root = Path(__file__).resolve().parents[1]
     else:
-        archive = temporary / 'source.zip'
-        print('Downloading Argus source archive (no Git required)...', flush=True)
-        with urllib.request.urlopen(REPOSITORY, timeout=60) as response, archive.open('wb') as dest:
-            shutil.copyfileobj(response, dest)
+        if not RELEASE:
+            raise ValueError('Use a versioned release installer or --source; unpinned downloads are disabled')
+        archive = Path(archive_path).resolve() if archive_path else temporary / 'source.zip'
+        if not archive_path:
+            print('Downloading verified Argus release (no Git required)...', flush=True)
+            with urllib.request.urlopen(RELEASE['url'], timeout=60) as response, archive.open('wb') as dest:
+                shutil.copyfileobj(response, dest)
+        if hashlib.sha256(archive.read_bytes()).hexdigest() != RELEASE['sha256']:
+            raise ValueError('Source archive SHA256 mismatch; nothing extracted or installed')
         with zipfile.ZipFile(archive) as bundle:
             for member in bundle.infolist():
                 target = (temporary / member.filename).resolve()
                 if not target.is_relative_to(temporary.resolve()):
                     raise ValueError('Unsafe path in source archive')
             bundle.extractall(temporary)
-        root = temporary / 'argus-main'
+        root = temporary / RELEASE['root']
     for required in ('pyproject.toml', 'argus/__init__.py', 'plugins/argus-device/.codex-plugin/plugin.json'):
         if not (root / required).is_file():
             raise ValueError(f'Incomplete Argus source: missing {required} in {root}')
@@ -62,7 +162,7 @@ def fingerprint(source, extras):
     digest = hashlib.sha256()
     digest.update(f'{sys.version_info[:2]}:{sys.platform}:{extras}'.encode())
     paths = [source / 'pyproject.toml']
-    for directory in ('argus', 'plugins/argus-device'):
+    for directory in ('argus', 'plugins/argus-device', 'scripts', 'distribution', 'extensions/argus-browser'):
         paths.extend(p for p in (source / directory).rglob('*')
                      if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc')
     for path in sorted(paths):
@@ -89,7 +189,7 @@ def prepare_runtime(source, root, extras):
     return python
 
 
-def prepare_plugin(source, root, python, version):
+def prepare_plugin(source, root, python, version, config_file=None):
     market = root / 'marketplace'
     plugin = market / 'plugins' / NAME
     shutil.copytree(source / 'plugins' / NAME, plugin, dirs_exist_ok=True,
@@ -97,11 +197,15 @@ def prepare_plugin(source, root, python, version):
     # Absolute interpreter path survives both clients copying the plugin into caches.
     server = {'command': str(python), 'args': ['-I', '-m', 'argus.mcp.server', '--profile', 'device'],
               'env': {'PYTHONUNBUFFERED': '1'}}
+    if config_file:
+        server['env']['ARGUS_CONFIG_FILE'] = str(config_file)
+        version = hashlib.sha256((version + str(config_file)).encode()).hexdigest()[:16]
     write_json(plugin / '.mcp.json', {'mcpServers': {'argus': server}})
     for directory in ('.claude-plugin', '.codex-plugin'):
         path = plugin / directory / 'plugin.json'
         manifest = json.loads(path.read_text())
-        manifest['version'] = f'0.3.0+managed.{version}'
+        release = json.loads((source / 'distribution/release.json').read_text())
+        manifest['version'] = f"{release['version']}+managed.{version}"
         if directory == '.claude-plugin':
             manifest['mcpServers'] = {'argus': server}
         write_json(path, manifest)
@@ -119,29 +223,55 @@ def prepare_plugin(source, root, python, version):
 
 
 def install_client(client, market):
+    if client in ('qoder', 'qodercn'):
+        configure_client(client, market)
+        return
     run([client, 'plugin', 'marketplace', 'add', market])
     command = 'add' if client == 'codex' else 'install'
     run([client, 'plugin', command, NAME + '@' + MARKETPLACE])
     if client == 'claude':
         # install is a no-op for an existing plugin; update refreshes its cache.
         run([client, 'plugin', 'update', NAME + '@' + MARKETPLACE])
+        configure_client(client, market)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--client', choices=['codex', 'claude', 'both'], required=True)
-    parser.add_argument('--source', help='Source checkout; otherwise use adjacent checkout or download main')
+    parser.add_argument('--client', choices=['codex', 'claude', 'qoder', 'qodercn', 'both', 'all', 'auto'], default='auto',
+                        help='auto detects installed clients; both = Claude+Codex; all = all four')
+    parser.add_argument('--source', help='Explicit source checkout (development only)')
+    parser.add_argument('--archive', help='Local source ZIP, checked against this release installer SHA256')
     parser.add_argument('--root', type=Path, default=Path.home() / '.local/share/argus/agent-plugin')
     parser.add_argument('--mobile', action='store_true', help='Also install mobile Python dependencies')
     parser.add_argument('--install-browser', action='store_true', help='Download Chromium for Playwright')
     parser.add_argument('--prepare-only', action='store_true', help='Build runtime and plugins without changing client configuration')
+    parser.add_argument('--browser', choices=['chrome', 'edge', 'none'], default='chrome')
+    parser.add_argument('--extension-id', help='Override the packaged development/store extension ID')
+    parser.add_argument('--bridge-directory', help='Override native host directory (WSL path on WSL)')
+    parser.add_argument('--config-file', type=Path, help='Reference an existing user .env file; never copy its secrets into the plugin')
+    parser.add_argument('--uninstall', action='store_true', help='Remove plugin and bridge registration; preserve sessions and files')
     args = parser.parse_args(argv)
+    if args.extension_id and not re.fullmatch('[a-p]{32}', args.extension_id):
+        parser.error('--extension-id must contain exactly 32 letters a-p')
     if sys.version_info < (3, 10):
         parser.error('Python 3.10+ is required')
-    clients = ['codex', 'claude'] if args.client == 'both' else [args.client]
+    if args.source and args.archive:
+        parser.error('--source and --archive are mutually exclusive')
+    if args.config_file:
+        args.config_file = args.config_file.expanduser().resolve()
+        if not args.config_file.is_file():
+            parser.error('--config-file must point to an existing file')
+    if args.uninstall:
+        return uninstall(args.root.expanduser().resolve())
+    candidates = ('codex', 'claude', 'qoder', 'qodercn')
+    clients = ([c for c in candidates if client_available(c)] if args.client == 'auto'
+               else list(candidates) if args.client == 'all'
+               else ['codex', 'claude'] if args.client == 'both' else [args.client])
+    if not clients and not args.prepare_only:
+        parser.error('No supported client detected; select --client explicitly or use --prepare-only')
     if not args.prepare_only:
         for client in clients:
-            if not shutil.which(client):
+            if client in ('claude', 'codex') and not shutil.which(client):
                 parser.error(f'{client} CLI is not installed or not on PATH')
     extras = ['mcp']
     if args.install_browser:
@@ -163,21 +293,80 @@ def main(argv=None):
         else:
             import fcntl
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        previous = json.loads((root / 'installation.json').read_text()) if (root / 'installation.json').exists() else {}
+        config_file = args.config_file or previous.get('config_file')
+        if args.prepare_only and previous and not previous.get('prepared_only'):
+            raise ValueError('--prepare-only requires a separate root from an installed plugin')
         with tempfile.TemporaryDirectory(prefix='argus-install-') as temporary:
-            source = source_root(args.source, Path(temporary))
+            source = source_root(args.source, Path(temporary), args.archive)
             extra_string = ','.join(extras)
             python = prepare_runtime(source, root, extra_string)
             if args.install_browser:
                 run([python, '-m', 'playwright', 'install', 'chromium'])
-            market = prepare_plugin(source, root, python, fingerprint(source, extra_string))
+            market = prepare_plugin(source, root, python, fingerprint(source, extra_string), config_file)
+            release = json.loads((source / 'distribution/release.json').read_text())
+            extension_id = args.extension_id or release.get('store_extension_id') or release['development_extension_id']
+            bridge = previous.get('bridge') if not args.prepare_only else None
+            record = {'python': str(python), 'marketplace': str(market),
+                      'clients': previous.get('clients', []) if not args.prepare_only else [],
+                      'prepared_only': args.prepare_only, 'bridge': bridge,
+                      'version': release['version'], 'extension_id': extension_id,
+                      'config_file': str(config_file) if config_file else None}
             if not args.prepare_only:
+                if args.browser != 'none':
+                    command = [str(python), '-I', '-m', 'argus.integrations.browser_setup',
+                               '--extension-id', extension_id, '--browser', args.browser, '--save-default']
+                    if args.bridge_directory:
+                        command += ['--directory', args.bridge_directory]
+                    bridge = json.loads(subprocess.check_output(command, text=True))
+                    record['bridge'] = bridge
+                # Keep recovery metadata even when a client CLI fails partway through.
+                write_json(root / 'installation.json', record)
                 for client in clients:
+                    if client not in record['clients']:
+                        record['clients'].append(client)
+                    write_json(root / 'installation.json', record)
                     install_client(client, market)
-            write_json(root / 'installation.json', {'python': str(python), 'marketplace': str(market),
-                                                    'clients': clients, 'prepared_only': args.prepare_only})
+            extension = Path(bridge['directory']) / 'extension' if bridge else root / 'browser-extension'
+            shutil.copytree(source / 'extensions/argus-browser', extension, dirs_exist_ok=True)
+            write_json(root / 'installation.json', record)
             print(f'Prepared plugin: {market / "plugins" / NAME}')
             if not args.prepare_only:
                 print('Installed. Start a new client session and ask Argus to operate a test application.')
+                if args.browser != 'none':
+                    if extension_id != release['development_extension_id']:
+                        print('Install the extension from: https://chromewebstore.google.com/detail/' + extension_id)
+                    else:
+                        if bridge.get('host') == 'windows':
+                            extension = subprocess.check_output(['wslpath', '-w', str(extension)], text=True).strip()
+                        print(f'Open {args.browser}://extensions, enable Developer mode, Load unpacked: {extension}')
+                    print('Then open Argus Browser and click Connect. Browser confirmation is required.')
+
+
+def uninstall(root):
+    record = json.loads((root / 'installation.json').read_text())
+    if record.get('uninstalled'):
+        print('Already uninstalled. Files preserved at ' + str(root))
+        return
+    if record.get('prepared_only'):
+        print('Prepared only: no registrations to remove. Files preserved at ' + str(root))
+        return
+    for client in list(record['clients']):
+        if client in ('codex', 'claude'):
+            command = 'remove' if client == 'codex' else 'uninstall'
+            run([client, 'plugin', command, NAME + '@' + MARKETPLACE])
+        if client != 'codex':
+            unconfigure_client(client, record['marketplace'])
+        record['clients'].remove(client)
+        write_json(root / 'installation.json', record)
+    if record.get('bridge'):
+        run(record['bridge']['uninstall_command'])
+        default = Path(os.environ.get('ARGUS_HOME_DIR', Path.home()/'.argus')) / 'browser-bridge.json'
+        if default.exists() and json.loads(default.read_text()).get('directory') == record['bridge']['directory']:
+            default.unlink()
+    record['uninstalled'] = True
+    write_json(root / 'installation.json', record)
+    print('Registrations removed. Sessions, runtimes and extension files preserved. Remove the extension in your browser.')
 
 
 if __name__ == '__main__':

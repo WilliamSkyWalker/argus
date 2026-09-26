@@ -13,7 +13,8 @@ def build_parser():
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     sub = parser.add_subparsers(dest="command")
     init = sub.add_parser("init", help="Create default .env config file")
-    init.set_defaults(handler=lambda args: init_config())
+    init.add_argument('--user', action='store_true', help='Create user config at ~/.argus/config.env')
+    init.set_defaults(handler=lambda args: init_config(user=args.user))
     for commands in (targets, run, toolchain, device, probes, background, figma, workflow, task, doctor):
         commands.register(sub)
     return parser
