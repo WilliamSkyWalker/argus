@@ -65,6 +65,7 @@ class WindowsRunnerPlatform(Platform):
         self._binding_callback = win.get("_binding_callback")
         result = self._call(
             "setup", app=str(win.get("app") or ""), launch=str(win.get("launch") or ""),
+            foreground=bool(win.get("foreground")),
             input_binding=win.get("input_binding"),
             process_name=win.get("process_name"), process_id=win.get("process_id"),
             new_window=win.get("new_window", False), new_window_args=win.get("new_window_args", []),

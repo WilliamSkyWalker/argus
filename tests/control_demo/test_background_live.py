@@ -19,6 +19,14 @@ from argus.devices.toolchain import background_options
                      'set ARGUS_TEST_WINDOWS=1 on Windows or WSL with an unlocked desktop')
 class BackgroundLiveTests(unittest.TestCase):
     def test_occluded_window_input_and_reconnection(self):
+        self._exercise()
+
+    @unittest.skipUnless(os.environ.get('ARGUS_TEST_WINDOWS_FOREGROUND') == '1',
+                         'foreground tests require a separate explicit opt-in')
+    def test_explicit_foreground_actions(self):
+        self._exercise(foreground=True)
+
+    def _exercise(self, foreground=False):
         def windows_path(path):
             if os.name == 'nt':
                 return str(path)
@@ -28,7 +36,7 @@ class BackgroundLiveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='argus-background-') as directory:
             state_path = Path(directory) / 'state.json'
             fixture = subprocess.Popen([
-                'powershell.exe', '-NoProfile', '-NonInteractive', '-STA',
+                'powershell.exe', '-NoProfile', '-NonInteractive', '-STA', '-WindowStyle', 'Hidden',
                 '-ExecutionPolicy', 'Bypass', '-File',
                 windows_path(Path(__file__).with_name('background_fixture.ps1')),
                 '-StateFile', windows_path(state_path),
@@ -45,11 +53,14 @@ class BackgroundLiveTests(unittest.TestCase):
                         time.sleep(.05)
                 self.fail('Fixture did not publish state')
 
+            background_phase = True
+
             def check(**expected):
                 deadline = time.monotonic() + 3
                 while time.monotonic() < deadline:
                     current = read()
-                    self.assertEqual(current['activations'], before['activations'], current)
+                    if background_phase:
+                        self.assertEqual(current['activations'], before['activations'], current)
                     if all(current[key] == value for key, value in expected.items()):
                         return current
                     time.sleep(.05)
@@ -60,6 +71,8 @@ class BackgroundLiveTests(unittest.TestCase):
                 time.sleep(.5)
                 before = read()
                 self.assertNotEqual(before['foreground'], before['target'])
+                self.assertEqual(before['activations'], 0, before)
+                self.assertNotEqual(before['foreground'], before['cover'], before)
                 config = {'win': {'app': 'Argus Background Fixture', 'background': True,
                                   'process_name': 'powershell', 'process_id': before['pid']}}
                 runner.setup(config)
@@ -91,15 +104,39 @@ class BackgroundLiveTests(unittest.TestCase):
                 check(clicks=1, second='second-reconnected')
                 runner.tap(*before['panel'])
                 after = check(point='37,29')
-                self.assertEqual(after['foreground'], before['foreground'], {'before': before, 'after': after})
-                self.assertEqual(after['cursor'], before['cursor'])
-                self.assertEqual(after['clipboard'], before['clipboard'])
+                observations = {key + '_unchanged': after[key] == before[key]
+                                for key in ('foreground', 'cursor', 'clipboard')}
+                print('Background observations:', observations, flush=True)
+                if os.environ.get('ARGUS_TEST_WINDOWS_IDLE') == '1':
+                    self.assertTrue(all(observations.values()), observations)
+                self.assertNotEqual(after['foreground'], after['cover'], after)
                 runner.teardown()
                 runner = WindowsRunnerPlatform()
                 config['win']['input_binding'] = dict(binding, target=before['cover'])
                 runner.setup(config)
                 with self.assertRaisesRegex(RuntimeError, 'tap the intended field first'):
                     runner.input_text('wrong window')
+                runner.teardown()
+                if not foreground:
+                    return
+                background_phase = False
+                config['win']['foreground'] = True
+                runner = WindowsRunnerPlatform()
+                runner.setup(config)
+                with self.assertRaisesRegex(RuntimeError, 'covered by another window'):
+                    runner.tap(*before['edit'])
+                Path(str(state_path) + '.foreground').touch()
+                check(cover_visible=False)
+                runner.tap(*before['edit'])
+                runner.press_key('ctrl+a')
+                time.sleep(.2)
+                runner.input_text('前台🙂+{}')
+                check(first='前台🙂+{}', second='second-reconnected')
+                runner.tap(*before['button'])
+                check(clicks=2)
+                image = Image.open(io.BytesIO(runner.screenshot_raw()))
+                self.assertEqual(image.getpixel((400, 250))[:3], (173, 216, 230))
+                self.assertEqual(read()['clipboard'], before['clipboard'])
             finally:
                 runner.teardown()
                 Path(str(state_path) + '.stop').touch()

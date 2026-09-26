@@ -352,12 +352,21 @@ def main():
     d_ts = dev_sub.add_parser("type-send", help="Focus→type→submit→wait→screenshot in one call")
     d_ts.add_argument("text")
     d_ts.add_argument("--input-x", type=int, required=True); d_ts.add_argument("--input-y", type=int, required=True)
-    d_ts.add_argument("--send-x", type=int, required=True); d_ts.add_argument("--send-y", type=int, required=True)
+    d_ts.add_argument("--send-x", type=int); d_ts.add_argument("--send-y", type=int)
     d_ts.add_argument("--wait-s", type=float, default=12.0)
     d_ts.add_argument("--serial", "--session", default=None); d_ts.add_argument("--out", default=None)
+    d_ts.add_argument("--prepare-only", action="store_true", help="Prepare draft and screenshot without submitting")
+    d_ts.add_argument("--replace", action="store_true", help="Select all in the input field before typing")
+    d_tap.add_argument("--out", default=None, help="Capture result after tapping")
+    d_focus = dev_sub.add_parser("focus", help="Restore existing Windows window and capture its visible contents")
+    d_focus.add_argument("--session", "--serial", dest="serial", default=None)
+    d_focus.add_argument("--out", default=None)
+    d_focus.set_defaults(foreground=True)
     d_key = dev_sub.add_parser("key", help="Press key: enter/delete/back/home/recent/…")
     d_key.add_argument("key")
     d_key.add_argument("--serial", "--session", default=None)
+    for action_parser in (d_shot, d_tap, d_input, d_ts, d_key):
+        action_parser.add_argument("--foreground", action="store_true", help="Explicit Windows foreground input and screen capture for this command")
     d_launch = dev_sub.add_parser("launch", help="Foreground/relaunch a package (Appium activate, no adb)")
     d_launch.add_argument("package")
     d_launch.add_argument("--serial", "--session", default=None)
@@ -1084,6 +1093,7 @@ def cmd_device(args):
         return result
 
     plat = None
+    submission_attempted = False
     try:
         if cmd == "start":
             os_name = getattr(args, "os", "android")
@@ -1121,8 +1131,13 @@ def cmd_device(args):
         state = ds.load_state(serial)
         if state and state.get("disconnected"):
             raise RuntimeError("Session disconnected; use device connect to reconnect")
+        foreground = getattr(args, "foreground", False)
+        if foreground and (not state or state.get("kind") != "desktop" or state.get("os") != "windows"):
+            raise ValueError("--foreground requires a connected Windows desktop session")
+        if cmd == "type-send" and not args.prepare_only and (args.send_x is None or args.send_y is None):
+            raise ValueError("type-send requires --send-x and --send-y unless --prepare-only is set")
         if state and state.get("kind") == "desktop":
-            plat = ds.attach_desktop(state)
+            plat = ds.attach_desktop(state, serial=serial, foreground=foreground)
         elif state and state.get("kind") == "browser":
             plat = ds.attach_browser(serial)
         else:
@@ -1138,11 +1153,16 @@ def cmd_device(args):
             plat.open_target(args.url)
             time.sleep(max(0.0, args.wait_s))
             _out(_shot(plat, args.out))
-        elif cmd == "screenshot":
+        elif cmd in ("screenshot", "focus"):
             _out(_shot(plat, args.out))
         elif cmd == "tap":
             plat.tap(args.x, args.y)
-            _out({"ok": True, "tapped": [args.x, args.y]})
+            result = {"ok": True, "tapped": [args.x, args.y]}
+            if args.out:
+                time.sleep(.3)
+                result.update(_shot(plat, args.out))
+                result["requires_observation"] = True
+            _out(result)
         elif cmd == "swipe":
             plat.swipe(args.x1, args.y1, args.x2, args.y2)
             _out({"ok": True, "from": [args.x1, args.y1], "to": [args.x2, args.y2]})
@@ -1151,9 +1171,15 @@ def cmd_device(args):
             _out({"ok": True, "len": len(args.text)})
         elif cmd == "type-send":
             plat.tap(args.input_x, args.input_y); time.sleep(0.7)
+            if args.replace:
+                plat.press_key("ctrl+a")
             plat.input_text(args.text); time.sleep(0.4)
-            plat.tap(args.send_x, args.send_y); time.sleep(max(0.0, args.wait_s))
-            res = _shot(plat, args.out); res["sent"] = args.text
+            if not args.prepare_only:
+                submission_attempted = True
+                plat.tap(args.send_x, args.send_y)
+                time.sleep(max(0.0, args.wait_s))
+            res = _shot(plat, args.out)
+            res.update({"text": args.text, "submitted": not args.prepare_only, "requires_observation": True})
             _out(res)
         elif cmd == "key":
             plat.press_key(args.key)
@@ -1162,7 +1188,11 @@ def cmd_device(args):
             plat.reset_app(args.package, "relaunch" if args.force_stop else "none")
             _out({"ok": True, "package": args.package, "force_stop": args.force_stop})
     except Exception as exc:
-        _out({"ok": False, "error": str(exc)})
+        error = {"ok": False, "error": str(exc)}
+        if cmd == "type-send":
+            error["submission_attempted"] = submission_attempted
+            error["requires_observation"] = submission_attempted
+        _out(error)
         raise SystemExit(2) from exc
     finally:
         ds.release_controller(plat)

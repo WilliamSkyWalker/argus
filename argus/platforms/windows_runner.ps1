@@ -16,6 +16,30 @@ using System.Runtime.InteropServices;
 using System.Text;
 
 public static class ArgusNative {
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT point);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
+    [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT {
+        public int dx,dy; public uint mouseData,dwFlags,time; public UIntPtr dwExtraInfo;
+    }
+    [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT {
+        public ushort wVk,wScan; public uint dwFlags,time; public UIntPtr dwExtraInfo;
+    }
+    [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION {
+        [FieldOffset(0)] public MOUSEINPUT mi;
+        [FieldOffset(0)] public KEYBDINPUT ki;
+    }
+    [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public INPUTUNION data; }
+    [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint count, INPUT[] inputs, int size);
+    public static void Key(ushort key, bool up, bool unicode) {
+        INPUT input = new INPUT(); input.type=1;
+        input.data.ki.wVk=unicode ? (ushort)0 : key;
+        input.data.ki.wScan=unicode ? key : (ushort)0;
+        input.data.ki.dwFlags=(up ? 2u : 0u) | (unicode ? 4u : 0u);
+        if (SendInput(1, new INPUT[]{input}, Marshal.SizeOf(typeof(INPUT))) != 1)
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "SendInput failed");
+    }
     public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left, Top, Right, Bottom; }
@@ -79,6 +103,7 @@ public static class ArgusNative {
 $script:ConsoleHwnd = [ArgusNative]::GetConsoleWindow()
 if ($script:ConsoleHwnd -ne [IntPtr]::Zero) { [void][ArgusNative]::ShowWindow($script:ConsoleHwnd, 0) }
 
+$script:Foreground = $false
 $script:App = ""
 $script:Launch = ""
 $script:TargetProcessId = 0
@@ -353,6 +378,22 @@ function Test-Uniform([Drawing.Bitmap]$bmp) {
     }
 }
 
+function Require-Foreground {
+    if (-not (Refresh-TargetWindow)) { throw 'Target window is unavailable.' }
+    if ([ArgusNative]::GetForegroundWindow() -ne $script:Hwnd) {
+        [void][ArgusNative]::ShowWindow($script:Hwnd,9)
+        [void][ArgusNative]::SetForegroundWindow($script:Hwnd)
+        Start-Sleep -Milliseconds 150
+    }
+    Assert-Foreground
+}
+
+function Assert-Foreground {
+    if ([ArgusNative]::GetForegroundWindow() -ne $script:Hwnd) {
+        throw 'Target window is not foreground; no global input was sent.'
+    }
+}
+
 function Capture-Screen([int]$x, [int]$y, [int]$w, [int]$h) {
     $bitmap = [Drawing.Bitmap]::new($w, $h, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
     $graphics = [Drawing.Graphics]::FromImage($bitmap)
@@ -462,6 +503,7 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
         $request = $line | ConvertFrom-Json
         switch ($request.command) {
             "setup" {
+                $script:Foreground = [bool]$request.foreground
                 $script:App = [string]$request.app
                 $script:Launch = [string]$request.launch
                 if ([string]::IsNullOrWhiteSpace($script:App)) { throw "WIN_APP is required." }
@@ -487,7 +529,11 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
             }
             "screenshot" {
                 if (-not (Refresh-TargetWindow)) { throw 'Target window is unavailable; refusing to capture another application.' }
-                $bitmap = Capture-Window $script:Hwnd $script:Rect
+                if ($script:Foreground) {
+                    Require-Foreground
+                    $bitmap = Capture-Screen $script:Rect.Left $script:Rect.Top ($script:Rect.Right-$script:Rect.Left) ($script:Rect.Bottom-$script:Rect.Top)
+                    Assert-Foreground
+                } else { $bitmap = Capture-Window $script:Hwnd $script:Rect }
                 $stream = [IO.MemoryStream]::new()
                 try {
                     $bitmap.Save($stream, [Drawing.Imaging.ImageFormat]::Png)
@@ -502,6 +548,22 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
             }
             "tap" {
                 if (-not (Refresh-TargetWindow)) { throw "Target window '$($script:App)' was not found." }
+                if ($script:Foreground) {
+                    Require-Foreground
+                    if ($request.x -lt 0 -or $request.y -lt 0 -or $request.x -ge ($script:Rect.Right-$script:Rect.Left) -or $request.y -ge ($script:Rect.Bottom-$script:Rect.Top)) {
+                        throw 'Tap is outside the target window.'
+                    }
+                    $point = [ArgusNative+POINT]::new(($script:Rect.Left+[int]$request.x),($script:Rect.Top+[int]$request.y))
+                    $hitWindow = [ArgusNative]::WindowFromPoint($point)
+                    if ($hitWindow -ne $script:Hwnd -and -not [ArgusNative]::IsChild($script:Hwnd,$hitWindow)) { throw 'Target point is covered by another window.' }
+                    Assert-Foreground
+                    [void][ArgusNative]::SetCursorPos(($script:Rect.Left+[int]$request.x),($script:Rect.Top+[int]$request.y))
+                    [ArgusNative]::mouse_event(2,0,0,0,[UIntPtr]::Zero)
+                    [ArgusNative]::mouse_event(4,0,0,0,[UIntPtr]::Zero)
+                    Start-Sleep -Milliseconds 100
+                    Write-Response @{id=$request.id;ok=$true}
+                    break
+                }
                 $sx = [int]$script:Rect.Left + [int]$request.x
                 $sy = [int]$script:Rect.Top + [int]$request.y
                 $pt = [ArgusNative+POINT]::new($sx, $sy)
@@ -599,6 +661,16 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
             }
             "input" {
                 if (-not (Refresh-TargetWindow)) { throw "Target window '$($script:App)' was not found." }
+                if ($script:Foreground) {
+                    Require-Foreground
+                    foreach ($ch in [char[]][string]$request.text) {
+                        Assert-Foreground
+                        [ArgusNative]::Key([uint16]$ch,$false,$true)
+                        [ArgusNative]::Key([uint16]$ch,$true,$true)
+                    }
+                    Write-Response @{id=$request.id;ok=$true}
+                    break
+                }
                 $target = Get-InputTarget
                 foreach ($ch in [char[]][string]$request.text) {
                     [void][ArgusNative]::PostMessageW($target, $script:WM_CHAR, [UIntPtr]([uint64][char]$ch), [IntPtr]::Zero)
@@ -624,6 +696,32 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
                 if ($parts.Count -gt 1) { $modNames = @($parts[0..($parts.Count - 2)]) }
                 foreach ($m in $modNames) {
                     if (-not $modTable.ContainsKey($m)) { throw "Unsupported modifier '$m'." }
+                }
+                if ($script:Foreground) {
+                    if (-not $vkTable.ContainsKey($mainName) -and $mainName -notmatch '^[a-z0-9]$') { throw "Unsupported key '$name'." }
+                    $mainVk = if ($vkTable.ContainsKey($mainName)) { $vkTable[$mainName] } else { [int][char]::ToUpperInvariant($mainName[0]) }
+                    Require-Foreground
+                    if ($modNames.Count -eq 1 -and $modNames[0] -in @('ctrl','control') -and $mainName -eq 'a') {
+                        [Windows.Forms.SendKeys]::SendWait('^a')
+                        Write-Response @{id=$request.id;ok=$true}
+                        break
+                    }
+                    $pressed = @()
+                    try {
+                        foreach ($m in $modNames) {
+                            Assert-Foreground
+                            [ArgusNative]::Key($modTable[$m],$false,$false)
+                            $pressed += $modTable[$m]
+                        }
+                        Assert-Foreground
+                        [ArgusNative]::Key($mainVk,$false,$false)
+                        [ArgusNative]::Key($mainVk,$true,$false)
+                    } finally {
+                        [array]::Reverse($pressed)
+                        foreach ($vk in $pressed) { [ArgusNative]::Key($vk,$true,$false) }
+                    }
+                    Write-Response @{id=$request.id;ok=$true}
+                    break
                 }
                 $hasAlt = $modNames -contains "alt"
 

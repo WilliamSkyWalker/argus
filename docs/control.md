@@ -173,14 +173,57 @@ A replaced control can reuse a handle, so verify the current screenshot after UI
 changes and tap again. Ctrl+A supports Edit/RichEdit controls; other modifier
 shortcuts are rejected. Use a visual button or human handoff when unsupported.
 
-Opt-in regression on an unlocked Windows/WSL desktop (avoid moving the mouse
-during the test):
+Opt-in background regression on an unlocked Windows/WSL desktop:
 
 ```bash
 ARGUS_TEST_WINDOWS=1 python3 -m unittest discover -s tests/control_demo -p test_background_live.py -v
 ```
 
-The test opens only its own fixture and cover windows. It verifies an occluded
-screenshot, two text fields, Unicode input, button clicks, coordinates, restored
-input bindings, invalid targets, and unchanged activation/cursor/clipboard state.
-It does not call an LLM or establish compatibility with every Windows app.
+The test creates only its own non-activating fixture and cover windows.
+It verifies occluded capture, two text fields, Unicode input, button clicks,
+coordinates, restored bindings, invalid targets, and zero target activation.
+It also reports cursor/foreground/clipboard changes; concurrent human activity can
+change these. Set `ARGUS_TEST_WINDOWS_IDLE=1` on an idle desktop to assert all three
+remain unchanged. The separate foreground test is skipped unless
+`ARGUS_TEST_WINDOWS_FOREGROUND=1` is explicitly set; it moves the mouse and focus.
+Tests do not call an LLM or establish compatibility with every Windows app.
+
+### Explicit Windows foreground actions
+
+Use the same `argus device` entry point when a custom/GPU application cannot be
+operated or observed reliably in the background. `--foreground` applies only to
+that command; it does not change the saved session's background preference.
+
+```bash
+# Restore the existing bound window and capture its visible contents.
+argus device focus --session work --out /tmp/window.png
+
+# Prepare and inspect a draft; this does not click Send.
+argus device type-send 'Example message' --session work --foreground --replace --prepare-only --input-x 400 --input-y 620 --out /tmp/draft.png
+
+# After visually confirming the recipient and draft, click Send and capture the result.
+argus device tap 800 690 --session work --foreground --out /tmp/result.png
+```
+
+Coordinates are examples, not application-specific defaults. `--replace` selects
+all in the input field before typing. Without `--prepare-only`, `type-send`
+requires both send coordinates and performs the authorized submission in one
+controller connection. Its result reports `submitted` and `requires_observation`;
+this is dispatch plus a screenshot, not an independently verified delivery.
+Errors after attempting submission include `submission_attempted: true`: inspect
+the result before retrying to avoid duplicates.
+
+Foreground actions check the bound window is foreground before injecting input,
+reject taps covered by another window, and use Unicode input without changing the
+clipboard. They do move the mouse/focus; avoid simultaneous desktop interaction.
+Foreground screenshots capture actual visible pixels, so overlays may appear.
+The background path never automatically switches to foreground mode.
+
+These commands reuse the fixed CLI authorization boundary instead of requiring
+application-specific temporary scripts. Approval decisions still belong to the
+calling agent's environment; Argus cannot bypass or guarantee the absence of
+sandbox/OS approval prompts. Device commands themselves do not call an LLM:
+the calling agent inspects their screenshots; `argus run` uses the configured LLM.
+
+Validation note: the foreground replacement path remains pending live verification
+after its latest change. Background validation does not exercise global input.
