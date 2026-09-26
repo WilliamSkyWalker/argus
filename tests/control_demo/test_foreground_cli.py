@@ -36,6 +36,7 @@ class ForegroundCLITests(unittest.TestCase):
         controller.screenshot_raw.return_value = png.getvalue()
         controller.screen_size = (20, 20)
         controller.scale = 1
+        controller.observation_metadata.return_value = {}
         controller.platform_name = "windows"
         return controller
 
@@ -48,7 +49,7 @@ class ForegroundCLITests(unittest.TestCase):
                 '--out', str(Path(directory) / 'draft.png')], p)
         self.assertFalse(result['submitted'])
         self.assertTrue(result['requires_observation'])
-        inputs = [c for c in p.method_calls if c[0] != 'screenshot_raw']
+        inputs = [c for c in p.method_calls if c[0] not in {'screenshot_raw', 'observation_metadata'}]
         self.assertEqual(inputs, [call.tap(4, 5), call.press_key('ctrl+a'),
             call.input_text('Example message'), call.teardown()])
         self.assertEqual(attach.call_args.kwargs, {'serial': 'example', 'foreground': True})

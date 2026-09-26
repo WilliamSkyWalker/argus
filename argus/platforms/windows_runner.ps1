@@ -351,6 +351,17 @@ function Refresh-TargetWindow {
     if (-not [ArgusNative]::GetWindowRect($hwnd, [ref]$rect)) {
         throw "Could not read target window bounds."
     }
+    if ($script:ExpectedWindow) {
+        $expected = $script:ExpectedWindow
+        $actualProcess = [uint32]0
+        [void][ArgusNative]::GetWindowThreadProcessId($hwnd, [ref]$actualProcess)
+        $bounds = @($rect.Left, $rect.Top, ($rect.Right-$rect.Left), ($rect.Bottom-$rect.Top))
+        if ([string]$expected.window_id -ne [string]$hwnd.ToInt64() -or
+            [int]$expected.process_id -ne [int]$actualProcess -or
+            (($expected.window_bounds -join ',') -ne ($bounds -join ','))) {
+            throw 'Observed window identity or bounds changed; observe again before input.'
+        }
+    }
     $script:Hwnd = $hwnd
     $script:Rect = $rect
     return $true
@@ -501,6 +512,10 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
     $request = $null
     try {
         $request = $line | ConvertFrom-Json
+        $script:ExpectedWindow = $request.expected_window
+        if ($script:ExpectedWindow -and -not (Refresh-TargetWindow)) {
+            throw 'Observed window disappeared; refusing input.'
+        }
         switch ($request.command) {
             "setup" {
                 $script:Foreground = [bool]$request.foreground
@@ -540,6 +555,8 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
                     Write-Response @{ id=$request.id; ok=$true; data=@{
                         png=[Convert]::ToBase64String($stream.ToArray())
                         width=$bitmap.Width; height=$bitmap.Height
+                        window_id=[string]$script:Hwnd.ToInt64(); process_id=$script:TargetProcessId
+                        window_bounds=@($script:Rect.Left,$script:Rect.Top,($script:Rect.Right-$script:Rect.Left),($script:Rect.Bottom-$script:Rect.Top))
                     }}
                 } finally {
                     $stream.Dispose()

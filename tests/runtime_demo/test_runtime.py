@@ -100,6 +100,41 @@ class RuntimeTests(unittest.TestCase):
             {"id": "paid", "kind": "check", "actual": ref("steps.after.rows.0.status"), "equals": "paid"},
         ]
 
+    def test_planned_actions_record_before_and_after(self):
+        run = self.runtime.create(self.workflow(self.action_steps()))
+        state = self.runtime.run(run['id'])
+        events = self.store.events(run['id'])
+        before = next(e['data']['before'] for e in events if e['kind']=='action_dispatching')
+        after = next(e['data'] for e in events if e['kind']=='action_evidence')
+        self.assertTrue(Path(before['path']).is_file())
+        self.assertTrue(Path(after['after']['path']).is_file())
+        self.assertFalse(after['uncertain'])
+        self.assertEqual(state['outputs']['tap']['evidence'],after)
+
+    def test_after_capture_failure_does_not_make_acknowledged_input_uncertain(self):
+        execute = self.phone.execute
+        def execute_then_lose_capture(action):
+            result = execute(action)
+            self.phone.observe = lambda: (_ for _ in ()).throw(RuntimeError('capture lost'))
+            return result
+        with patch.object(self.phone,'execute',side_effect=execute_then_lose_capture):
+            state=self.runtime.run(self.runtime.create(self.workflow(self.action_steps()))['id'])
+        self.assertEqual(state['status'],'succeeded')
+        self.assertIsNone(state['pending'])
+        evidence=state['outputs']['tap']['evidence']
+        self.assertFalse(evidence['uncertain'])
+        self.assertIn('capture lost',evidence['error'])
+        self.assertEqual(self.trace.count(('phone','execute')),1)
+
+    def test_failed_input_preserves_pending_and_after_evidence(self):
+        self.phone.failure = RuntimeError('lost input response')
+        state=self.runtime.run(self.runtime.create(self.workflow(self.action_steps()))['id'])
+        self.assertEqual(state['status'],'needs_review')
+        evidence=next(e['data'] for e in self.store.events(state['id']) if e['kind']=='action_evidence')
+        self.assertTrue(evidence['uncertain'])
+        self.assertTrue(Path(evidence['after']['path']).exists())
+        self.assertTrue(Path(state['pending']['before']['path']).exists())
+
     def test_cross_resource_handoff_survives_new_runtime(self):
         run = self.runtime.create(self.workflow(self.payment_steps()))
         state = self.runtime.run(run["id"])

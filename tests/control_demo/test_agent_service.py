@@ -238,6 +238,38 @@ class AgentServiceTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             platform.input_text('example')
 
+    def test_identical_pixels_do_not_allow_different_window(self):
+        metadata = {'window_id':'101', 'process_id':7, 'window_bounds':[20,30,400,200]}
+        with patch.object(Device, 'observation_metadata', create=True, side_effect=lambda: dict(metadata)):
+            shot = service.execute('screenshot','mail')
+            metadata['window_id'] = '102'
+            result = service.execute('act','mail',action={'type':'tap','x':20,'y':30},observation_id=shot['id'])
+            self.assertFalse(result['ok'])
+            self.assertEqual(result['outcome'],'not_dispatched')
+            self.assertEqual(self.device.calls,[])
+
+    def test_page_mutation_records_missing_target_without_switching(self):
+        from unittest.mock import Mock
+        self.device.page_id='selected'
+        self.device.list_pages=Mock(return_value=[{'page_id':'selected'},{'page_id':'other'}])
+        def close(page):
+            self.assertEqual(page,'selected')
+            self.device.list_pages.return_value=[{'page_id':'other'}]
+            self.device.screenshot_raw=Mock(side_effect=RuntimeError('selected page closed'))
+        self.device.close_page=close
+        self.device.select_page=Mock()
+        result=service.execute('close-page','mail',page_id='selected')
+        self.assertTrue(result['ok'],result)
+        self.assertTrue(result['dispatched'])
+        events=[json.loads(line) for line in Path(result['record']).read_text().splitlines()]
+        evidence=[e['data'] for e in events if e['kind']=='page_evidence']
+        self.assertEqual([e['phase'] for e in evidence],['before','after'])
+        self.assertTrue(Path(evidence[0]['observation']['path']).exists())
+        self.assertIn('selected page closed',evidence[1]['observation_error'])
+        self.assertEqual(evidence[1]['selected_page_id'],'selected')
+        self.assertEqual(evidence[1]['pages'],[{'page_id':'other'}])
+        self.device.select_page.assert_not_called()
+
     def test_wait_timeout_and_frame_change(self):
         result=observations.wait(self.device,'change',timeout=.01,interval=.001)
         self.assertTrue(result['timed_out'])

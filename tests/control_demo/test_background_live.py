@@ -79,6 +79,19 @@ class BackgroundLiveTests(unittest.TestCase):
                 check()
                 picture = Image.open(io.BytesIO(runner.screenshot_raw()))
                 self.assertEqual(picture.getpixel((400, 250))[:3], (173, 216, 230))
+                metadata = runner.observation_metadata()
+                self.assertEqual(metadata['window_id'], str(before['target']))
+                self.assertEqual(metadata['process_id'], before['pid'])
+                self.assertEqual(metadata['window_bounds'][2:], list(runner.screen_size))
+                for stale in (dict(metadata, window_id='0'),
+                              dict(metadata, process_id=0),
+                              dict(metadata, window_bounds=[0,0,1,1])):
+                    runner.expect_window(stale)
+                    with self.assertRaisesRegex(RuntimeError, 'identity or bounds changed'):
+                        runner.tap(*before['button'])
+                    check(clicks=0)
+                runner.expect_window(metadata)
+
                 # Wrong/stale focus must never guess the first text field.
                 with self.assertRaisesRegex(RuntimeError, 'tap the intended field first'):
                     runner.input_text('wrong field')

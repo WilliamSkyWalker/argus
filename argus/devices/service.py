@@ -15,7 +15,7 @@ def _request(command, session=None, **options):
         return {"ok": False, "error": f"Unsupported command: {command}", "error_type": "ValueError"}
     result.setdefault("ok", True)
     result.setdefault("session", session or "default")
-    if result["ok"] and command in {"tap", "swipe", "input", "key", "open", "scroll", "navigate", "launch", "type-send"}:
+    if result["ok"] and command in {"tap", "swipe", "input", "key", "open", "scroll", "navigate", "launch", "type-send", "new-page", "select-page", "close-page"}:
         result.update(dispatched=True, business_success=None, requires_observation=True)
     return result
 
@@ -71,15 +71,21 @@ def _execute(args):
             if backend == "selenium":
                 raise ValueError("Page management requires Playwright or extension")
             plat = ds.attach_browser(serial, backend=backend, manage_pages=True)
+            if cmd != "pages":
+                before = _page_evidence(plat, serial, args.record, "before")
+                _record(args.record, "dispatching", {"before": before})
             if cmd == "new-page":
+                dispatched = True
                 page_id = plat.new_page(args.url)
                 return ({"created_page_id": page_id, "selected_page_id": plat.page_id, "pages": plat.list_pages()})
             if cmd == "select-page":
+                dispatched = True
                 plat.select_page(args.page_id)
                 state = ds.load_state(serial)
                 state["browser_backend"] = backend
                 ds.save_state(serial, state)
             elif cmd == "close-page":
+                dispatched = True
                 plat.close_page(args.page_id)
             return ({"pages": plat.list_pages(), "selected_page_id": plat.page_id})
 
@@ -116,6 +122,8 @@ def _execute(args):
                 raise ValueError("Observation expired; observe again (maximum age 30s)")
             prepared = actions.prepare(plat, args.action, observation)
             before = _shot(plat, None)
+            if not observation and before.get("window_id") is not None and callable(getattr(type(plat), "expect_window", None)):
+                plat.expect_window(before)
             _record(args.record, "dispatching", {"action": prepared, "before": before})
             dispatched = True
             try:
@@ -129,7 +137,10 @@ def _execute(args):
                 result["observation"] = _shot(plat, args.out)
             return result
         if cmd not in {"screenshot", "focus"}:
-            _record(args.record, "dispatching", {"before": _shot(plat, None)})
+            before = _shot(plat, None)
+            if before.get("window_id") is not None and callable(getattr(type(plat), "expect_window", None)):
+                plat.expect_window(before)
+            _record(args.record, "dispatching", {"before": before})
 
         if cmd == "open":
             dispatched = True
@@ -206,10 +217,26 @@ def _execute(args):
     finally:
         if dispatched and plat is not None:
             try:
-                _record(args.record, "after", _shot(plat, None))
+                if cmd in {"new-page", "select-page", "close-page"}:
+                    _page_evidence(plat, serial, args.record, "after")
+                else:
+                    _record(args.record, "after", _shot(plat, None))
             except Exception as exc:
                 _record(args.record, "observation_failed", {"error": str(exc)})
         ds.release_controller(plat)
+
+
+def _page_evidence(platform, session, record, phase):
+    """Never select another page merely to obtain evidence for a closed target."""
+    from .observations import capture
+    result = {"phase": phase, "selected_page_id": getattr(platform, "page_id", None)}
+    try:
+        result["pages"] = platform.list_pages()
+        result["observation"] = capture(platform, session)
+    except Exception as exc:
+        result["observation_error"] = f"{type(exc).__name__}: {exc}"
+    _record(record, "page_evidence", result)
+    return result
 
 
 def _record(path, kind, data):

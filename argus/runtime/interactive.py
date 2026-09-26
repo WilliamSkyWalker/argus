@@ -112,24 +112,11 @@ class InteractiveRuntime(Runtime):
                     state["cursor"] += 1
                     state["status"] = "idle"
                 self.store.save(state, "action_failed", {"step": step["id"], "error": state["error"]})
-                if state["pending"]:
-                    try:
-                        self._observe(state, resource)
-                    except Exception as capture_error:
-                        self.store.save(state, "observation_failed", {"resource": resource, "error": str(capture_error)})
+                return state
+            if state["status"] != "running":
                 return state
             state["status"] = "idle"
             self.store.save(state, "awaiting_agent")
-            try:
-                adapter = self._resource(state, resource)
-                if hasattr(adapter, "wait"):
-                    waiting = adapter.wait()
-                    state["outputs"][step["id"]]["wait"] = waiting
-                    self.store.save(state, "visual_wait", {"resource": resource, **waiting})
-                self._observe(state, resource)
-            except Exception as exc:
-                state["error"] = f"Input dispatched; new observation failed: {exc}"
-                self.store.save(state, "observation_failed", {"error": state["error"]})
             return state
 
     def recover_task(self, run_id):

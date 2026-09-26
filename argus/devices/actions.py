@@ -72,7 +72,7 @@ def prepare(platform, action, observation=None):
             raise ValueError("Observation expired; observe again (maximum age 30s)")
         current = platform.screenshot_raw()
         meta = observations.metadata(platform, current, observation.get("session"))
-        if any(meta.get(k) != observation.get(k) for k in ("screen_size", "page_id", "url", "target")):
+        if any(meta.get(k) != observation.get(k) for k in ("screen_size", "page_id", "url", "target", "window_id", "process_id", "window_bounds")):
             raise ValueError("Target changed; observe and locate again")
         before = Path(observation.get("source_path", observation["path"])).read_bytes()
         if observations.change_fraction(before, current) > .002:
@@ -88,6 +88,8 @@ def prepare(platform, action, observation=None):
                     region = (max(0, int(x - 24)), max(0, int(y - 24)), min(im.width, int(x + 25)), min(im.height, int(y + 25)))
                     if observations.change_fraction(before, current, region) > .002:
                         raise ValueError("Target region changed; observe and locate again")
+    if observation and observation.get("window_id") is not None and callable(getattr(type(platform), "expect_window", None)):
+        platform.expect_window(observation)
     for name, _ in coordinates:
         action.pop(name + "_pct", None)
     action["coordinate_space"] = "screen"

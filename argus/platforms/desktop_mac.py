@@ -181,6 +181,28 @@ class DesktopMacPlatform(DesktopPlatform):
         png = rep.representationUsingType_properties_(AK.NSBitmapImageFileTypePNG, None)
         return bytes(png)
 
+    def observation_metadata(self):
+        return {"window_id": str(self._win_id), "process_id": self._pid,
+                "window_bounds": [self._win_x, self._win_y, self._win_w, self._win_h]}
+
+    def _validate_window(self, expected):
+        window = self._find_window()
+        if window is None:
+            raise RuntimeError("Observed window disappeared; observe again")
+        self._apply_window(window)
+        current = self.observation_metadata()
+        if any(current.get(key) != value for key, value in expected.items()):
+            raise RuntimeError("Observed window identity or bounds changed; observe again")
+        self._ensure_frontmost()
+        front = self._AK.NSWorkspace.sharedWorkspace().frontmostApplication()
+        if front is None or int(front.processIdentifier()) != self._pid:
+            raise RuntimeError("Observed application is not frontmost; refusing global input")
+        windows = self._Q.CGWindowListCopyWindowInfo(self._Q.kCGWindowListOptionOnScreenOnly, self._Q.kCGNullWindowID)
+        front_window = next((w for w in windows or [] if int(w.get("kCGWindowLayer", 0)) == 0
+                             and int(w.get("kCGWindowOwnerPID", 0)) == self._pid), None)
+        if not front_window or str(front_window["kCGWindowNumber"]) != expected["window_id"]:
+            raise RuntimeError("Another window of the application is frontmost; observe again")
+
     @property
     def scale(self) -> float:
         """截图物理像素 / 窗口逻辑宽。Retina 屏 2.0，普通屏 1.0。"""

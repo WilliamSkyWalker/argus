@@ -49,11 +49,22 @@ class DesktopPlatform(Platform):
         """Window dimensions in the native driver's input coordinate space."""
         return (self._win_w, self._win_h)
 
+    def expect_window(self, observation):
+        self._expected_window = {key: observation[key] for key in
+                                 ("window_id", "process_id", "window_bounds") if key in observation}
+
+    def _check_window(self):
+        expected = getattr(self, "_expected_window", None)
+        if expected:
+            self._validate_window(expected)
+
     def tap(self, x: int, y: int) -> None:
+        self._check_window()
         gx, gy = self._to_global(x, y)
         self._pg.click(gx, gy)
 
     def long_press(self, x: int, y: int, duration: float = 1.0) -> None:
+        self._check_window()
         gx, gy = self._to_global(x, y)
         self._pg.mouseDown(gx, gy)
         try:
@@ -62,22 +73,26 @@ class DesktopPlatform(Platform):
             self._pg.mouseUp(gx, gy)
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int) -> None:
+        self._check_window()
         gx1, gy1 = self._to_global(x1, y1)
         gx2, gy2 = self._to_global(x2, y2)
         self._pg.moveTo(gx1, gy1)
         self._pg.dragTo(gx2, gy2, duration=0.4, button="left")
 
     def scroll_up(self) -> None:
+        self._check_window()
         # pyautogui.scroll 单位是滚轮 notch（正=上）；跨平台一致，与 mac 取同量级
         self._pg.scroll(5)
 
     def scroll_down(self) -> None:
+        self._check_window()
         self._pg.scroll(-5)
 
     def input_text(self, text: str) -> None:
         """Paste through the native clipboard, falling back to ASCII typing."""
         if not text:
             return
+        self._check_window()
         try:
             self._set_clipboard(text)
         except Exception:
@@ -88,6 +103,7 @@ class DesktopPlatform(Platform):
         self._pg.hotkey(self.paste_modifier, "v")
 
     def press_key(self, key: str) -> None:
+        self._check_window()
         if "+" in key:
             return self.hotkey(key.split("+"))
         k = self.key_map.get(str(key).strip().lower())
@@ -96,18 +112,22 @@ class DesktopPlatform(Platform):
         self._pg.press(k)
 
     def hotkey(self, keys):
+        self._check_window()
         keys = [self.key_map.get(k.lower(), k.lower()) for k in keys]
         if any(k not in self._pg.KEYBOARD_KEYS for k in keys):
             raise ValueError("Unsupported hotkey")
         self._pg.hotkey(*keys)
 
     def hover(self, x, y):
+        self._check_window()
         self._pg.moveTo(*self._to_global(x, y))
 
     def double_click(self, x, y):
+        self._check_window()
         self._pg.doubleClick(*self._to_global(x, y), interval=.1)
 
     def right_click(self, x, y):
+        self._check_window()
         self._pg.click(*self._to_global(x, y), button="right")
 
     def scroll_at(self, x, y, amount):

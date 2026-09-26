@@ -184,11 +184,30 @@ class Runtime:
         if self._control(state):
             return
         state["pending"] = {"id": uuid.uuid4().hex, "step": step["id"],
-                            "resource": name, "action": prepared}
+                            "resource": name, "action": prepared, "before": observation}
         state["observations"].pop(name, None)
         self.store.save(state, "action_dispatching", state["pending"])
-        result = resource.execute(prepared)
+        try:
+            result = resource.execute(prepared)
+        except Exception:
+            self._action_evidence(state, step, uncertain=True)
+            raise
         self._complete(state, step, result)
+        self._action_evidence(state, step)
+
+    def _action_evidence(self, state, step, uncertain=False):
+        """Capture dispatch aftermath without confusing capture failure with lost input."""
+        data = {"step": step["id"], "resource": step["resource"], "uncertain": uncertain}
+        try:
+            resource = self._resource(state, step["resource"])
+            if not uncertain and callable(getattr(resource, "wait", None)):
+                data["wait"] = resource.wait()
+            data["after"] = self._observe(state, step["resource"])
+        except Exception as exc:
+            data["error"] = f"{type(exc).__name__}: {exc}"
+        if not uncertain:
+            state["outputs"][step["id"]]["evidence"] = data
+        self.store.save(state, "action_evidence", data)
 
     def resume(self, run_id, note, data=None):
         if not note.strip():

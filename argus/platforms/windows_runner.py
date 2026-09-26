@@ -36,6 +36,8 @@ class WindowsRunnerPlatform(Platform):
         self.connection = {}
         self.input_binding = None
         self._binding_callback = None
+        self._window_metadata = {}
+        self._expected_window = None
 
     def setup(self, config: dict) -> None:
         powershell = shutil.which("powershell.exe")
@@ -111,6 +113,8 @@ class WindowsRunnerPlatform(Platform):
         with self._lock:
             self._request_id += 1
             request = {"id": self._request_id, "command": command, **payload}
+            if command in {"tap", "swipe", "scroll", "input", "key", "open"} and self._expected_window:
+                request["expected_window"] = self._expected_window
             process.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
             process.stdin.flush()
             line = process.stdout.readline()
@@ -133,7 +137,15 @@ class WindowsRunnerPlatform(Platform):
     def screenshot_raw(self) -> bytes:
         result = self._call("screenshot")
         self._size = int(result["width"]), int(result["height"])
+        self._window_metadata = {key: result[key] for key in ("window_id", "process_id", "window_bounds") if key in result}
         return self._shrink(base64.b64decode(result["png"], validate=True))
+
+    def observation_metadata(self):
+        return dict(self._window_metadata)
+
+    def expect_window(self, observation):
+        self._expected_window = {key: observation[key] for key in
+                                 ("window_id", "process_id", "window_bounds") if key in observation}
 
     def _shrink(self, png: bytes) -> bytes:
         img = Image.open(io.BytesIO(png))

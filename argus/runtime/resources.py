@@ -123,7 +123,7 @@ class VisualResource:
         try:
             if "path" not in observation:
                 _, meta = self.observe()
-                if any(meta.get(k) != observation.get(k) for k in ("screen_size", "image_sha256", "page_id", "url")):
+                if any(meta.get(k) != observation.get(k) for k in ("screen_size", "image_sha256", "page_id", "url", "window_id", "process_id", "window_bounds")):
                     raise ValueError("screen changed since observation; capture a fresh observation and replan")
                 observation = None
             return actions.prepare(platform, action, observation)

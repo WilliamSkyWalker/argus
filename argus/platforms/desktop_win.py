@@ -258,6 +258,23 @@ class DesktopWinPlatform(DesktopPlatform):
         img.save(buf, format="PNG")
         return buf.getvalue()
 
+    def observation_metadata(self):
+        import win32process
+        return {"window_id": str(self._hwnd),
+                "process_id": win32process.GetWindowThreadProcessId(self._hwnd)[1],
+                "window_bounds": [self._win_x, self._win_y, self._win_w, self._win_h]}
+
+    def _validate_window(self, expected):
+        hwnd = self._find_window()
+        if not hwnd:
+            raise RuntimeError("Observed window disappeared; observe again")
+        self._apply_window(hwnd)
+        if any(self.observation_metadata().get(key) != value for key, value in expected.items()):
+            raise RuntimeError("Observed window identity or bounds changed; observe again")
+        self._ensure_frontmost()
+        if self._w32.GetForegroundWindow() != hwnd:
+            raise RuntimeError("Observed window is not foreground; refusing global input")
+
     @property
     def scale(self) -> float:
         """DPI-aware 下截图与坐标同在物理像素，无额外缩放。仅供报告一致性。"""
