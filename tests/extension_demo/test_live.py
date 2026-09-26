@@ -1,5 +1,7 @@
 """Opt-in isolated Chromium extension + real native host end-to-end test."""
 import io
+import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -19,7 +21,41 @@ from argus.platforms.browser_extension import ExtensionBrowserPlatform
 
 
 class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        payload = self.rfile.read(int(self.headers.get('Content-Length', 0)))
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps({'echo': payload.decode()}).encode())
+
     def do_GET(self):
+        if self.path == '/ws':
+            key = self.headers['Sec-WebSocket-Key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+            self.send_response(101)
+            self.send_header('Upgrade', 'websocket')
+            self.send_header('Connection', 'Upgrade')
+            self.send_header('Sec-WebSocket-Accept', base64.b64encode(hashlib.sha1(key.encode()).digest()).decode())
+            self.end_headers()
+            self.connection.settimeout(5)
+            head = self.rfile.read(2)
+            length = head[1] & 127
+            mask = self.rfile.read(4)
+            payload = self.rfile.read(length)
+            decoded = bytes(value ^ mask[i % 4] for i, value in enumerate(payload))
+            self.wfile.write(bytes([0x81, len(decoded)]) + decoded)
+            self.wfile.flush()
+            self.wfile.write(b'\x88\x00')
+            return
+        if self.path == '/events':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream')
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            for i in range(2):
+                self.wfile.write(f'id: {i}\ndata: message-{i}\n\n'.encode())
+                self.wfile.flush()
+                time.sleep(.15)
+            return
         body = b'''<!doctype html><meta charset="utf-8"><title>Extension fixture</title>
         <style>body{margin:0}input,button{display:block;width:200px;height:50px}</style>
         <input><button onclick="window.open('/popup')">Popup</button>'''
@@ -78,6 +114,44 @@ class ExtensionLive(unittest.TestCase):
                 self.assertEqual(len(available),1)
                 pid=available[0]["page_id"]
                 platform=ExtensionBrowserPlatform().connect(root/"bridge",pid)
+                # No network start command: connection automatically enables observation.
+                self.assertTrue(platform.network()['active'])
+                page.evaluate("""async () => {
+                    await fetch('/api', {method:'POST', body:'network-test'});
+                    await Promise.all([
+                      new Promise((resolve,reject) => {
+                        const ws = new WebSocket(location.origin.replace('http','ws')+'/ws');
+                        ws.onopen = () => ws.send('hello-ws');
+                        ws.onmessage = e => { if(e.data === 'hello-ws') resolve(); else reject(e.data); };
+                        ws.onerror = reject;
+                      }),
+                      new Promise((resolve,reject) => {
+                        const es = new EventSource('/events'); let count=0;
+                        es.onmessage = () => { if(++count === 2) { es.close(); resolve(); } };
+                        es.onerror = reject;
+                      }),
+                      fetch('/events').then(r => r.text())
+                    ]);
+                }""")
+                deadline=time.monotonic()+5
+                while time.monotonic()<deadline:
+                    traffic=platform.network(limit=200)['events']
+                    kinds={row['kind'] for row in traffic}
+                    if {'http.body','ws.sent','ws.received','sse.message','stream.chunk'} <= kinds:
+                        break
+                    page.wait_for_timeout(100)
+                self.assertTrue({'http.body','ws.sent','ws.received','sse.message','stream.chunk'} <= kinds, traffic)
+                self.assertTrue(any('network-test' in row.get('body','') for row in traffic),traffic)
+                self.assertTrue(any(row.get('data')=='hello-ws' and row['kind']=='ws.received' for row in traffic))
+                platform.network('stop')
+                self.assertFalse(platform.network()['active'])
+                count = platform.network()['retained']
+                page.reload()
+                self.assertFalse(platform.network()['active'])
+                self.assertEqual(platform.network()['retained'], count)
+                platform.network('start')
+                platform.network('clear')
+                self.assertEqual(platform.network()['events'], [])
                 platform.tap(40,25)
                 platform.input_text("中文 existing session")
                 self.assertEqual(page.locator("input").input_value(),"中文 existing session")
@@ -114,6 +188,10 @@ class ExtensionLive(unittest.TestCase):
                 self.assertEqual(out.returncode,0,out.stderr)
                 self.assertEqual(json.loads(out.stdout)["pages"][0]["page_id"],pid)
                 command=[sys.executable,"-m","argus.cli","device"]
+                traffic_cli=subprocess.run(command+["network","read","--session","daily-web","--limit","5"],
+                    env=env_cli,capture_output=True,text=True,timeout=10)
+                self.assertEqual(traffic_cli.returncode,0,traffic_cli.stderr+traffic_cli.stdout)
+                self.assertTrue(json.loads(traffic_cli.stdout)['active'])
                 created=subprocess.run(command+["new-page",url+"/created","--serial","daily-web"],
                     env=env_cli,capture_output=True,text=True,timeout=10)
                 self.assertEqual(created.returncode,0,created.stderr+created.stdout)
@@ -123,6 +201,10 @@ class ExtensionLive(unittest.TestCase):
                     env=env_cli,capture_output=True,text=True,timeout=10)
                 self.assertEqual(chosen.returncode,0,chosen.stderr+chosen.stdout)
                 self.assertEqual(json.loads(chosen.stdout)["selected_page_id"],created_id)
+                new_traffic=subprocess.run(command+["network","--session","daily-web"],
+                    env=env_cli,capture_output=True,text=True,timeout=10)
+                self.assertEqual(new_traffic.returncode,0,new_traffic.stderr+new_traffic.stdout)
+                self.assertTrue(json.loads(new_traffic.stdout)['active'])
                 closed=subprocess.run(command+["close-page",created_id,"--serial","daily-web"],
                     env=env_cli,capture_output=True,text=True,timeout=10)
                 self.assertEqual(closed.returncode,0,closed.stderr+closed.stdout)

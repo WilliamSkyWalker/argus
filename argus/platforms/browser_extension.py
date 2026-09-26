@@ -63,6 +63,11 @@ class ExtensionBrowserPlatform(Platform):
     def observation_metadata(self):
         return dict(self._call("metadata"), pages=self.list_pages())
 
+    def network(self, command="read", **query):
+        if command not in {"start", "stop", "clear", "read"}:
+            raise ValueError("Unknown network command")
+        return self._call("network_" + command, **query)
+
     def drain_events(self):
         return []
 

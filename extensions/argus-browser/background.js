@@ -1,9 +1,39 @@
-// No DOM extraction or arbitrary JavaScript execution. CDP is used only for
-// screenshots, viewport metrics and input. Access covers HTTP(S) tabs in the connected browser profile.
+// No DOM extraction or arbitrary page JavaScript execution.
+// CDP provides visual input/screenshots and passive network observation.
+import {NetworkJournal} from './network.js';
+const network = new NetworkJournal((...args) => cdp(...args));
+const networkPaused = new Set();
+const networkStarting = new Map();
+async function startNetwork(tabId, explicit = false) {
+  if (explicit) networkPaused.delete(tabId);
+  if (!port || networkPaused.has(tabId)) return;
+  if (network.tabs.get(tabId)?.active) return;
+  if (networkStarting.has(tabId)) return networkStarting.get(tabId);
+  const ticket = generation;
+  const job = (async () => {
+    await permissions;
+    const data = await state();
+    if (data.blocked.includes(tabId)) return;
+    await attach(tabId);
+    if (!port || ticket !== generation || networkPaused.has(tabId)) return;
+    network.begin(tabId);
+    try {
+      await cdp(tabId, 'Network.enable', {maxTotalBufferSize:4194304, maxResourceBufferSize:262144, maxPostDataSize:32768});
+      if (!port || ticket !== generation) network.end(tabId, 'disconnected');
+    } catch (error) { network.end(tabId, String(error.message || error)); throw error; }
+  })();
+  networkStarting.set(tabId,job);
+  try { await job; } finally { if (networkStarting.get(tabId) === job) networkStarting.delete(tabId); }
+}
+async function autoNetwork(tabId) {
+  try { await startNetwork(tabId); }
+  catch (error) { network.begin(tabId); network.end(tabId, String(error.message || error)); }
+}
 let port = null;
 let connectionError = "Disconnected";
 let chain = Promise.resolve();
 const attached = new Set();
+const attaching = new Map();
 let generation = 0;
 let permissions = Promise.resolve();
 function updateBlocked(change) {
@@ -43,20 +73,25 @@ async function target(pageId) {
   return Number(pageId.split(":").at(-1));
 }
 async function attach(tabId) {
-  if (!attached.has(tabId)) {
-    const ticket = generation;
+  if (attached.has(tabId)) return;
+  if (attaching.has(tabId)) return attaching.get(tabId);
+  const ticket = generation;
+  const job = (async () => {
     await chrome.debugger.attach({tabId}, "1.3");
     if (ticket !== generation) {
       await chrome.debugger.detach({tabId}).catch(() => {});
       throw new Error("Control was released");
     }
     attached.add(tabId);
-  }
+  })();
+  attaching.set(tabId,job);
+  try { await job; } finally { if (attaching.get(tabId) === job) attaching.delete(tabId); }
 }
 async function cdp(tabId, method, params = {}) {
   return chrome.debugger.sendCommand({tabId}, method, params);
 }
 async function detachAll() {
+  network.reset(); networkPaused.clear();
   await Promise.all([...attached].map(id => chrome.debugger.detach({tabId:id}).catch(() => {})));
   attached.clear();
 }
@@ -88,6 +123,8 @@ async function connect() {
       }
     }).catch(error => { connectionError = String(error); });
   });
+  // Default capture covers every controllable existing tab, without a second prompt.
+  await Promise.all((await pages()).map(p => autoNetwork(Number(p.page_id.split(':').at(-1)))));
 }
 async function execute(operation, args = {}) {
   if (operation === "pages") return pages();
@@ -99,6 +136,17 @@ async function execute(operation, args = {}) {
     return {page_id:`${data.epoch}:${tab.id}`};
   }
   const tabId = await target(args.page_id);
+  if (operation.startsWith('network_')) {
+    if (operation === 'network_start') await startNetwork(tabId, true);
+    else if (operation === 'network_stop') {
+      networkPaused.add(tabId);
+      await networkStarting.get(tabId);
+      network.end(tabId);
+      if (attached.has(tabId)) await cdp(tabId,'Network.disable');
+    } else if (operation === 'network_clear') network.clear(tabId);
+    else if (operation !== 'network_read') throw new Error('Unsupported network operation');
+    return network.read(tabId, operation === 'network_read' ? args : {limit:1});
+  }
   if (operation === "select") {
     const tab = await chrome.tabs.update(tabId, {active:true});
     await chrome.windows.update(tab.windowId, {focused:true});
@@ -174,10 +222,23 @@ async function execute(operation, args = {}) {
 }
 chrome.debugger.onDetach.addListener(({tabId}, reason) => {
   attached.delete(tabId);
+  network.end(tabId, reason);
   // Chrome's "Cancel" control must not be undone by automatic reattachment.
   if (reason === "canceled_by_user") void updateBlocked(blocked => [...new Set([...blocked, tabId])]);
 });
+chrome.debugger.onEvent.addListener((source, method, params) => {
+  if (!source.sessionId) void network.event(source.tabId, method, params).catch(error => {
+    network.end(source.tabId, String(error.message || error));
+  });
+});
+chrome.tabs.onCreated.addListener(tab => {
+  if (port && webURL(tab.pendingUrl || tab.url)) void autoNetwork(tab.id);
+});
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+  if (port && webURL(tab.pendingUrl || tab.url) && (change.url || change.status)) void autoNetwork(tabId);
+});
 chrome.tabs.onRemoved.addListener(tabId => {
+  network.tabs.delete(tabId); networkPaused.delete(tabId);
   attached.delete(tabId);
   void updateBlocked(blocked => blocked.filter(id => id !== tabId));
 });

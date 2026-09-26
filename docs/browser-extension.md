@@ -160,3 +160,60 @@ Runtime actions use `{"type":"new_page","url":"https://example.com"}` and return
 `{"$ref":"steps.create.created_page_id"}`. These actions still require a current
 observation and use the durable intent/review protocol. An uncertain creation
 must be reconciled manually; it is never automatically replayed.
+
+## Network observation (extension 0.3.0+)
+
+Connecting the extension automatically starts passive capture on all controllable
+HTTP(S) tabs in this browser profile, including new tabs and popups. There is no
+additional Argus permission dialog. Chrome's own debugger indicator still applies.
+The selected session tab determines which journal the CLI reads:
+
+```bash
+argus device network --session web
+argus device network read --session web --url /api --kind http
+argus device network read --session web --kind ws --after 100 --capture-id CAPTURE_ID
+argus device network read --session web --kind sse
+argus device network read --session web --kind stream
+argus device network stop --session web
+argus device network start --session web
+argus device network clear --session web
+```
+
+- `http.*`: request URL/method/headers/post data, response status/headers, completion
+  duration, failure and response body (or an explicit `unavailable` reason).
+  Redirects are separate events sharing the CDP request ID.
+- `ws.*`: opening, handshake, sent/received frames, errors and closure. Text frames
+  are text; binary frames retain their opcode and base64 payload.
+- `sse.message`: native EventSource messages, including event name and event ID.
+- `stream.chunk`: fetch-based `text/event-stream` and NDJSON response chunks,
+  base64 encoded. Decode and concatenate chunks in event order; transport chunks
+  are not necessarily complete SSE messages. Unsupported CDP streaming returns
+  `stream.unavailable`. Ordinary HTTP long polling appears as HTTP requests.
+
+Poll using `next_cursor` as the next `--after`, together with `capture_id`.
+A changed capture ID means clear/restart: begin again at cursor 0. `--limit` is
+1–200; URL and event-kind filters apply before pagination. `dropped` and
+`oldest_cursor` expose journal eviction; `untracked_requests` counts evicted
+request correlations; `truncated` marks clipped fields.
+Retention is bounded to 1,000 events/1 MiB per tab and 8 MiB across tabs; fields
+are capped at 32 Ki characters, and active request correlation at 512 entries per
+tab. Response bodies are best effort and may be unavailable after cache eviction,
+redirects, target changes or excessive simultaneous completions.
+
+`stop` pauses only recording, keeps existing records and does not close network
+connections or disable visual control. `start` resumes with a fresh capture.
+`clear` removes retained events while keeping the current recording state.
+Disconnect/release, extension reload and browser exit discard in-memory records.
+Capture is not retroactive: attach races can miss a new tab's first requests;
+already-open sockets have no guaranteed history. Separate worker/out-of-process
+iframe targets are not attached in this version. This command currently requires
+the **extension backend**, not standalone Playwright/Selenium sessions.
+
+Network records can include credentials in headers and payloads; they stay in the
+extension's bounded memory until queried through the local bridge. They are not
+added to visual model prompts or QA reports automatically. Export CLI JSON only
+to an appropriate local destination. Reload the installed extension after updating
+all extension files (including `network.js`), then reconnect the bridge.
+
+Implementation uses the [Chrome debugger API](https://developer.chrome.com/docs/extensions/reference/api/debugger)
+and [CDP Network events](https://chromedevtools.github.io/devtools-protocol/tot/Network/).

@@ -153,6 +153,8 @@ def register(sub):
         if name=="open": p.add_argument("target")
         else: p.add_argument("direction",choices=["up","down"])
     mobile.register_install_boot(sub)
+    from .network import register as register_network
+    register_network(sub)
 
 
 def dispatch(args):
@@ -161,7 +163,10 @@ def dispatch(args):
         if command in {"install","boot"}:
             mobile.dispatch(args)
             return
-        if command=="list": result=discover(args.platform)
+        if command=="network":
+            from .network import execute
+            result=execute(args)
+        elif command=="list": result=discover(args.platform)
         elif command=="sessions": result={"sessions":sessions()}
         elif command=="connect": result=connect(args)
         else: result=disconnect(args.session)
