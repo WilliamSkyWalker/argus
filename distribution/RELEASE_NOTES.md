@@ -6,18 +6,18 @@ CLI 安装包已开放下载。支持 Claude Code、Codex、Qoder 和 QoderCN �
 
 ## 安装 / Install
 
-需要 Python 3.10+ 和你要使用的 Agent CLI。下载下方 Assets 中的 `install-argus-0.4.0.py`。
+需要 Python 3.10+ 和你要使用的 Agent CLI。在可写目录中复制一条命令即可自动下载并运行安装器，无需手动去 GitHub 下载：
 
-Windows（PowerShell）：
-
-```powershell
-py -3 install-argus-0.4.0.py
-```
-
-macOS / Linux / WSL：
+macOS / Linux / WSL:
 
 ```sh
-python3 install-argus-0.4.0.py
+curl -fL https://github.com/WilliamSkyWalker/argus/releases/download/v0.4.0/install-argus-0.4.0.py -o install-argus-0.4.0.py && python3 install-argus-0.4.0.py
+```
+
+Windows PowerShell:
+
+```powershell
+Invoke-WebRequest https://github.com/WilliamSkyWalker/argus/releases/download/v0.4.0/install-argus-0.4.0.py -OutFile install-argus-0.4.0.py -ErrorAction Stop; py -3 install-argus-0.4.0.py
 ```
 
 安装器会自动检测客户端、下载源码并校验 SHA256，然后安装隔离运行环境和集成。无需 Git 或 pyenv；依赖下载需要网络。WSL 用户请在 Agent CLI 所在的 WSL 环境中执行。

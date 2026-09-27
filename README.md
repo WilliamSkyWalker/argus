@@ -18,19 +18,25 @@ Argus is currently a **development/beta distribution**. Installable source bundl
 
 ## Programming Agent setup
 
-From a checkout, with Python 3.10+ and an installed client:
+With Python 3.10+ and an installed Agent client, copy one command below. It downloads and runs the versioned installer; no Git or manual GitHub download is needed. Run it in a directory where you can save the installer.
+
+macOS / Linux / WSL:
 
 ```sh
-python3 scripts/install_agent_plugin.py
+curl -fL https://github.com/WilliamSkyWalker/argus/releases/download/v0.4.0/install-argus-0.4.0.py -o install-argus-0.4.0.py && python3 install-argus-0.4.0.py
 ```
 
-The installer detects supported clients, prepares an isolated runtime, installs their integration and the shared Skill, and sets up the Chrome/Edge native messaging host. It does not require pyenv. Select clients with `--client claude`, `codex`, `qoder`, `qodercn`, `both` (Claude + Codex), or `all`. Add `--mobile` for mobile dependencies. On native Windows use `py -3` in place of `python3`.
+Windows PowerShell:
 
-Download the installer and source archive from [GitHub Releases](https://github.com/WilliamSkyWalker/argus/releases/tag/v0.4.0) to install without Git:
-
-```sh
-python3 install-argus-0.4.0.py --archive argus-0.4.0.zip
+```powershell
+Invoke-WebRequest https://github.com/WilliamSkyWalker/argus/releases/download/v0.4.0/install-argus-0.4.0.py -OutFile install-argus-0.4.0.py -ErrorAction Stop; py -3 install-argus-0.4.0.py
 ```
+
+The installer automatically downloads and verifies the source archive, prepares an isolated runtime, detects supported clients, installs their integration and shared Skill, and sets up the Chrome/Edge native messaging host. It does not require pyenv.
+
+After downloading, rerun the script with `--client claude`, `codex`, `qoder`, `qodercn`, `both` (Claude + Codex), or `all` to select clients. Add `--mobile` for mobile dependencies. On native Windows use `py -3` in place of `python3`.
+
+From a checkout, developers can use `python3 scripts/install_agent_plugin.py`. Manual installer/source downloads remain available in [GitHub Releases](https://github.com/WilliamSkyWalker/argus/releases/tag/v0.4.0); use `--archive argus-0.4.0.zip` for a locally downloaded source archive.
 
 For browser control, load the installer-provided extension directory through **Load unpacked** at `chrome://extensions` (or Edge's extension page), then click **Connect local bridge** in its popup. Restart the Agent client and describe a task, for example:
 
@@ -189,7 +195,7 @@ For QA execution guards, model configuration, case conventions and module respon
 
 Argus 为外部编程 Agent 提供手机、浏览器和桌面窗口的视觉操作能力：**观察 → 操作 → 新观察**，并保存跨端任务进度、执行事实和截图。
 
-- **命令行用户**：安装 Claude Code / Codex / Qoder / QoderCN 的集成，由现有 Agent 决策，无需给 Argus 配模型 Key。从源码执行 `python3 scripts/install_agent_plugin.py`；版本化安装器可配合源码 ZIP 使用，无需 Git。安装后重启客户端。
+- **命令行用户**：安装 Claude Code / Codex / Qoder / QoderCN 的集成，由现有 Agent 决策，无需给 Argus 配模型 Key。复制上方一条安装命令即可自动下载安装，无需手动去 GitHub 下载，也无需 Git。安装后重启客户端。
 - **窗口桌面用户**：使用 Qt 桌面版，在界面配置自己的视觉模型 API、模型名和 Key。Windows 原生便携包无需 WSL、Python 或 pyenv。macOS DMG 的脚本和 CI 已就绪，但尚未完成 macOS 构建与实测。
 - **浏览器**：MCP 和桌面版使用 Chrome/Edge 扩展，保留现有页面和登录状态；MCP 不支持 Playwright。扩展暂通过开发者模式加载，未声称已上架商店。
 - **恢复与接管**：CLI/MCP 共用命名会话；`argus task` 保存操作记录、支持人工接管和中断恢复。结果不确定的动作需核对，不自动重放。点击派发成功或画面稳定都不等于业务完成。

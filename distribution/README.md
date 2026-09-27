@@ -8,10 +8,18 @@ beta installer, not a signed Windows EXE or a published PyPI/Web Store release.
 
 ## Install a released version
 
-Download `install-argus-0.4.0.py` from the project's GitHub Release, then:
+With Python 3.10+ available, run one command in a writable directory to download and start the installer. No manual GitHub download is needed.
+
+macOS / Linux / WSL:
 
 ```sh
-python3 install-argus-0.4.0.py
+curl -fL https://github.com/WilliamSkyWalker/argus/releases/download/v0.4.0/install-argus-0.4.0.py -o install-argus-0.4.0.py && python3 install-argus-0.4.0.py
+```
+
+Windows PowerShell:
+
+```powershell
+Invoke-WebRequest https://github.com/WilliamSkyWalker/argus/releases/download/v0.4.0/install-argus-0.4.0.py -OutFile install-argus-0.4.0.py -ErrorAction Stop; py -3 install-argus-0.4.0.py
 ```
 
 The installer auto-detects installed Claude, Codex, Qoder and QoderCN clients. Optional flags: `--client codex`,
@@ -43,6 +51,11 @@ The bridge path is saved in `~/.argus/browser-bridge.json` (or `ARGUS_HOME_DIR`)
 new MCP extension connections no longer require a manually supplied path.
 
 ## Update and uninstall
+
+The versioned installer always installs its named version. Re-running
+`install-argus-0.4.0.py` does not upgrade to a newer release, and Argus does not
+update itself in the background. Use the newer release's installation command
+when you choose to upgrade.
 
 Close active Argus tasks. Run the newer release installer using the same root,
 reload the unpacked extension in Chrome, reconnect it, then start a new Agent
