@@ -189,8 +189,11 @@ including actions that change connected applications, and does not change shell
 sandboxing or other MCP services. Existing per-tool overrides and managed policies
 can still take precedence. Restore `"prompt"` to require confirmation again.
 For a directly configured MCP server instead of the managed plugin, use the
-corresponding `[mcp_servers.saygo]` table. The installer does not silently grant
-this trust for new users.
+corresponding `[mcp_servers.saygo]` table. Starting with 0.4.4, selecting Codex in the installer adds this scoped approval
+when no explicit server approval policy exists. Existing policies and per-tool
+overrides are preserved. The installer respects `CODEX_HOME`, backs up existing
+configuration to `config.toml.before-saygo`, and removes only its unchanged approval
+entry on uninstall. `--prepare-only` does not change client configuration.
 
 Reference: https://developers.openai.com/plugins/build/plugins
 
