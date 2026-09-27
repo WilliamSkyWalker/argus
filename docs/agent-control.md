@@ -2,29 +2,23 @@
 
 Saygo shares persistent sessions between CLI and MCP for supported backends. Playwright is CLI-only: MCP rejects Playwright connections, observations, actions and task execution, and lists these bindings under `unavailable_sessions`. MCP browser connections default to the extension backend. The device profile needs no model API key. New input commands do not implicitly create Android sessions if a binding is missing or expired.
 
-## Install in a project
+## Install from PyPI
 
-For external Claude Code/Codex operation, prefer the managed plugin installer:
+The published package is [saygo-agent-control](https://pypi.org/project/saygo-agent-control/). With Python 3.10+, pipx and your Agent CLI installed, run:
 
-```bash
-python3 scripts/install_agent_plugin.py --client both
+```sh
+pipx install 'saygo-agent-control[mcp]'
+saygo setup --client codex
+# Or: saygo setup --client claude / both / qoder / qodercn / all
 ```
 
-It installs the runtime, native plugins, shared skill and MCP configuration together. Restart the client and describe the UI task; no manual skill-loading prompt or MCP path configuration is needed. See [plugin installation](../plugins/saygo-device/README.md) for prerequisites, platform extras and validation limits. The commands below are the lower-level Python-package installation route.
+No repository clone or manual MCP configuration is needed. `saygo setup` uses the installer, Skill and browser extension bundled with the installed package, creates an isolated runtime, and registers your client integration. Follow its instructions to load the Chrome/Edge extension, click **Connect local bridge**, then restart the AI client. See [plugin installation](../plugins/saygo-device/README.md) for platform prerequisites.
 
-Build/install this checkout with Python 3.10+:
+To upgrade, run `pipx upgrade saygo-agent-control`, then rerun `saygo setup --client codex` (or your selected client). This refreshes the managed integration as well as the CLI. Use `saygo setup --help` for mobile dependencies, browser choice, update and uninstall options.
 
-```bash
-python -m venv .venv
-. .venv/bin/activate
-pip install '/path/to/saygo[browser,mcp]'
-python -m playwright install chromium
-saygo --help
-```
+For source development, use `python3 scripts/install_agent_plugin.py --client both` from a checkout. For direct Python API work, install the package in your own virtual environment. The `browser` extra and Playwright are only for separate CLI browser automation; the browser-extension MCP setup needs the `mcp` extra and no Playwright installation. Other extras include `mobile`, `selenium`, `windows`, `mac`, and `qa`. Mobile device toolchains and desktop permissions remain separate setup steps.
 
-The distribution name is `saygo-agent-control`; the executable is `saygo`. This change provides packaging but does not publish a PyPI release. For a browser-only setup, `browser,mcp` installs no Appium toolchain. Extras: `mobile`, `selenium`, `windows`, `mac`, `qa`. Mobile users can then run `saygo device install --help` for the device toolchain. WSL uses the bundled PowerShell runner for Windows control.
-
-An MCP client can start `saygo-mcp --profile device` using the environment's executable path. Keep the client's working directory at the user's project. The plugin launcher also accepts an installed package; `SAYGO_HOME` is only needed for a checkout that is not installed.
+An MCP client can start `saygo-mcp --profile device` using the environment's executable path. Prefer `saygo setup` for supported clients so it configures the runtime and paths together.
 
 ## Sessions and observations
 
@@ -92,7 +86,7 @@ All device operations write local JSONL facts under `$SAYGO_HOME_DIR/operations`
 | Native Windows / macOS desktop | Window identity checks implemented; native adapters require host validation |
 | Browser extension / Selenium | Existing adapter tests; advanced actions vary by backend |
 
-The isolated installation run used Pillow 12.3.0, Playwright 1.63.0 and MCP 2.2.0 with an existing host Chromium binary. It verifies Python dependency isolation and operation outside the checkout, not browser/system dependency installation on a fresh operating system. The wheel is installable but has not been published to a package index.
+The isolated installation run used Pillow 12.3.0, Playwright 1.63.0 and MCP 2.2.0 with an existing host Chromium binary. It verifies Python dependency isolation and operation outside the checkout, not browser/system dependency installation on a fresh operating system. The package is published on PyPI; the release pipeline checks wheel installation and plugin preparation on Linux, Windows and macOS.
 
 The real phone registration → mailbox activation → desktop administration acceptance scenario is not certified by simulated tests. It requires designated test applications/accounts and a real-device run. `doctor` checks connection, capture and local image decoding; it reports input permission as untested unless you explicitly pass `--probe-action` with an action on a chosen harmless target; the resulting screenshot still requires visual verification. Platform support should remain experimental until the relevant real run is recorded.
 

@@ -12,6 +12,12 @@ python3 -m http.server 8080 --bind 127.0.0.1
 
 打开 http://127.0.0.1:8080。无需构建依赖。
 
+## 语言
+
+支持简体中文与英文。首次访问使用浏览器首选语言：`zh`（包括地区变体）显示中文，其他语言显示英文。右上角可随时切换，手动选择保存到 `localStorage` 的 `saygo.language`，刷新或再次访问优先使用该设置。存储被禁用时仍可切换当前页面。
+
+翻译维护在 `i18n.js`，包括页面内容、复制反馈、无障碍标签和页面元信息。安装命令与客户端选择不随语言切换而改变。
+
 ## 安装入口
 
 首屏支持 Codex / Claude Code 和 macOS、Linux、WSL / Windows 切换。默认使用已发布的 PyPI 包，显示 `pipx install` 与 `saygo setup`。在 `site-config.js` 中设置 `installMode: "source"` 可切换回源码安装。复制使用 Clipboard API，失败时选中命令供手动复制。

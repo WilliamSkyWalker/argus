@@ -4,9 +4,26 @@ One versioned Python installer prepares an isolated MCP runtime, registers the n
 Claude/Codex plugins, configures Qoder/QoderCN, and installs the Chrome/Edge native messaging host. Git is not
 needed. Run it in the environment where the client CLI runs (including WSL).
 Python 3.10+ and a supported Agent client are prerequisites. This is currently a
-beta installer, not a signed Windows EXE or a published PyPI/Web Store release.
+beta distribution. The Python package is published on PyPI; signed desktop installers
+and Chrome Web Store publication are not part of this release.
 
-## Install a released version
+## Install from PyPI
+
+The standard client setup uses the published package, without cloning a repository:
+
+```sh
+pipx install 'saygo-agent-control[mcp]'
+saygo setup --client codex
+```
+
+Use `--client claude`, `both`, `qoder`, `qodercn`, or `all` for other integrations.
+After setup, load the browser extension from the path printed by the installer,
+click **Connect local bridge**, and restart the Agent client. Update with
+`pipx upgrade saygo-agent-control`, then rerun `saygo setup` for your chosen client.
+The CLI package and the managed runtime are separate; upgrading the package alone
+does not refresh an existing client integration.
+
+## Install from GitHub release assets
 
 With Python 3.10+ available, run one command in a writable directory to download and start the installer. No manual GitHub download is needed.
 

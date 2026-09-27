@@ -20,6 +20,7 @@ jobs:
         run: |
           test -s website-project/index.html
           test -s website-project/public/videos/brand.mp4
+          node --check website-project/i18n.js
           node --check website-project/app.js
           node --check website-project/site-config.js
       - name: Ensure Cloudflare Pages project exists

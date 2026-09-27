@@ -43,7 +43,7 @@ then rerun `saygo setup`; remove client registration with `saygo setup --uninsta
 before removing the pipx application. Managed runtime updates remain a separate,
 opt-in GitHub release channel.
 
-Build and first-publication instructions: [Python package release](distribution/PYPI.md).
+Build and publication instructions: [Python package release](distribution/PYPI.md).
 
 
 ### Install from source
@@ -90,7 +90,7 @@ For browser control, load the installer-provided extension directory through **L
 
 **MCP browser control uses the extension backend. Playwright is excluded from MCP**, including existing Playwright sessions and tasks using them. Playwright remains available through CLI/Runtime for managed test browsers. The extension works with existing website tabs and their login state; it does not extract DOM content for visual decisions.
 
-The installer configures Saygo-scoped permissions for Claude and Qoder/QoderCN. Codex approval setup and client-policy limits are documented in the [distribution guide](distribution/README.md). Qoder integration covers the CLI; IDE integration is not claimed verified.
+The installer configures Saygo-scoped permissions for Codex, Claude and Qoder/QoderCN while preserving explicit user policies. Approval behavior and client-policy limits are documented in the [distribution guide](distribution/README.md). Qoder integration covers the CLI; IDE integration is not claimed verified.
 
 For direct package installation during development:
 

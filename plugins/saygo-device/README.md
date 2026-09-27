@@ -4,10 +4,11 @@ Visual control for Android/iOS, browser pages and desktop windows. An external p
 
 ## Install for Claude Code or Codex
 
-From this checkout, run one installer in WSL/Linux or macOS (Python 3.10+ and the selected client CLI must already be available):
+Install the published PyPI package (Python 3.10+, pipx and the selected client CLI must already be available):
 
 ```bash
-python3 scripts/install_agent_plugin.py --client both
+pipx install 'saygo-agent-control[mcp]'
+saygo setup --client both
 # Or --client claude / --client codex
 ```
 
@@ -17,9 +18,9 @@ Start a new client session after installation and say: **“Use Saygo to inspect
 
 MCP does not support Playwright. Browser tasks use the extension backend; saved Playwright sessions are listed separately as unavailable through MCP. Use `--install-browser` only to add Playwright/Chromium for separate CLI work, or `--mobile` to add mobile Python dependencies. Android/iOS toolchains, application login and OS input permissions remain platform setup requirements. Native Windows/macOS installation is not yet live-verified; WSL installation and both clients' plugin ingestion are tested. No model API key is required by Saygo.
 
-The installer also runs as a standalone downloaded Python file: outside a checkout it downloads the repository's `main` archive without requiring Git. This is a source-channel installer, not a signed binary or a published package-index release. Its remote path becomes available only after this change is published.
+For source development, run `python3 scripts/install_agent_plugin.py --client both` from a checkout. Versioned GitHub release installers are another option and verify their source archives; the PyPI route bundles the installer and needs no repository clone.
 
-Managed files live under `~/.local/share/saygo/agent-plugin`. Re-run the installer after updating the source to install a new runtime and refresh the plugin cache. Existing runtimes are retained for running clients; session/task data stays under `~/.saygo`. `--prepare-only` prepares files without registering clients. `--root PATH` selects another managed installation directory.
+Managed files live under `~/.local/share/saygo/agent-plugin`. Run `pipx upgrade saygo-agent-control`, then `saygo setup --client both` (or your selected client) to install a new runtime and refresh the plugin cache. Existing runtimes are retained for running clients; session/task data stays under `~/.saygo`. `--prepare-only` prepares files without registering clients. `--root PATH` selects another managed installation directory.
 
 Do not enable an older `saygo-device@saygo-plugins` installation or a manually configured Saygo MCP server alongside the managed plugin: use one integration per client to avoid duplicate tools. The installer does not remove unrelated or existing client configurations.
 

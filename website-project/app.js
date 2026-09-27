@@ -1,5 +1,6 @@
 "use strict";
 const config = window.siteConfig || {};
+const { t } = window.siteI18n;
 const clients = document.querySelectorAll("[data-client]");
 const os = document.querySelector("#install-os");
 const command = document.querySelector("#install-command");
@@ -10,7 +11,7 @@ let copyTimer;
 let commandRevision = 0;
 function resetCopy() {
   clearTimeout(copyTimer);
-  copyButton.textContent = "复制命令 ⧉";
+  copyButton.textContent = t("copyDefault");
   copyStatus.textContent = "";
 }
 function updateCommand() {
@@ -22,12 +23,19 @@ function updateCommand() {
   clients.forEach(button => button.setAttribute("aria-pressed", String(button.dataset.client === selectedClient)));
   resetCopy();
 }
-if (config.installMode === "pypi") {
-  document.querySelector("#install-requirements").textContent = "Python 3.10+ · pipx";
-  document.querySelector("#setup-requirements").textContent = "准备好 Python 3.10+、pipx 和对应的 AI 客户端，在终端运行上方命令。";
-  document.querySelector("#install-mode-note").textContent = "通过 pipx 安装，再运行 saygo setup 接入 AI 工具。";
-  os.closest("label").hidden = true;
+function updateInstallText() {
+  const fromPyPI = config.installMode === "pypi";
+  document.querySelector("#install-requirements").textContent = fromPyPI ? "Python 3.10+ · pipx" : "Python 3.10+ · Git";
+  document.querySelector("#setup-requirements").textContent = t(fromPyPI ? "setupRequirementsPypi" : "setupRequirementsSource");
+  document.querySelector("#install-mode-note").textContent = t(fromPyPI ? "installNotePypi" : "installNoteSource");
+  os.closest("label").hidden = fromPyPI;
 }
+updateInstallText();
+document.querySelector("#site-language").addEventListener("change", event => {
+  window.siteI18n.apply(event.target.value, true);
+  updateInstallText();
+  updateCommand();
+});
 updateCommand();
 clients.forEach(button => button.addEventListener("click", () => {
   selectedClient = button.dataset.client;
@@ -39,8 +47,8 @@ copyButton.addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(command.textContent);
     if (revision !== commandRevision) return;
-    copyButton.textContent = "已复制 ✓";
-    copyStatus.textContent = "安装命令已复制。";
+    copyButton.textContent = t("copied");
+    copyStatus.textContent = t("copySuccess");
   } catch {
     if (revision !== commandRevision) return;
     const selection = window.getSelection();
@@ -49,8 +57,8 @@ copyButton.addEventListener("click", async () => {
     selection.removeAllRanges();
     selection.addRange(range);
     command.parentElement.focus();
-    copyButton.textContent = "请手动复制";
-    copyStatus.textContent = "自动复制不可用，已选中命令，请按 Ctrl+C 或 Command+C 复制。";
+    copyButton.textContent = t("copyManual");
+    copyStatus.textContent = t("copyFallback");
   }
   clearTimeout(copyTimer);
   copyTimer = setTimeout(resetCopy, 5000);

@@ -1,7 +1,7 @@
 # Python package release
 
-Package: `saygo-agent-control`. CLI: `saygo`. Version: `0.4.3` (beta software).
-Version 0.4.3 is published on PyPI. Its wheel passed installation and plugin preparation
+Package: `saygo-agent-control`. CLI: `saygo`. Version: `0.4.4` (beta software).
+Version 0.4.4 is published on PyPI. Its wheel passed installation and plugin preparation
 checks on Linux, Windows and macOS before upload.
 
 ## Build and verify
@@ -10,7 +10,7 @@ checks on Linux, Windows and macOS before upload.
 python -m pip install build twine
 python -m build --outdir dist/python
 python -m twine check --strict dist/python/*
-python scripts/check_python_package.py dist/python/saygo_agent_control-0.4.3-py3-none-any.whl
+python scripts/check_python_package.py dist/python/saygo_agent_control-0.4.4-py3-none-any.whl
 ```
 
 The default build produces an sdist and builds the wheel from that sdist, checking
@@ -25,9 +25,9 @@ prepares both client bundles without registering them, imports MCP from the mana
 runtime, and repeats setup to verify runtime reuse. It does not operate devices or
 prove live client ingestion. CI runs the same check on Linux, Windows and macOS.
 
-## First publication
+## Publisher configuration
 
-Configure a pending Trusted Publisher in PyPI (and separately in TestPyPI):
+The production PyPI Trusted Publisher is configured. Use these settings when configuring or restoring a publisher (TestPyPI is separate):
 
 | Field | Value |
 | --- | --- |
@@ -42,7 +42,7 @@ reviewer in the `pypi` environment. Trusted Publishing uses GitHub OIDC rather t
 committed credentials or a long-lived API token.
 
 Run the **Python package** workflow with `publish: none` first. Select `testpypi`
-to upload to the test index. For production, select the matching `v0.4.3` tag and
+to upload to the test index. For production, select the matching `v0.4.4` tag and
 `publish: pypi`. Build and all three smoke jobs must pass before upload. Only a
 manual dispatch can publish; pull requests only build and test. The public PyPI
 project endpoint may return 404 before first publication; this does not guarantee
@@ -56,8 +56,7 @@ saygo setup --help
 saygo setup --client codex
 ```
 
-Then enable the website's `installMode: "pypi"`. Until then its source installation
-remains functional. The pipx application and managed plugin runtime are separate:
+The website uses `installMode: "pypi"`. The pipx application and managed plugin runtime are separate:
 `pipx upgrade saygo-agent-control` followed by `saygo setup` updates both. The
 optional managed runtime auto-updater still uses GitHub releases.
 
