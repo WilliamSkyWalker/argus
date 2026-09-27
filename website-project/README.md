@@ -22,4 +22,20 @@ python3 -m http.server 8080 --bind 127.0.0.1
 
 ## 部署
 
-推送本目录变更到 main 后，由 `.github/workflows/website.yml` 发布到 GitHub Pages。域名由 Cloudflare 管理。
+推送到 `main` 后，由 `.github/workflows/website.yml` 校验静态资源并通过 Wrangler 自动发布到 Cloudflare Pages，项目名为 `saygo`，生产分支为 `main`。也可以在 GitHub Actions 手动运行部署。网站不需要 npm 构建。
+
+GitHub 仓库 Actions Secrets 需要配置：
+
+- `CLOUDFLARE_ACCOUNT_ID`：目标 Cloudflare 账户 ID。
+- `CLOUDFLARE_API_TOKEN`：该账户的 Cloudflare Pages 编辑权限。
+
+首次部署会创建 Direct Upload Pages 项目；已有项目会复用。上线后在 Pages 项目的 Custom domains 绑定 `saygo.work` 和 `www.saygo.work`，由 Cloudflare 管理 DNS 和 HTTPS。
+
+本地需要手动发布时，可以运行：
+
+```sh
+npx wrangler login
+npx wrangler pages deploy website-project --project-name=saygo --branch=main
+```
+
+上面部署命令在仓库根目录运行。GitHub Actions 使用 API Token，无需交互登录。

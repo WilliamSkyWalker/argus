@@ -1,35 +1,35 @@
-name: Deploy Saygo website
+name: Deploy Saygo website to Cloudflare Pages
 on:
   push:
     branches: [main]
-    paths:
-      - 'website-project/**'
-      - '.github/workflows/website.yml'
   workflow_dispatch:
 permissions:
   contents: read
-  pages: write
-  id-token: write
 concurrency:
-  group: saygo-pages
+  group: saygo-cloudflare-pages
   cancel-in-progress: false
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/configure-pages@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Validate website assets
         run: |
           test -s website-project/index.html
           test -s website-project/public/videos/brand.mp4
           node --check website-project/app.js
           node --check website-project/site-config.js
-      - uses: actions/upload-pages-artifact@v4
+      - name: Ensure Cloudflare Pages project exists
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/ensure_cloudflare_pages.mjs
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
         with:
-          path: website-project
-      - uses: actions/deploy-pages@v4
-        id: deployment
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy website-project --project-name=saygo --branch=main
