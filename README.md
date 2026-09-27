@@ -1,642 +1,202 @@
 # Argus
 
-[License: MIT](LICENSE)
+[MIT License](LICENSE) · [中文说明](#中文说明) · [Agent development guide](agent.md)
 
-**Claude/Codex/Qoder/QoderCN + Chrome extension beta distribution:** see the [installer and release guide](distribution/README.md).
-The versioned installer prepares MCP, native Agent plugins and the browser bridge without Git.
-Release artifacts can be built locally; Web Store publication is still pending.
+**Visual control of phones, browser pages and desktop windows, with persistent sessions and task records.**
 
-**Standalone desktop application:** [Qt/PySide6 build and usage guide](docs/desktop.md).
-Configure your own vision-model API, connect sessions and run recorded tasks from a window.
-Packaged builds include Python; pyenv is not required.
+Argus gives external programming agents a shared CLI/MCP operation layer: observe a screen, choose an action, execute it, and inspect the result. It also provides a standalone Qt desktop application where users configure their own vision-model API, plus a BDD QA runner for regression tests.
 
-> A vision-based AI agent that replaces the human QA tester.
+## Choose how to use it
 
-Argus reads a **BDD `.feature` test case** (Gherkin / Cucumber), **looks at the screen** (iOS / Android / Browser / desktop), decides what to do, performs the action, and judges pass/fail on its own — the way a human tester would, but driven by a vision LLM.
+| User | Entry point | Model configuration |
+|---|---|---|
+| Claude Code, Codex, Qoder or QoderCN CLI user | Managed Agent integration: MCP + shared operation Skill | No Argus model API key; the external Agent makes decisions |
+| Desktop application user | Argus Desktop (Qt 6 / PySide6) | Configure an OpenAI-compatible vision API URL, model and API key in the app |
+| Script or CI user | `argus device`, `argus task`, `argus workflow`, `argus run` | Direct control needs no key; the built-in QA loop needs model credentials |
 
-- 👁️ **Pure vision** — sends the raw screenshot to the LLM and locates everything visually, with **no UI tree**. Coordinates are percentage-based (resolution-independent); when configured, a dedicated element-locator model locates tap/long-press targets before execution.
-- 🧭 **Step-driven** — iterates Gherkin steps one at a time; a validator enforces the current step index and evidence fields. Non-visual assertions require probe plugins for code-level verification.
-- 🤖 **Failure analysis reports** — after a failure it runs a root-cause classifier (`case_outdated / app_bug / llm_misjudge / fixture_failure / flaky`) for human review.
-- 📱 **Multi-platform, multi-device** — iOS + Android via a unified **Appium** driver (UiAutomator2 / XCUITest, with mjpeg frame-stream screenshots), Browser via Selenium, and **macOS / Windows desktop apps** via window-level visual drivers. WSL can operate its Windows host through a bundled PowerShell/Win32 runner, with no Windows Python install. Schedule many Android devices against a shared case queue.
-- 🎨 **Figma integration** — generate test cases from a design, or run a visual design-vs-screenshot review.
-- 🔌 **MCP** — exposes its capabilities as MCP tools (drive it from Claude Code / Cursor) and can itself call external MCP servers (e.g. Figma).
-- 🧑‍✈️ **Two driver modes** — the built-in engine (any vision LLM via API), or **`/argus-drive`**: a Claude Code session as the brain — no LLM API key needed.
+Argus is currently a **development/beta distribution**. Installable source bundles and native packaging scripts exist; this does not mean the packages are published on PyPI or the Chrome Web Store. See the [distribution guide](distribution/README.md) for release artifacts, updates and uninstall.
 
----
+## Programming Agent setup
 
-## Multi-resource workflow runtime (initial version)
+From a checkout, with Python 3.10+ and an installed client:
 
-`argus workflow` runs explicit JSON workflows across mobile, browser and desktop resources, with SQLite queries, durable checkpoints and human handoff/resume. It is separate from the existing QA runner; natural-language planning and general API/MCP connectors are not implemented yet. Browser resources default to Playwright/CDP with persistent page selection; the QA runner retains Selenium. See [runtime guide](docs/runtime.md), [browser guide](docs/browser.md) and [examples](examples/workflows).
-
-## How it works
-
-```
-BDD .feature test case (hand-written, or Figma-generated)
-        │
-        ▼
-  gherkin.py  ──►  parse into steps + metadata
-        │
-        ▼
-  planner.py  (1 LLM call/case)  ──►  per-step intent / expected_state / action_hint
-        │
-        ▼
-  agent.py  — step-driven main loop
-     for each Gherkin step:
-       repeat until pass/fail or a guard limit:
-         screenshot + skills enhance       # loading / keyboard / scroll / diff / toast
-         brain.decide() → JSON action      # vision LLM
-         validate_step_progress()          # exact pending step index + evidence checks
-           ├─ reject → feed reason back to the LLM
-           ├─ pass   → advance to next step
-           ├─ in_progress → platform executes action, then repeat
-           └─ fail   → abort scenario
-        │
-        ▼
-  healer.py  (on fail/timeout/error)  ──►  verdict for human review
-        │
-        ▼
-  report.py  ──►  HTML report with screenshots, evidence and failure analysis
+```sh
+python3 scripts/install_agent_plugin.py
 ```
 
-The diagram shows the ordinary visual-decision path. Platform drivers execute actions inside the loop. Probe steps take their verdict directly from plugins, and consecutive visual assertions can be checked as a batch with per-assertion evidence. Healer adds a root-cause report after failure; it does not repair the application or case, or change the original verdict.
+The installer detects supported clients, prepares an isolated runtime, installs their integration and the shared Skill, and sets up the Chrome/Edge native messaging host. It does not require pyenv. Select clients with `--client claude`, `codex`, `qoder`, `qodercn`, `both` (Claude + Codex), or `all`. Add `--mobile` for mobile dependencies. On native Windows use `py -3` in place of `python3`.
 
-Execution guards and defaults (from `argus/config.py` and `argus/qa/agent.py`):
+When a versioned release installer and source archive are available, users can install without Git:
 
-- The main guard is **15 counted turns without step progress**. The old per-step action cap is disabled (`PER_STEP_SUB_ACTION_LIMIT=-1`); the scenario loop-turn cap is also disabled by default (`AGENT_MAX_STEPS=0`, positive values enable it).
-- Ordinary decisions must report the **exact pending step index**. Three consecutive validator rejections fail the step. Rejected decisions execute no action but still count toward loop/no-progress limits.
-- Active waits have a separate accumulated budget (`AGENT_WAIT_MAX_S=45` seconds). Within that budget, wait turns do not count as no-progress; after it is spent, counting resumes. Probe retries use their own timeout and do not count as no-progress.
-- Stable-frame sampling and consecutive assertion merging are enabled by default. Split execution is opt-in. Defaults are overridden by `.env`, then environment variables; model names in `.env.example` are examples, not the built-in default.
-
-The validator checks evidence text and response structure, not whether the claimed elements actually exist in the image. The prompt forbids unsupported non-visual PASS judgments, but visual verdicts can still be wrong; use probes for code-level verification of non-visual facts.
-
-## Supported platforms
-
-| Platform | Driver |
-|----------|--------|
-| Android  | Appium + **UiAutomator2** driver (text input via `mobile: type`, routed through a Unicode IME to bypass the native IME — works on both native `EditText` and Flutter's self-drawn canvas) |
-| iOS      | Appium + **XCUITest** driver (auto-signs WDA via xcodebuild/CoreDevice; needs `IOS_TEAM_ID` + a Xcode-logged-in team) |
-| Browser  | QA: Selenium (local/Grid). Workflow: Playwright/CDP with persistent Chromium sessions; Selenium opt-in. |
-| macOS desktop   | `DesktopMacPlatform` — **window-level** pure-vision driver (not full-screen): screenshots the target app's window only (`CGWindowListCreateImage`), keeps it foregrounded before every turn, and injects clicks/keys globally via `pyautogui` (percentage coordinates converted to the window's global points). Requires Screen Recording + Accessibility permissions; foreground-only (takes over mouse/keyboard focus). |
-| Windows desktop | From WSL, `WindowsRunnerPlatform` automatically launches the bundled PowerShell/Win32 JSONL runner on the Windows host: no Windows Python, packages, service, or RDP login. Native Windows Python uses `DesktopWinPlatform` (`pyautogui` + `pywin32`). Both capture only the target window and operate the current foreground desktop. |
-| Remote desktop (experimental) | `RDPPlatform` is **under development**. Its current prototype connects from Linux/WSL to Windows through FreeRDP in Xvfb. It is retained as the foundation for future remote Windows/macOS support, but its API and behavior are not yet stable. |
-
-`argus.platforms.appium.AppiumPlatform` is a single unified driver for both mobile OSes — `create_platform("ios"/"android"/"appium")` all resolve to it, switching XCUITest vs UiAutomator2 via `config["appium"]["os"]`. It manages its own Appium server (`AppiumServerManager`, auto-starts/reuses, injects `ANDROID_HOME`) and, when available, reads screenshots from a live **mjpeg frame stream** (`platforms/mjpeg.py`) instead of a screenshot HTTP round-trip, falling back to `get_screenshot_as_png` when the stream/port isn't exposed (e.g. some cloud device farms). No `adb`/`idb`/`simctl` calls are used for screenshots or input — everything goes through Appium.
-
-Desktop (`mac`/`macos`/`windows`/`win`/`desktop`) is selected via `PLATFORM=` in `.env` or the environment. Case platform tags filter cases against the selected platform; they do not select a driver. Desktop is not yet a `run --platform` choice (that flag accepts `ios`/`android`/`browser`/`rdp`). `PLATFORM=desktop` selects the native Windows driver on Windows and the macOS driver otherwise; under WSL, use `PLATFORM=windows` explicitly. Set `MAC_APP` (app/menu-bar name) or `WIN_APP` (window-title substring, optionally with `WIN_LAUNCH` to start it) in `.env` — both are required with no default, same fail-fast policy as `ANDROID_PACKAGE`.
-
-When Argus runs under WSL, choosing `windows` automatically uses `WindowsRunnerPlatform`. It invokes the repository's `windows_runner.ps1` through WSL interop and exchanges JSON over stdin/stdout. Screenshots, Win32 mouse/keyboard input, Unicode clipboard paste, DPI setup, and target-window selection all execute in the current Windows console session. `WIN_LAUNCH` locks the runner to the launched process ID, preventing another window with the same title from receiving input. The runner is foreground-only and takes over the real mouse/keyboard while a case runs.
-
-`rdp` is an **experimental, under-development** remote desktop platform. The current prototype may be selected with `PLATFORM=rdp` or `argus run ... --platform rdp`; it connects to Windows through FreeRDP, while remote macOS support remains future work. On Linux/WSL, install `freerdp2-x11` (or `freerdp3-x11`), `xvfb`, and `xdotool`; set `RDP_HOST`, `RDP_USERNAME`, and `RDP_PASSWORD`. Credentials are sent to FreeRDP over stdin rather than exposed in process arguments. Do not depend on this interface for stable automation yet.
-
----
-
-## Quick start (newcomer guide)
-
-### 1. Prerequisites
-
-```bash
-# Python 3.11+ dependencies (Argus runs as a module)
-pip3 install -r requirements.txt
-
-# Android: install Appium, the UiAutomator2 driver and adb into ~/.argus/runtime
-python3 -m argus.cli mcp init --skip-ios
-
-# iOS (macOS only): also install the XCUITest driver and prepare WDA
-python3 -m argus.cli mcp init
-
-# Browser (only if testing web) — install Chrome/Chromium or use Selenium Grid
-
-# Desktop (only if testing a macOS/Windows app):
-#   macOS  → pip3 install pyautogui pyobjc-framework-Quartz; grant Screen Recording + Accessibility
-#   Windows native Python → pip install pyautogui pywin32
-#   Windows from WSL → no Windows install; requires normal WSL interop (powershell.exe)
-
-# Remote Windows desktop from Linux/WSL (no Windows Python or Argus install required):
-sudo apt install freerdp2-x11 xvfb xdotool
+```sh
+python3 install-argus-0.4.0.py --archive argus-0.4.0.zip
 ```
 
-> Note: invoke everything as `python3 -m argus.cli <command>` from the repo root.
-> Handy alias: `alias argus="python3 -m argus.cli"`.
+For browser control, load the installer-provided extension directory through **Load unpacked** at `chrome://extensions` (or Edge's extension page), then click **Connect local bridge** in its popup. Restart the Agent client and describe a task, for example:
 
-### 2. Configure
+> List the connected sessions, connect the test browser page as `mail`, and show me its current screen before making changes.
 
-```bash
-python3 -m argus.cli init      # writes a default .env
+**MCP browser control uses the extension backend. Playwright is excluded from MCP**, including existing Playwright sessions and tasks using them. Playwright remains available through CLI/Runtime for managed test browsers. The extension works with existing website tabs and their login state; it does not extract DOM content for visual decisions.
+
+The installer configures Argus-scoped permissions for Claude and Qoder/QoderCN. Codex approval setup and client-policy limits are documented in the [distribution guide](distribution/README.md). Qoder integration covers the CLI; IDE integration is not claimed verified.
+
+For direct package installation during development:
+
+```sh
+python3 -m pip install -e '.[mcp]'
+argus --help
+argus-mcp --profile device
 ```
 
-Then edit `.env` and set your LLM key. The default provider is **OpenRouter** (OpenAI-compatible):
+Install only the needed extras: `mobile`, `windows`, `mac`, `desktop`, `browser` (CLI Playwright), `selenium`, or `qa`. A browser-extension-only MCP setup does not need the mobile toolchain. See the [operation guide](docs/agent-control.md) and [plugin guide](plugins/argus-device/README.md).
 
-```env
-PLATFORM=android
-LLM_PROVIDER=openrouter
-LLM_BASE_URL=https://openrouter.ai/api/v1
-LLM_API_KEY=${LLM_API_KEY}
-LLM_MODEL=google/gemini-3.5-flash
+## Desktop application
+
+Argus Desktop centers on a conversation, with task history in the sidebar and a message composer at the bottom. Users can configure a model, connect named sessions, run a task, pause for human input, reply to continue, recover a task and export evidence.
+
+- **Windows:** a native x64 portable ZIP has been built. Extract the entire folder and run `ArgusDesktop.exe`; keep `ArgusNativeHost.exe` and `_internal` alongside it. No WSL, Python or pyenv installation is needed. The main application opens without a console; the separate native host handles browser messaging.
+- **macOS:** `.app` and DMG packaging scripts and a macOS CI job are prepared. No macOS build/runtime validation has been completed yet.
+- **Linux:** the standalone GUI has passed local startup checks. Browser/mobile operation is available through the corresponding backends; local Linux desktop-window automation is not implemented.
+
+The application accepts an OpenAI-compatible vision endpoint. Keys can stay in memory for the session or use a supported OS credential store; they are not written to `desktop.json`. Screenshots and task text are sent to the configured provider.
+
+Developers can launch from source:
+
+```sh
+python3 -m pip install -e '.[desktop]'
+argus-desktop
 ```
 
-### 3. Run your first test
+Add `windows` or `mac` extras for native desktop input. Native packaging runs **on the target OS**:
 
-```bash
-# A single .feature file
-python3 -m argus.cli run tests/my-app/login.feature --report
-
-# A whole target directory (recursively runs every .feature), with an HTML report
-python3 -m argus.cli run my-app --report
+```sh
+python3 -m pip install pyinstaller
+python3 scripts/build_desktop.py
+python3 scripts/package_desktop.py
 ```
 
-Open the generated `tests/<target>/reports/latest.html` to see screenshots, the LLM's reasoning, per-step evidence, and the healer verdict.
+Output: Windows ZIP, macOS DMG or Linux tar.gz under `dist/installers`, each with a SHA256 checksum. The manual [desktop workflow](.github/workflows/desktop.yml) builds CI artifacts. These are development builds without release signing or notarization. See [desktop usage and validation](docs/desktop.md).
 
----
+## Observe, act, verify
 
-## Writing test cases
+CLI and MCP share named session state under `ARGUS_HOME_DIR` (default `~/.argus`). Clients must use the same state directory and a backend available to both entrances to operate the same target.
 
-Argus uses **BDD `.feature` files (Gherkin / Cucumber)**.
+```sh
+# Existing browser: install and connect the extension first.
+argus device connect --platform browser --backend extension --session mail
+
+# Android device/emulator; obtain its ID with device list.
+argus device list --platform android
+argus device connect --platform android --device DEVICE_ID --session phone
+
+# Windows window-title substring; use --platform mac for a macOS app.
+argus device connect --platform windows --app 'Example App' --session admin
+
+argus device capabilities --session mail
+argus doctor --session mail
+argus device screenshot --session mail
+
+# Replace OBSERVATION_ID with the returned ID, and choose coordinates from that image.
+argus device act '{"type":"tap","x":50,"y":40,"coordinate_space":"percent"}' \
+  --session mail --observation-id OBSERVATION_ID --observe-after
+argus device wait --session mail --mode stable --timeout 5
+```
+
+Observations include identity, target, dimensions and coordinate mappings. Crop observations retain the mapping to the original screen. MCP `device_observe` and action results with observations return image content; CLI returns image paths and metadata. Query capabilities before using platform-dependent actions.
+
+**Dispatched input or a stable frame does not establish business success.** Inspect the resulting screen. Prefer visible buttons and menus over keyboard shortcuts. Unsupported actions fail explicitly; Windows background mode must not silently fall back to global keyboard/mouse input. See [control details](docs/control.md).
+
+## Tasks, handoff and recovery
+
+Interactive tasks reuse Runtime while an Agent decides one step at a time. Explicit JSON workflows use `argus workflow`; they do not require a model planner.
+
+```sh
+argus task create '{"phone":"phone","mail":"mail","admin":"admin"}'
+argus task observe TASK_ID --resource phone
+argus task submit TASK_ID --resource phone --request-id focus-registration \
+  --observation-id OBSERVATION_ID \
+  --action '{"type":"tap","x_pct":50,"y_pct":40}' --note 'Focus the registration form'
+argus task handoff TASK_ID --instructions 'Please sign into the test mailbox'
+argus task resume TASK_ID --note 'User returned control after login'
+argus task recover TASK_ID
+argus task timeline TASK_ID
+argus task finish TASK_ID --note 'Verified the final screen'
+argus task export TASK_ID --out evidence.zip
+```
+
+Use the IDs returned by create/observe. MCP exposes the same task commands through `agent_task`. Project aliases can be saved with `argus resources bind NAME SESSION`.
+
+Runtime records dispatch intent before input, deduplicates request IDs, and marks interrupted actions with unknown results as `needs_review`; it never blindly replays them. Handoff blocks automatic input, and resume obtains fresh observations. Tasks retain resource ownership until finished or cancelled; use the owning task interface while a session is bound. Local desktop windows share an input lock.
+
+Execution facts, errors, before/after captures and Agent notes are recorded separately. Evidence exports can contain application content and entered text. See [interactive task semantics](docs/agent-control.md), [workflow format](docs/runtime.md) and [workflow examples](examples/workflows).
+
+## Platforms and validation limits
+
+| Target | Implementation / current boundary |
+|---|---|
+| Android | Appium + UiAutomator2; discovery/provisioning uses adb. Windows-host emulator installation and basic visual actions from WSL have been exercised. |
+| iOS | Appium + XCUITest; local setup requires macOS and full Xcode. New provisioning paths remain mock-tested. |
+| Chrome / Edge | Extension + native messaging for MCP and the desktop GUI; store installation and fresh-machine setup still require acceptance tests. |
+| Managed test browser | Playwright/CDP through CLI/Runtime; Selenium remains available for QA. Playwright is rejected by MCP. |
+| Windows desktop | Native driver or PowerShell/Win32 runner; WSL is optional. Experimental background control depends on application controls and rejects unsupported shortcuts. |
+| macOS desktop | Window capture and foreground input; requires Screen Recording and Accessibility permissions. Native packaging and full task execution remain unverified. |
+| Remote desktop | Experimental RDP prototype; not a stable supported deployment path. |
+
+Windows native desktop tests, frozen EXE startup and native-host handshake passed. Linux Qt startup and packaging passed. These checks do **not** establish clean-machine installation, a live model-driven task or the full phone registration → email activation → desktop confirmation acceptance scenario. Detailed evidence boundaries: [desktop](docs/desktop.md), [Agent control](docs/agent-control.md), [mobile](docs/mobile.md), [distribution](distribution/README.md).
+
+`doctor` checks connection, capture and image readability. Input remains untested unless an explicit `--probe-action` is supplied on a harmless target; its result still needs visual inspection.
+
+## Configuration
+
+External Agent control needs no Argus LLM API key. The standalone GUI has its own model settings. Optional CLI QA settings load in this order:
+
+1. Built-in defaults.
+2. `$ARGUS_HOME_DIR/config.env` (default `~/.argus/config.env`).
+3. Working-project `.env`, or the explicit file selected by `ARGUS_CONFIG_FILE`.
+4. Process environment variables.
+
+`argus init` creates a project template; `argus init --user` creates a user template. Existing files are preserved. Installed package directories are not searched for `.env`; private configuration is never bundled in releases. The Agent installer supports `--config-file /absolute/path/to/private.env` to retain a file reference without copying its contents.
+
+## BDD QA and other tools
+
+The existing QA engine remains available for `.feature` (Gherkin) regression cases, visual reports, model tiering and optional element location:
+
+```sh
+python3 -m pip install -e '.[qa,mobile]'
+argus init
+# Configure a vision model and target in the private .env file before running.
+argus run tests/my-app/login.feature --report
+```
 
 ```gherkin
 # argus-platform: android
 # argus-package: com.example.app
-
 Feature: Login
-
-  Background:
-    Given the app is installed and launched
-
-  @P0 @auto @android @reset:pm_clear
-  Scenario: Log in with email and password
-    When the user taps "Continue with E-mail"
-    And  enters "${EMAIL}" and taps "Continue"
-    And  enters "${PASSWORD}" and taps "Continue"
-    Then the home screen is shown with a bottom navigation bar
+  @auto @android
+  Scenario: Show the login form
+    Given the app is launched
+    When the user taps "Log in"
+    Then the email and password fields are visible
 ```
 
-Tags Argus understands: `@P0/@P1/@P2` (priority) · `@auto/@partial/@manual` (automation; partial/manual are auto-skipped) · platform tags such as `@android/@ios/@browser/@mac/@windows/@desktop` (a set: `@android @ios` allows runs on either platform; it does not launch both; legacy `@both` is still accepted) · `@TC-XXX` (case id) · `@reset:pm_clear|relaunch|none` (Android state reset) · `@skip/@wip`.
+QA verdicts are model judgements with recorded evidence, not independent proof. Use [probe plugins](docs/probes.md) for non-visual facts such as backend writes. Figma test generation and visual review remain available through `argus figma`. The existing [`/argus-drive` Skill](.claude/skills/argus-drive/SKILL.md) provides a separate QA-oriented Agent workflow; general cross-device tasks should use the shared operation Skill and Runtime records.
 
-### Non-visual assertions (`probe` plugins)
+For QA execution guards, model configuration, case conventions and module responsibilities, see [agent.md](agent.md), [`.env.example`](.env.example) and [architecture](docs/architecture.md).
 
-Argus is **vision-only**, so assertions about things that never appear on screen —
-analytics events, backend writes, upload logs — can't be judged by looking. The hard
-rule is that the LLM must **fail** them rather than assume they passed. Probes are the
-code-level channel for those: attach one to a `Then` and that step **takes its verdict from the probe, not the LLM**. The full case and step list can still appear in planner/brain context; this is a verdict-routing boundary, not a data-isolation boundary.
+## 中文说明
 
-```gherkin
-  Then the home-screen impression event is reported
-  # argus-probe: analytics check=home_impression
-```
+Argus 为外部编程 Agent 提供手机、浏览器和桌面窗口的视觉操作能力：**观察 → 操作 → 新观察**，并保存跨端任务进度、执行事实和截图。
 
-- **The case states intent only** (`check=home_impression`). Real event names, table
-  names and expected properties live in the plugin's config, so switching how events
-  are verified never touches the cases.
-- **How to query is entirely yours**: a Python class (`argus.probes.base.Probe`) or any
-  executable speaking JSON over stdin/stdout (so plugin deps stay out of Argus's env).
-- **Three-state verdict**: `pass` / `fail` / `inconclusive`. Analytics pipelines batch
-  their uploads, so an empty result right after the action is *not* proof of a missing
-  event — Argus keeps re-querying at the plugin's pace until the budget
-  (`PROBE_TIMEOUT_S`, default 300s) runs out before failing the step.
-- Registry: `.argus/probes.json` (gitignored — holds DSNs/tokens; `${VAR}` expanded).
-  Plugin code belongs in `tests/<target>/probes/`. Debug with
-  `argus probes list` / `argus probes check <name> k=v --wait`.
-- **Biased runs**: `argus run <t> --skip-probes` marks probe steps **`skip` (not
-  pass)** and names them in the case reason, so an all-green report still shows the
-  gap. `--only-probes` runs *only cases that declare a probe* — their UI steps still
-  execute, since the events have to be triggered before they can be queried.
+- **命令行用户**：安装 Claude Code / Codex / Qoder / QoderCN 的集成，由现有 Agent 决策，无需给 Argus 配模型 Key。从源码执行 `python3 scripts/install_agent_plugin.py`；版本化安装器可配合源码 ZIP 使用，无需 Git。安装后重启客户端。
+- **窗口桌面用户**：使用 Qt 桌面版，在界面配置自己的视觉模型 API、模型名和 Key。Windows 原生便携包无需 WSL、Python 或 pyenv。macOS DMG 的脚本和 CI 已就绪，但尚未完成 macOS 构建与实测。
+- **浏览器**：MCP 和桌面版使用 Chrome/Edge 扩展，保留现有页面和登录状态；MCP 不支持 Playwright。扩展暂通过开发者模式加载，未声称已上架商店。
+- **恢复与接管**：CLI/MCP 共用命名会话；`argus task` 保存操作记录、支持人工接管和中断恢复。结果不确定的动作需核对，不自动重放。点击派发成功或画面稳定都不等于业务完成。
+- **测试边界**：Windows EXE 已通过启动和桥接握手验证，完整跨端业务验收与干净机器安装仍需实测；不要将模拟测试当作真机兼容性证明。
 
-Full guide: [`docs/probes.md`](./docs/probes.md).
+安装与更新见[分发说明](distribution/README.md)，窗口版见[桌面指南](docs/desktop.md)，会话、操作和恢复见[Agent 操作指南](docs/agent-control.md)，开发约束见[通用 agent.md](agent.md)。
 
-### Per-target conventions (`tests/<target>/`)
+## License
 
-- `_preconditions.md` — auto-prepended to every case; tells the LLM how to recover to the Background state when the screen doesn't match.
-- `_accounts.json` — account pool. With multiple `--device`s, worker `i` binds `accounts[i]`; `${EMAIL}` / `${PASSWORD}` placeholders in cases are substituted.
-- `reports/<timestamp>/*.html` — reports (`reports/latest.html` symlinks the newest).
+Argus is licensed under [MIT](LICENSE). Third-party dependencies retain their respective licenses.
 
----
-
-## CLI cheatsheet
-
-```bash
-# Execution
-argus run <target | dir | .feature file>   # run BDD cases
-argus run my-app --report                   # auto HTML report
-argus run my-app -j 4                        # 4-way browser concurrency (needs Selenium Grid)
-
-# Multi-device Android (shared queue + dynamic scheduling)
-argus run my-app --device serial1 serial2 serial3 --apk app.apk --report
-#   --apk installs to all devices first (3 retries); each device binds _accounts.json[i]
-
-argus run my-app --shard 0/3            # manual sharding (without multi-device)
-argus run my-app --bg                   # run in background
-argus status                              # list background runs
-argus status <run_id>                     # inspect one run
-
-# Project management
-argus list                                # list targets
-argus device list --platform ios                             # list iOS simulators
-argus device install --platform ios --boot                               # create & boot a simulator
-
-# Figma
-argus figma gen-tests <figma-url> -o tests.feature
-argus figma review <figma-url> --platform ios --screenshot app.png -o review.html
-```
-
-## MCP
-
-Argus speaks MCP both ways.
-
-**As a server** — `argus/mcp/server.py` (FastMCP, stdio transport) exposes 19 tools so you can drive Argus from Claude Code / Cursor / Claude Desktop in plain language (*"list the my-app scenarios"*, *"run login.feature"*):
-
-- read-only: `list_targets` / `list_cases` / `list_runs` / `get_run_status` / `get_report`
-- execution: `run_target` / `run_case` / `cancel_run` (async — returns a `run_id` to poll)
-- devices: `list_devices` / `install_apk` / `adb_reconnect` / `setup_simulator`
-- device primitives: `device_screenshot` / `device_tap` / `device_swipe` / `device_input` / `device_type_send` / `device_key` / `device_launch`
-
-Start it with `python3 -m argus.mcp.server`. The repo ships a `.mcp.json`, so after cloning, **Claude Code auto-mounts the `argus` server** — just talk to it. `--profile device` (or `ARGUS_MCP_PROFILE=device`) trims the surface to the device primitives only — no LLM key, no `tests/` directory needed; that's what the `argus-device` plugin below ships.
-
-**As a client** — during a run, Argus's brain can call external MCP servers (e.g. the Figma MCP). Configure them in `.argus/mcp_clients.json` (a `.example` is checked in; real tokens are gitignored). When a server is registered, the brain pulls its tool catalog and may invoke those tools mid-decision (every call is logged for audit).
-
-## Claude Code plugins
-
-This repo is also a **plugin marketplace** named `argus-plugins` (`.claude-plugin/marketplace.json`), shipping [`argus-device`](./plugins/argus-device) — **Claude Code itself as the brain**, with Argus providing the eyes and hands:
-
-```
-/plugin marketplace add WilliamSkyWalker/argus
-/plugin install argus-device@argus-plugins
-```
-
-- **skill `device`** — the screenshot → decide → one-action loop, plus the anti-patterns that actually bite
-- **command `/argus-device:doctor`** — checks Python packages, Node + Appium server + drivers, adb + connected devices and simulators, printing the exact fix for anything missing
-- **MCP server** — 11 tools: `device_screenshot` `device_tap` `device_swipe` `device_input` `device_type_send` `device_key` `device_launch` `list_devices` `install_apk` `adb_reconnect` `setup_simulator`
-
-**No `LLM_API_KEY` needed** — the model you're already chatting with does the seeing and deciding (`ARGUS_MCP_PROFILE=device` trims the MCP surface to exactly that). The plugin locates the cloned repository at runtime via `ARGUS_HOME`, because a plugin cache can't reach outside its own directory.
-
-Running whole suites with reports is *not* in the plugin — that's `argus run` (LLM key, own agent loop) and the `/argus-drive` skill below, both driven from a clone of this repo.
-
-## `/argus-drive` — Claude Code as the brain
-
-Besides the built-in engine, Argus ships an alternate driver: **your Claude Code session is the brain**, the `argus device` CLI (Appium) is the platform layer, and each conversation turn is one iteration of the main loop. No LLM API key needed — the model you're already chatting with does the seeing and the deciding.
-
-```
-/argus-drive tests/my-app/cases/login.feature TC-LOGIN-001   # single case (debug)
-/argus-drive tests/my-app/cases                              # batch: runs every @auto/@partial, skips @manual
-```
-
-What the skill implements (full protocol in [`.claude/skills/argus-drive/SKILL.md`](./.claude/skills/argus-drive/SKILL.md)):
-
-- **One action per screenshot** — never chains two taps blindly; per-device resolution calibration (screenshot px ↔ device px) before anything else, which is the root of tap accuracy.
-- **Checkpoint resume** — per-feature journals + `state.json` under `/tmp/argus-drive/`; re-invoking the skill resumes the batch and skips scenarios already recorded.
-- **State reuse across scenarios** — no forced `pm_clear` between cases; resets only on explicit `@reset:*` tags or when the screen doesn't match the scenario's Given.
-- **Same HTML reports** — journals render through the same `report.py` (`python3 -m argus.drive.render --journal … --output …`), one report per feature under `tests/<target>/cc_reports/<ts>/`.
-
-| | `argus run` (engine) | `/argus-drive` |
-|---|---|---|
-| Main loop | `agent.py` (Python) | Claude Code conversation turns |
-| Brain | LLM API (key in `.env`) | the current Claude session |
-| Platform layer | `argus.platforms.*` (in-process Appium) | `argus device` CLI (same Appium platform, reconnects across processes) |
-| Concurrency | multi-device / `-j N` | single-threaded |
-| Resume | no (CI-style full runs) | yes (`state.json` + per-feature journals) |
-| Best for | batch regression / CI | prompt & case debugging, small-batch regression |
-
-## Key configuration (`.env`)
-
-| Var | Meaning |
-|-----|---------|
-| `PLATFORM` | `ios` \| `android` \| `browser` \| `mac`/`macos` \| `windows`/`win` \| `desktop` (auto mac/Windows by host OS) \| `rdp` (**experimental**, remote Windows prototype) |
-| `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | LLM (OpenAI-compatible; OpenRouter by default; legacy `LLM_API_BASE` is accepted) |
-| `ANDROID_SERIAL` / `ANDROID_PACKAGE` | single-device serial / **app package under test (required for Android — no default; configure in `.env`)** |
-| `MAC_APP` / `WIN_APP` / `WIN_LAUNCH` | macOS: menu-bar/app name to foreground and window-capture. Windows: window-title substring (optional launch path/command). Under WSL the bundled lightweight PowerShell runner starts automatically; no Windows Python is required. |
-| `RDP_HOST` / `RDP_USERNAME` / `RDP_PASSWORD` | **Experimental/developing:** remote Windows RDP endpoint and account. The interface may change; remote macOS is future work. |
-| `LLM_MAX_TOKENS` | output token cap shared by brain + planner (default 8192) |
-| `AGENT_MAX_STEPS` | scenario loop-turn cap; default 0 disables it. The main guard is 15 counted turns without step progress |
-| `AGENT_SETTLE_ENABLED` / `AGENT_WAIT_MAX_S` | stable-frame sampling (default true) / accumulated active-wait budget per step (default 45s) |
-| `AGENT_MERGE_ASSERTS` | merge consecutive same-screen assertions into one verified batch (default true) |
-| `SKILLS_ENABLED` | preprocessing pipeline (loading/keyboard/scroll/diff/toast) |
-
-> ⚠️ **Upgrade note (breaking, Android only):** `ANDROID_PACKAGE` no longer has a hard-coded default — **set it in `.env`** (`ANDROID_PACKAGE=com.example.app`) or override per-run via the env var (`ANDROID_PACKAGE=com.example.app python3 -m argus.cli run …`). If unset, Android state-reset raises a clear error instead of silently testing the wrong app. `_accounts.json` is unchanged — `git pull` upgrade needs no data migration; browser/iOS unaffected.
-
-### Model tiering & split execution
-
-Argus routes sub-tasks to different models, and can split "acting" from "checking" so the expensive reasoning model is spent only where it matters. Empty brain/planner model settings fall back to `LLM_MODEL`; an empty locator model disables the locator.
-
-| Var | Used for | Notes |
-|-----|----------|-------|
-| `LLM_MODEL` | fallback for brain and planner | main multimodal model |
-| `LLM_MODEL_BRAIN` | per-step decision + visual verification | the "brain" — keep a strong reasoning VLM |
-| `LLM_MODEL_PLANNER` | one-shot scenario planning | can be a cheaper/faster model |
-| `LLM_MODEL_LOCATOR` | pixel-precise element location | a dedicated element-locator VLM (e.g. `bytedance/ui-tars-1.5-7b`, other UI-TARS, or a Claude/Gemini tier). **Empty = locator off.** |
-| `LLM_LOCATOR_BASE_URL` / `LLM_LOCATOR_API_KEY` | locator endpoint | optional; falls back to the main LLM |
-
-The **element locator** runs before normal `tap`/`long_press` actions that include a `target`; if disabled or unable to locate the target, Argus uses the brain coordinates. It also locates targets during split execution. The old pixel-diff `no_effect` detector is disabled, so its retry escalation and `AGENT_LOCATE_RETRY` threshold are not active in the normal path.
-
-**Split execution** — `AGENT_SPLIT_ACT_CHECK=true` (default off), routed by Gherkin step type:
-
-- **Action steps** (When/Given, plus inherited And steps): the brain reads the current screenshot and plans an atomic action sequence; Argus executes it using the locator where needed, then returns to the brain on the next turn to verify the step. Two consecutive sequence failures fall back to ordinary step decisions. Pixel changes are not used to certify action success.
-- **Check steps** (Then/But) use the brain for visual verification, with consecutive assertions optionally merged. Ordinary step decisions remain subject to the step validator in either mode.
-
-This can reduce per-action decision calls in multi-action steps, but still uses the brain for planning and verification. Tap/input/long-press sequence actions require `LLM_MODEL_LOCATOR`; measure speed and verdict quality on your own cases.
-
-Related knobs: `AGENT_LOCATE_RETRY` (consecutive no-effect taps before the locator fallback), `AGENT_SETTLE_*` (stable-frame sampling), `AGENT_WAIT_MAX_S` (wait budget), `AGENT_MERGE_ASSERTS` (same-screen assertion batching), `AGENT_ASSERT_BURST_FRAMES` (fallback burst count when settle is disabled), and `APPIUM_MJPEG_ENABLED` (frame-stream screenshots). See **[`.env.example`](./.env.example)** for the full annotated list.
-
-## Project layout
-
-```
-argus/            packages: qa, vision, devices, platforms, runtime, integrations, skills, probes, mcp, drive
-tests/            test targets (each a folder of .feature/.md cases + _preconditions.md + _accounts.json + reports)
-.mcp.json         lets Claude Code auto-mount the argus MCP server
-CLAUDE.md         deep architecture & behavior notes (read this to contribute)
-```
-
-## Known limitations
-
-- **Tap accuracy is a calibration problem, not a VLM bias.** If taps land off-target, first check the screenshot-px → device-px scale (`wm size` vs the actual `screencap` size — they differ on e.g. Samsung resolution-override devices). With calibration right, percentage-based visual coordinates land. Argus is **pure-vision (no UI tree)**: on repeated misses a dedicated element-locator model (`LLM_MODEL_LOCATOR`) re-locates the target, with a coordinate-grid overlay as a further fallback. Write hints as directions ("top-right"), not pixel coordinates.
-- **Some VLM brains (observed with `qwen3-vl-flash`) occasionally emit 0-1000 normalized coordinates** (their native grounding convention) instead of the 0-100 percentages the protocol asks for — typically on a single axis (`x_pct: 85, y_pct: 947`). `brain._pct_to_px` treats any value in `(100, 1000]` as per-mille, since a value >100 would otherwise be clamped to the window edge and always miss. Stop-gap only; not needed once the brain is switched to Gemini.
-- **Self-drawn / canvas UIs (e.g. Flutter)** are handled exactly like everything else — Argus never reads a UI tree, so there is no special-casing or degradation for treeless apps.
-- **Desktop drivers are foreground-only** — they take over the real mouse/keyboard and keep the target app window frontmost every turn (no backgrounded/non-disruptive mode yet; that would need an isolated GUI session / VNC). Don't touch the input devices while a desktop run is in progress.
-- Assertions that can't be visually verified (analytics events, backend calls, system time, notification drawer, cross-app deep links) are instructed to **fail** in the vision path — write them out, tag them out, or verify them for real with a [probe plugin](./docs/probes.md) (that step then skips the LLM).
-
-For the full architecture, module-by-module notes, and contribution guidance, see **[CLAUDE.md](./CLAUDE.md)**.
-
----
----
-
-# Argus（中文）
-
-> 用视觉的 AI agent，替代人工 QA 测试员。
-
-Argus 读取 **BDD `.feature` 测试用例**（Gherkin / Cucumber），**直接看屏幕**（iOS / Android / 浏览器 / 桌面端），自己决定怎么操作、执行动作，并自主判定通过/失败 —— 像人类测试员一样，但由视觉大模型驱动。
-
-- 👁️ **纯视觉** —— 把原始截图发给 LLM，全靠视觉定位，**不读 UI 树**。坐标用百分比（与分辨率无关）；配置定位模型后，带目标描述的点击/长按会在执行前重新定位。
-- 🧭 **Step-driven** —— 逐个推进 Gherkin step；校验器约束当前步骤序号与证据字段；非视觉断言通过 probe 插件做代码层验证。
-- 🤖 **失败分析报告** —— 失败后跑根因分类（`case_outdated / app_bug / llm_misjudge / fixture_failure / flaky`）供人工复审。
-- 📱 **多平台多设备** —— iOS + Android 走统一的 **Appium** 驱动（UiAutomator2 / XCUITest，配 mjpeg 帧流截图），浏览器走 Selenium，**macOS / Windows 桌面 App** 走窗口级视觉驱动。WSL 可通过仓库内置 PowerShell/Win32 runner 操作宿主 Windows，无需安装 Windows Python。多台 Android 可共享用例队列动态调度。
-- 🎨 **Figma 集成** —— 从设计稿生成用例，或做"设计 vs 截图"视觉走查。
-- 🔌 **MCP** —— 把自身能力暴露为 MCP 工具（可被 Claude Code / Cursor 调用），也能调用外部 MCP server（如 Figma）。
-- 🧑‍✈️ **双驱动模式** —— 内置引擎（任意视觉 LLM API），或 **`/argus-drive`**：直接把 Claude Code 会话当 brain，不需要 LLM API key。
-
-## 多资源操作运行时（首版）
-
-新增 `argus workflow`：通过显式 JSON 工作流在移动端、浏览器和桌面资源间顺序执行，支持 SQLite 查询、持久化检查点与人工接管恢复。现有 QA 入口保留；自然语言规划与通用 API/MCP 连接器尚未实现。浏览器资源默认使用 Playwright/CDP 并持久化页面绑定，QA 保留 Selenium。见[运行时文档](docs/runtime.md)、[浏览器文档](docs/browser.md)与[示例](examples/workflows)。
-
-## 工作原理
-
-```
-BDD .feature 测试用例（手写，或 Figma 生成）
-        │
-        ▼
-  gherkin.py  ──►  解析成 step 列表 + metadata
-        │
-        ▼
-  planner.py  (每 case 1 次 LLM)  ──►  每步 intent / expected_state / action_hint
-        │
-        ▼
-  agent.py  — step-driven 主循环
-     对每个 Gherkin step：
-       循环直到 pass/fail 或达到保护上限：
-         截图 + skills 增强                 # 加载/键盘/滚动/变化检测/toast
-         brain.decide() → JSON 动作         # 视觉 LLM
-         validate_step_progress()          # 必须是当前待执行 step，并校验 evidence
-           ├─ reject → 把理由喂回 LLM 自纠
-           ├─ pass   → 推进下一步
-           ├─ in_progress → 平台驱动执行动作，继续循环
-           └─ fail   → 终止 Scenario
-        │
-        ▼
-  healer.py  (fail/timeout/error 时)  ──►  根因 verdict
-        │
-        ▼
-  report.py  ──►  HTML 报告（截图、证据、失败分析）
-```
-
-上图展示普通视觉决策路径；平台驱动在循环内执行动作。Probe 步骤由插件裁决，连续视觉断言可合并调用并逐条检查证据。Healer 只附加失败根因分析，不自动修复应用或用例，也不改变原始测试结果。
-
-当前执行保护与默认值（以 `argus/config.py`、`argus/qa/agent.py` 为准）：
-
-- 主要保护是**连续 15 个计数轮次未推进步骤**。旧的每步动作次数上限已禁用（`PER_STEP_SUB_ACTION_LIMIT=-1`）；scenario 总循环轮数上限默认也禁用（`AGENT_MAX_STEPS=0`，正数启用）。
-- 普通决策必须返回**当前待执行步骤序号**，由框架推进。连续 3 次校验拒绝判失败；拒绝不执行动作，但仍计入循环轮数和无进展计数。
-- 每步累计主动等待预算默认 45 秒（`AGENT_WAIT_MAX_S`），预算内 wait 轮不计无进展，耗尽后恢复计数；这不是整个步骤的 45 秒超时。Probe 轮询使用独立超时，也不计无进展。
-- 默认开启稳定帧采样、连续断言合并，关闭分层执行。配置优先级为内置默认值 → `.env` → 环境变量；`.env.example` 中的模型名是配置示例，不等于内置默认值。
-
-校验器检查证据文本与响应结构，不会独立确认截图里确实存在所述元素。不可视断言禁 PASS 是提示词约束，视觉判定仍可能出错；非视觉事实应通过 probe 做代码层验证。
-
-## 支持平台
-
-| 平台 | 驱动 |
-|------|------|
-| Android | Appium + **UiAutomator2** driver（文字输入走 `mobile: type`，经 Unicode IME 绕开原生输入法——原生 `EditText` 和 Flutter 自绘 canvas 都通吃） |
-| iOS | Appium + **XCUITest** driver（走 xcodebuild/CoreDevice 自动签 WDA；需 `IOS_TEAM_ID` + Xcode 登录该 team） |
-| 浏览器 | QA：Selenium（本地/Grid）。Workflow：默认 Playwright/CDP 持久 Chromium 会话，可选 Selenium。 |
-| macOS 桌面 | `DesktopMacPlatform` —— **窗口级**纯视觉驱动（不是整屏）：只截**被测 App 窗口**画面（`CGWindowListCreateImage`），每 turn 截图前把它 activate 到前台，用 `pyautogui` 按全局坐标点击/输入（百分比坐标换算成窗口对应的全局坐标）。需要屏幕录制 + 辅助功能权限；**前台方案**（会占用鼠标/键盘焦点）。 |
-| Windows 桌面 | WSL 下自动使用 `WindowsRunnerPlatform`，通过内置 PowerShell/Win32 JSONL runner 操作宿主 Windows，不需安装 Windows Python、依赖或服务；原生 Windows Python 环境仍使用 `DesktopWinPlatform`（`pyautogui + pywin32`）。两者均只截目标窗口并操作当前前台桌面。 |
-| 远程桌面（实验性） | `RDPPlatform` **仍在开发中**。当前原型通过 Xvfb + FreeRDP 从 Linux/WSL 连接 Windows；保留它作为未来远程 Windows/macOS 支持的基础，但 API 与行为尚不稳定。 |
-
-`argus.platforms.appium.AppiumPlatform` 是 iOS/Android 统一的一个驱动——`create_platform("ios"/"android"/"appium")` 全部落到它上面，由 `config["appium"]["os"]` 切换 XCUITest / UiAutomator2。它自带 Appium server 管理（`AppiumServerManager`，自动起/复用，自动注入 `ANDROID_HOME`），有条件时从常驻的 **mjpeg 帧流**（`platforms/mjpeg.py`）取最新帧代替一次 HTTP 截图往返，取不到（如部分云真机不暴露端口）就无条件回落 `get_screenshot_as_png`。截图和输入全程不碰 `adb`/`idb`/`simctl`，统一走 Appium。
-
-桌面端（`mac`/`macos`/`windows`/`win`/`desktop`）通过 `.env` 或环境变量 `PLATFORM=` 选择。用例的平台 tag 只用于筛选，不会切换驱动。桌面端**还不是** `run --platform` 的可选值（目前接受 `ios`/`android`/`browser`/`rdp`）。`PLATFORM=desktop` 在原生 Windows 上选择 Windows 驱动，其余系统走 macOS 驱动；WSL 请显式使用 `PLATFORM=windows`。需在 `.env` 配 `MAC_APP`(App/菜单栏名) 或 `WIN_APP`(窗口标题子串，可配 `WIN_LAUNCH` 先启动它)——两者跑各自平台时必填、无默认值，防误测策略同 `ANDROID_PACKAGE`。
-
-Argus 在 WSL 中选择 `windows` 时会自动使用 `WindowsRunnerPlatform`：经 WSL interop 调仓库自带的 `windows_runner.ps1`，通过 stdin/stdout 交换 JSON；窗口截图、Win32 鼠标键盘、Unicode 剪贴板粘贴、DPI 设置和窗口选择都在当前 Windows 控制台会话执行。设置 `WIN_LAUNCH` 后 runner 会锁定新进程 PID，避免同标题窗口串台。该方案仍是前台自动化，跑测时会占用真实鼠标键盘。
-
-`rdp` 是**实验性、开发中**的远程桌面平台。当前原型可通过 `PLATFORM=rdp` 或 `argus run … --platform rdp` 连接 Windows；远程 macOS 尚属后续规划。Linux/WSL 端需安装 `freerdp2-x11`（或 `freerdp3-x11`）、`xvfb`、`xdotool`，并配置 RDP 参数。密码经 stdin 传给 FreeRDP，不出现在进程参数中。现阶段不要将其视为稳定接口。
-
-## 新手指引
-
-### 1. 装依赖
-
-```bash
-# Python 3.11+ 依赖（直接以 module 形式跑）
-pip3 install -r requirements.txt
-
-# Android：把 Appium、UiAutomator2 driver 和 adb 装进 ~/.argus/runtime
-python3 -m argus.cli mcp init --skip-ios
-
-# iOS（仅 macOS）：同时安装 XCUITest driver 并准备 WDA
-python3 -m argus.cli mcp init
-
-# 桌面端（只有测 macOS/Windows App 才需要）：
-#   macOS  → pip3 install pyautogui pyobjc-framework-Quartz；需授予屏幕录制 + 辅助功能权限
-#   Windows 原生 Python → pip install pyautogui pywin32
-#   WSL 操作宿主 Windows → 无需在 Windows 安装；只需正常启用 WSL interop（powershell.exe）
-```
-
-> 在仓库根目录用 `python3 -m argus.cli <command>` 调用。建议 `alias argus="python3 -m argus.cli"`。
-
-### 2. 配置
-
-```bash
-python3 -m argus.cli init      # 生成默认 .env
-```
-
-编辑 `.env` 填 LLM key，默认用 **OpenRouter**（OpenAI 兼容协议）：
-
-```env
-PLATFORM=android
-LLM_PROVIDER=openrouter
-LLM_BASE_URL=https://openrouter.ai/api/v1
-LLM_API_KEY=${LLM_API_KEY}
-LLM_MODEL=google/gemini-3.5-flash
-ANDROID_PACKAGE=com.example.app # 被测包名：跑 Android 必填，在这里配好（无默认，缺则报错）
-```
-
-> ⚠️ **升级提示（破坏性，仅 Android）**：`ANDROID_PACKAGE` 不再有写死的默认值 —— **请在 `.env` 里配** `ANDROID_PACKAGE=com.example.app`，或跑测时用环境变量临时覆盖 `ANDROID_PACKAGE=com.example.app python3 -m argus.cli run …`。不配的话跑 Android 会**直接报错**（而不是静默测错 App）。`_accounts.json` 格式不变，`git pull` 升级无需迁移数据；Browser / iOS 不受影响。
-
-### 3. 跑第一个测试
-
-```bash
-# 单个 .feature 文件
-python3 -m argus.cli run tests/my-app/login.feature --report
-
-# 整个 target 目录（递归跑所有 .feature）+ HTML 报告
-python3 -m argus.cli run my-app --report
-```
-
-打开生成的 `tests/<target>/reports/latest.html`，可看截图、LLM 思考、逐步 evidence 和 healer verdict。
-
-## 模型分层与分层执行
-
-Argus 把不同子任务路由到不同模型，并可选地把"操作"与"检查"分开，让贵的推理模型只花在刀刃上。Brain/Planner 模型留空时回落 `LLM_MODEL`；Locator 模型留空时关闭定位功能。
-
-| 变量 | 用途 | 说明 |
-|------|------|------|
-| `LLM_MODEL` | Brain/Planner 缺省模型 | 主多模态模型 |
-| `LLM_MODEL_BRAIN` | 每步决策 + 视觉验证 | "大脑"，保持强推理 VLM |
-| `LLM_MODEL_PLANNER` | 开跑前一次性拆剧本 | 可用更便宜/快的模型 |
-| `LLM_MODEL_LOCATOR` | 像素级元素定位 | 专用视觉定位 VLM（如 `bytedance/ui-tars-1.5-7b`、其他 UI-TARS，或 Claude/Gemini 某档）。**留空 = 关闭元素定位。** |
-| `LLM_LOCATOR_BASE_URL` / `LLM_LOCATOR_API_KEY` | 定位模型独立端点 | 可选，留空复用主 LLM |
-
-普通路径中，带 `target` 的 `tap`/`long_press` 会在执行前调用元素定位模型；未启用或定位失败时沿用 Brain 坐标。分层执行也使用它定位目标。旧的像素差 `no_effect` 检测已停用，因此对应的重试升级路径与 `AGENT_LOCATE_RETRY` 阈值在普通路径中不生效。
-
-**分层执行** —— `AGENT_SPLIT_ACT_CHECK=true`（默认关），按 Gherkin step 类型路由：
-
-- **操作步**（When/Given 及继承其类型的 And）：Brain 根据当前截图拆解原子动作序列，框架按需调用 Locator 定位并批量执行，下一轮再由 Brain 验证当前步骤。连续两次序列执行失败后回退普通逐步决策；不再用像素变化认定动作成功。
-- **检查步**（Then/But）由 Brain 验证，可合并连续断言。两种模式中的普通步骤决策均受步骤校验器约束。
-
-该模式可能减少多动作步骤中的逐动作决策调用，但拆解和验证仍调用 Brain。序列中的点击、输入、长按需要 `LLM_MODEL_LOCATOR`；速度与判定质量需用实际用例对照验证。
-
-相关可调项：`AGENT_LOCATE_RETRY`（旧 no_effect 升级阈值，目前检测停用）、`AGENT_SETTLE_*`（稳定帧采样）、`AGENT_WAIT_MAX_S`（等待预算）、`AGENT_MERGE_ASSERTS`（同屏断言合并）、`AGENT_ASSERT_BURST_FRAMES`（关闭 settle 后的多帧兜底数量）、`APPIUM_MJPEG_ENABLED`（帧流截图）。完整带注释清单见 **[`.env.example`](./.env.example)**。
-
-## 用例格式（BDD Gherkin）
-
-**`.feature`（Gherkin / Cucumber）** —— 见上方英文示例。Argus 识别的 tag：`@P0/@P1/@P2`（优先级）·`@auto/@partial/@manual`（自动化程度，partial/manual 自动跳过）·`@android/@ios/@browser/@mac/@windows/@desktop` 等平台标签（集合语义，`@android @ios` 表示允许两端运行，不会自动启动双端跑测；兼容遗留 `@both`）·`@TC-XXX`（用例 ID）·`@reset:pm_clear|relaunch|none`（Android 状态重置）·`@skip/@wip`。
-
-**每个 target 目录约定**：`_preconditions.md`（自动 prepend，告诉 LLM 怎么从异常态恢复到 Background）、`_accounts.json`（账号池，多设备时 worker `i` 绑 `accounts[i]`，用例里 `${EMAIL}`/`${PASSWORD}` 占位符被替换）、`reports/`（报告，`latest.html` 软链最新）。
-
-### 非视觉断言（`probe` 插件）
-
-Argus 是**纯视觉**的，所以「屏幕上永远看不见」的断言 —— 埋点上报、后端落库、上报日志
-—— 视觉层判不了，铁律是 LLM 必须判 **fail**，不许「推断成立」。probe 就是给这类断言开的
-代码层通道：挂到某个 `Then` 上，那个 step **由插件返回 verdict，不交给 LLM 裁决**。完整用例和步骤列表仍可能进入 Planner/Brain 上下文，这不构成数据隔离。
-
-```gherkin
-  Then 上报首页曝光埋点
-  # argus-probe: analytics check=首页曝光
-```
-
-- **用例只写意图**（`check=首页曝光`）。真实事件名 / 表名 / 期望属性都在插件 config 里
-  映射，换埋点验证方案时用例一个字都不用动。
-- **怎么查 100% 由你决定**：Python 类（继承 `argus.probes.base.Probe`），或任何用
-  stdin/stdout 讲 JSON 的可执行文件（插件依赖不污染 argus 自己的环境）。
-- **三态 verdict**：`pass` / `fail` / `inconclusive`。埋点是批量上报，动作后立刻查到 0 行
-  **不是**漏报证据 —— argus 按插件给的节奏重查，直到预算（`PROBE_TIMEOUT_S`，默认 300s）
-  耗尽才判 fail。
-- 注册表 `.argus/probes.json`（gitignored，含连接串/密钥，`${VAR}` 展开）；插件代码放
-  `tests/<target>/probes/`。调试：`argus probes list` / `argus probes check <name> k=v --wait`。
-- **偏置跑法**：`argus run <t> --skip-probes` 把 probe step 标 **`skip`（不是 pass）**
-  并在 case reason 里点名，全绿报告也能看出缺口；`--only-probes` **只跑声明了 probe 的
-  case**（其 UI 步照跑 —— 埋点得先被操作触发出来才查得到）。
-
-完整文档：[`docs/probes.md`](./docs/probes.md)。
-
-## 常用命令
-
-```bash
-argus run <target | 目录 | .feature 文件>      # 跑 BDD 用例
-argus run my-app --report                     # 自动 HTML 报告
-# 多 Android 设备：共享队列 + 动态调度 + APK 并行安装 + 账号池自动绑定
-argus run my-app --device s1 s2 s3 --apk app.apk --report
-argus run my-app --bg                         # 后台跑
-argus status [<run_id>]                         # 看后台任务
-argus list / argus device list --platform ios / argus device install --platform ios --boot        # 列 target / 列模拟器 / 建并启动模拟器
-argus figma gen-tests <url> -o tests.feature         # 从 Figma 生成用例
-argus probes list                               # 列非视觉断言插件（埋点等）
-argus probes check <name> check=<意图> --wait    # 单发调试一个插件（不起设备）
-argus run <t> --skip-probes                     # 跳过埋点检查（标 skip，不标 pass）
-argus run <t> --only-probes                     # 只跑有埋点断言的 case（UI 步照跑）
-```
-
-## MCP
-
-Argus 双向支持 MCP。
-
-**作为 server**：`argus/mcp/server.py`（FastMCP，stdio）暴露 19 个 tool，可在 Claude Code / Cursor / Claude Desktop 里用自然语言驱动 Argus（"列一下 my-app 的用例"、"跑 login.feature"）：
-
-- 只读：`list_targets` / `list_cases` / `list_runs` / `get_run_status` / `get_report`
-- 跑测：`run_target` / `run_case` / `cancel_run`（异步，返回 `run_id` 轮询）
-- 设备管理：`list_devices` / `install_apk` / `adb_reconnect` / `setup_simulator`
-- 设备原语：`device_screenshot` / `device_tap` / `device_swipe` / `device_input` / `device_type_send` / `device_key` / `device_launch`
-
-启动：`python3 -m argus.mcp.server`。仓库自带 `.mcp.json`，clone 后 **Claude Code 自动挂载 `argus` server**，直接对话即可。`--profile device`（或 `ARGUS_MCP_PROFILE=device`）只留设备原语——不需要 LLM key、不需要 `tests/` 目录。
-
-**作为 client**：跑测时 brain 可调用外部 MCP server（如 Figma MCP）。在 `.argus/mcp_clients.json` 配置（入库的是 `.example`，真 token 被 gitignore）。注册了 server 后，brain 会拉取其 tool catalog 并在决策中按需调用（每次调用都记日志便于审计）。
-
-## `/argus-drive` —— 让 Claude Code 当 brain
-
-内置引擎之外，Argus 还带一种替代驱动方式：**Claude Code 会话本身就是 brain**，`argus device` CLI（Appium）是平台层，每个对话 turn 就是主循环的一次迭代。不需要 LLM API key —— 你正在对话的模型直接负责看屏幕和做决策。
-
-```
-/argus-drive tests/my-app/cases/login.feature TC-LOGIN-001   # 单 case（debug）
-/argus-drive tests/my-app/cases                              # 目录批量：跑全部 @auto/@partial，跳过 @manual
-```
-
-Skill 实现了什么（完整协议见 [`.claude/skills/argus-drive/SKILL.md`](./.claude/skills/argus-drive/SKILL.md)）：
-
-- **一张截图一个动作** —— 绝不盲目连发两个 tap；开跑前先做每台设备的分辨率标定（截图 px ↔ 设备 px），这是 tap 准确性的根。
-- **断点续跑** —— per-feature journal + `state.json` 落在 `/tmp/argus-drive/`；重新调用 skill 自动 resume，跳过已有记录的 scenario。
-- **跨 scenario 状态复用** —— case 之间不强制 `pm_clear`；只在显式 `@reset:*` tag 或当前屏幕与 Given 不匹配时才重置。
-- **同一套 HTML 报告** —— journal 走同一个 `report.py` 渲染（`python3 -m argus.drive.render --journal … --output …`），每个 feature 一份，落在 `tests/<target>/cc_reports/<ts>/`。
-
-| | `argus run`（引擎） | `/argus-drive` |
-|---|---|---|
-| 主循环 | `agent.py`（Python） | Claude Code 对话 turn |
-| Brain | LLM API（`.env` 配 key） | 当前 Claude 会话 |
-| 平台层 | `argus.platforms.*`（进程内 Appium） | `argus device` CLI（同一 Appium 平台，跨进程重连） |
-| 并发 | 多设备 / `-j N` | 单线程 |
-| 断点续跑 | 不支持（CI 整跑） | 支持（`state.json` + per-feature journal） |
-| 适用 | 批量回归 / CI | 调 prompt / 单 case debug / 小批量回归 |
-
-## 已知限制
-
-- **桌面驱动是前台方案** —— 会占用真实鼠标/键盘，且每 turn 都把被测窗口切到最前（暂无后台不打扰模式，那需要独立 GUI 会话/VNC）。桌面跑测期间别手动碰键鼠。
-- **部分 VLM brain（实测 `qwen3-vl-flash`）偶发输出 0-1000 归一化坐标**（其原生 grounding 约定），而非协议要求的 0-100 百分比——通常只在一个轴上（`x_pct: 85, y_pct: 947`）。`brain._pct_to_px` 把 `(100, 1000]` 区间的值按千分比处理（>100 原本会被钳到窗口边缘、必然点空）。仅为过渡兼容，后续 brain 换成 Gemini 后无此问题。
-- 无法视觉验证的断言（埋点、后端调用、系统时间、通知抽屉、跨 App 深链）在纯视觉路径下**刻意判 fail**——要么改写用例、要么打 tag 跳过，要么挂 [probe 插件](./docs/probes.md) 真验证（该 step 由插件裁决）。
-
-完整架构、逐模块说明与贡献指引见 **[CLAUDE.md](./CLAUDE.md)**。
-
-### Existing browser sessions
-
-The optional [browser extension backend](docs/browser-extension.md) connects Argus to all website tabs by default in your daily Chrome/Edge profile, retaining login state and supporting Runtime human handoff.
-
-### Phones and simulators
-
-Use `argus device list` to discover Android devices and iOS devices/simulators,
-then `argus device connect --platform android --device DEVICE_ID --session phone`.
-`argus device install --platform android --host auto --boot --connect` provisions an Android
-emulator and automation tools; `--platform ios` requires a Mac with full Xcode.
-In WSL without KVM, Android setup runs on the Windows host automatically. Use
-`--dry-run` to inspect prerequisites before downloads; SDK license consent is required.
-See [mobile setup](docs/mobile.md) for licenses, host prerequisites and remote
-Windows/Mac Appium connections from WSL.
-
-### Unified control entry point
-
-`argus device list/connect/sessions` manage mobile, desktop and browser targets.
-Use the same `--session` with screenshot, tap, input, key, scroll and open;
-`device install/boot` provision simulators. [Unified CLI guide](docs/control.md).
-
-## License / 许可证
-
-Argus is licensed under the [MIT License](LICENSE). Third-party dependencies remain under their respective licenses.
-
-Argus 采用 MIT 许可证，允许商用、修改和再分发，须保留版权及许可声明。第三方依赖遵循各自的许可证。
-
-Module responsibilities and execution paths: [Architecture](docs/architecture.md).
-
-
-## External programming agents
-
-CLI and MCP now share persistent phone/browser/desktop sessions, observations, action dispatch, and incremental task checkpoints. See [the installation and operation guide](docs/agent-control.md) for `argus device`, `argus task`, handoff/recovery, local evidence export, and the current validation limits.
+Argus 采用 MIT 许可证；第三方依赖遵循各自许可证。
