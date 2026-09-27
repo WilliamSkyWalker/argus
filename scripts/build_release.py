@@ -21,7 +21,7 @@ def archive(path, entries):
 
 def source_files():
     # Deliberately exclude checkout configuration, credentials, local tests and run artifacts.
-    for name in ('README.md', 'LICENSE', 'pyproject.toml'):
+    for name in ('README.md', 'LICENSE', 'pyproject.toml', 'setup.py', 'MANIFEST.in'):
         yield ROOT / name
     allowed = {'.py', '.js', '.cjs', '.ps1', '.json', '.md', '.txt', '.html', '.png', '.svg'}
     for directory in ('saygo', 'plugins/saygo-device', 'extensions/saygo-browser', 'distribution'):

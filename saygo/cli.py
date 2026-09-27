@@ -9,9 +9,12 @@ def build_parser():
     from saygo.commands import background, device, figma, probes, run, targets, toolchain, task, doctor
     from saygo.runtime import cli as workflow
 
-    parser = argparse.ArgumentParser(description="Saygo — LLM QA Agent")
+    parser = argparse.ArgumentParser(description="Saygo — visual device control for AI agents")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     sub = parser.add_subparsers(dest="command")
+    setup = sub.add_parser('setup', help='Install the Agent plugin and browser bridge')
+    setup.add_argument('options', nargs=argparse.REMAINDER)
+    setup.set_defaults(handler=lambda args: __import__('saygo.setup', fromlist=['main']).main(args.options))
     update = sub.add_parser('update', help='Check releases or configure automatic managed runtime updates')
     update.add_argument('options', nargs=argparse.REMAINDER)
     update.set_defaults(handler=lambda args: __import__('saygo.updates', fromlist=['main']).main(args.options))
@@ -26,6 +29,9 @@ def build_parser():
 def main(argv=None):
     import sys
     arguments = sys.argv[1:] if argv is None else argv
+    if arguments and arguments[0] == 'setup':
+        from saygo.setup import main as setup_main
+        return setup_main(arguments[1:])
     if arguments and arguments[0] == 'update':
         from saygo.updates import main as update_main
         return update_main(arguments[1:])
@@ -37,10 +43,10 @@ def main(argv=None):
         from saygo.runtime.cli import dispatch
         dispatch(args)
     elif hasattr(args, "handler"):
-        args.handler(args)
+        return args.handler(args)
     else:
         parser.print_help()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

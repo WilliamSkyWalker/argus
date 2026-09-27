@@ -18,7 +18,7 @@ import uuid
 HOST = "com.saygo.browser"
 MAX_FRAME = 1024 * 1024
 PROTOCOL = 1
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 
 
 def atomic_json(path, value):

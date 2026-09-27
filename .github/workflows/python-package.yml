@@ -1,0 +1,85 @@
+name: Python package
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Package index (build only by default)
+        type: choice
+        options: [none, testpypi, pypi]
+        default: none
+  pull_request:
+    paths:
+      - 'saygo/**'
+      - 'scripts/**'
+      - 'plugins/**'
+      - 'extensions/**'
+      - 'distribution/**'
+      - 'tests/control_demo/**'
+      - 'pyproject.toml'
+      - 'setup.py'
+      - 'MANIFEST.in'
+      - '.github/workflows/python-package.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install build twine
+      - name: Check release tag for production publishing
+        if: inputs.publish == 'pypi'
+        env:
+          RELEASE_REF: ${{ github.ref }}
+        run: python -c "import json,os; assert os.environ['RELEASE_REF'] == 'refs/tags/v'+json.load(open('distribution/release.json'))['version'], 'Publish PyPI from the matching release tag'"
+      - run: python -m build --outdir dist/python
+      - run: python -m twine check --strict dist/python/*
+      - run: python -m pip install '.[mcp]'
+      - run: python -m unittest discover -s tests/control_demo -p 'test_*install*.py' -v
+      - run: python -m unittest discover -s tests/control_demo -p test_updates.py -v
+      - run: python -m unittest discover -s tests/extension_demo -p test_bridge.py -v
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/python/*
+  smoke:
+    needs: build
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/python
+      - name: Install wheel and prepare integration outside checkout
+        run: python -c "from pathlib import Path; from scripts.check_python_package import check; check(next(Path('dist/python').glob('*.whl')))"
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish != 'none'
+    needs: [build, smoke]
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.publish }}
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/
+      - name: Publish to TestPyPI
+        if: inputs.publish == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+      - name: Publish to PyPI
+        if: inputs.publish == 'pypi'
+        uses: pypa/gh-action-pypi-publish@release/v1

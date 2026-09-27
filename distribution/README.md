@@ -34,7 +34,7 @@ The release installer verifies the downloaded source ZIP against its embedded
 SHA256 before extraction. For a locally downloaded archive:
 
 ```sh
-python3 install-saygo-0.4.1.py --archive saygo-0.4.1.zip
+python3 install-saygo-0.4.2.py --archive saygo-0.4.2.zip
 ```
 
 Python dependencies are fetched from PyPI; this is not an offline bundle or a
@@ -62,7 +62,7 @@ The default is **notify only**, with the stable release channel.
 To enable automatic updates, add these options to the installation command:
 
 ```sh
-python3 install-saygo-0.4.1.py --auto-update --update-channel beta
+python3 install-saygo-0.4.2.py --auto-update --update-channel beta
 ```
 
 `beta` includes prereleases (Saygo currently ships beta releases). Use `stable`
@@ -104,7 +104,7 @@ Protocol mismatch instructs the user to update both sides; it is not reported as
 successful connection. Versions 0.3.x lack this handshake and need both updated.
 
 ```sh
-python3 install-saygo-0.4.1.py --uninstall
+python3 install-saygo-0.4.2.py --uninstall
 ```
 
 Uninstall removes native client plugins and this installation's browser host
@@ -126,7 +126,7 @@ included. `--prepare-only --client both --root /tmp/saygo-package-check` builds
 client bundles without registering clients/hosts. Running from the checkout is
 also supported via `python3 scripts/install_agent_plugin.py`.
 
-Tag `v0.4.1` triggers artifact generation and a **draft** GitHub Release. Manual
+Tag `v0.4.2` triggers artifact generation and a **draft** GitHub Release. Manual
 workflow runs only generate artifacts. Review it before publishing. For the first
 Web Store upload, upload the `-store.zip`, obtain its ID, set `store_extension_id`
 in `release.json`, and rebuild the release installer (or use
@@ -160,7 +160,7 @@ explicit file is an error. Package installation paths are never searched for `.e
 To keep an existing configuration without copying credentials:
 
 ```sh
-python3 install-saygo-0.4.1.py --config-file /absolute/path/to/private.env
+python3 install-saygo-0.4.2.py --config-file /absolute/path/to/private.env
 ```
 
 The managed plugin stores only `SAYGO_CONFIG_FILE` and preserves it on upgrades;

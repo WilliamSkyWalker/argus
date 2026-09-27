@@ -4,12 +4,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "saygo-agent-control"
-version = "0.4.1"
+version = "0.4.2"
 description = "Persistent visual control sessions for external programming agents"
 requires-python = ">=3.10"
 readme = "README.md"
 license = {file = "LICENSE"}
-dependencies = ["Pillow>=10"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+]
+keywords = ["ai", "mcp", "automation", "device-control"]
+# setup provisions an isolated runtime even where ensurepip is unavailable.
+dependencies = ["Pillow>=10", "pip>=23.1"]
+
+[project.urls]
+Homepage = "https://saygo.work"
+Repository = "https://github.com/WilliamSkyWalker/saygo"
+Documentation = "https://github.com/WilliamSkyWalker/saygo/blob/main/docs/agent-control.md"
+Issues = "https://github.com/WilliamSkyWalker/saygo/issues"
 
 [project.optional-dependencies]
 browser = ["playwright>=1.60,<2"]

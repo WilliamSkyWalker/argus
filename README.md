@@ -24,6 +24,30 @@ Saygo is currently a **development/beta distribution**. Installable source bundl
 
 ## Programming Agent setup
 
+### Python package (publication pending)
+
+The wheel and source distribution are prepared for PyPI under `saygo-agent-control`.
+Until publication, install the local wheel with `pipx install '/path/to/saygo_agent_control-0.4.2-py3-none-any.whl[mcp]'`.
+After the package is published, the standard installation is:
+
+```sh
+pipx install 'saygo-agent-control[mcp]'
+saygo setup --client codex
+# Or: saygo setup --client claude / both / qoder / qodercn / all
+```
+
+Python 3.10+, pipx and the selected Agent CLI must already be installed. `saygo setup`
+uses the version bundled with the installed package, prepares an isolated runtime,
+and registers the plugin and browser bridge. No repository clone is needed.
+Use `saygo setup --help` for mobile, browser, update and uninstall options.
+Dependencies still require network access. Update with `pipx upgrade saygo-agent-control`
+then rerun `saygo setup`; remove client registration with `saygo setup --uninstall`
+before removing the pipx application. Managed runtime updates remain a separate,
+opt-in GitHub release channel.
+
+Build and first-publication instructions: [Python package release](distribution/PYPI.md).
+
+
 **Install from source for the Saygo rename.** The repository has been renamed, but the existing release assets predate this change. Use the source installation below until a Saygo-branded release is published:
 
 ```sh
@@ -56,7 +80,7 @@ The command always selects the newest release, including betas. Add `--channel s
 
 After downloading, rerun `install-saygo.py` with `--client claude`, `codex`, `qoder`, `qodercn`, `both` (Claude + Codex), or `all` to select clients. Add `--mobile` for mobile dependencies. On native Windows use `py -3` in place of `python3`.
 
-From a checkout, developers can use `python3 scripts/install_agent_plugin.py`. Check [GitHub Releases](https://github.com/WilliamSkyWalker/saygo/releases) for published assets. The `saygo-0.4.1.zip` name below is the new build output, not a claim that this asset is already published.
+From a checkout, developers can use `python3 scripts/install_agent_plugin.py`. Check [GitHub Releases](https://github.com/WilliamSkyWalker/saygo/releases) for published assets. The `saygo-0.4.2.zip` name below is the new build output, not a claim that this asset is already published.
 
 Managed installations check for updates in the background and report new releases. Automatic runtime updates are opt-in: add `--auto-update --update-channel beta` when running the installer. Prepared updates activate on a later idle Agent startup; browser/Skill changes prompt a full upgrade. See [update controls and limits](distribution/README.md#update-and-uninstall).
 
