@@ -4,7 +4,7 @@
 
 让 AI 操作你的电脑、浏览器和手机。Saygo connects programming agents to real devices through visual observation, actions, and verified results.
 
-Brand domain: **saygo.work** · [Source repository](https://github.com/WilliamSkyWalker/saygo)
+**官网：[saygo.work](https://saygo.work/)** · [Source repository](https://github.com/WilliamSkyWalker/saygo)
 
 [MIT License](LICENSE) · [中文说明](#中文说明) · [Agent development guide](agent.md)
 
