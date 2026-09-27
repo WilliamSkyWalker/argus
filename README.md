@@ -26,7 +26,7 @@ python3 scripts/install_agent_plugin.py
 
 The installer detects supported clients, prepares an isolated runtime, installs their integration and the shared Skill, and sets up the Chrome/Edge native messaging host. It does not require pyenv. Select clients with `--client claude`, `codex`, `qoder`, `qodercn`, `both` (Claude + Codex), or `all`. Add `--mobile` for mobile dependencies. On native Windows use `py -3` in place of `python3`.
 
-When a versioned release installer and source archive are available, users can install without Git:
+Download the installer and source archive from [GitHub Releases](https://github.com/WilliamSkyWalker/argus/releases/tag/v0.4.0) to install without Git:
 
 ```sh
 python3 install-argus-0.4.0.py --archive argus-0.4.0.zip
@@ -51,6 +51,8 @@ argus-mcp --profile device
 Install only the needed extras: `mobile`, `windows`, `mac`, `desktop`, `browser` (CLI Playwright), `selenium`, or `qa`. A browser-extension-only MCP setup does not need the mobile toolchain. See the [operation guide](docs/agent-control.md) and [plugin guide](plugins/argus-device/README.md).
 
 ## Desktop application
+
+**Under development and testing / 开发测试中。**
 
 Argus Desktop centers on a conversation, with task history in the sidebar and a message composer at the bottom. Users can configure a model, connect named sessions, run a task, pause for human input, reply to continue, recover a task and export evidence.
 
