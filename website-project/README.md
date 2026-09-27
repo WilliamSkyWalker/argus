@@ -31,6 +31,8 @@ GitHub 仓库 Actions Secrets 需要配置：
 
 首次部署会创建 Direct Upload Pages 项目；已有项目会复用。上线后在 Pages 项目的 Custom domains 绑定 `saygo.work` 和 `www.saygo.work`，由 Cloudflare 管理 DNS 和 HTTPS。
 
+`www` 到主域名的跳转使用域名下的 Cloudflare Redirect Rule：匹配 `http*://www.saygo.work/*`，目标为 `https://saygo.work/${2}`，状态码 301，并保留查询参数。Pages 的 `_redirects` 不支持按来源域名匹配。
+
 本地需要手动发布时，可以运行：
 
 ```sh
