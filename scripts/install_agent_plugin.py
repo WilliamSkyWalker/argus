@@ -44,8 +44,8 @@ def write_json(path, value):
 
 
 def client_directory(client):
-    defaults = {'claude':'.claude', 'qoder':'.qoder', 'qodercn':'.qoder-cn'}
-    variables = {'claude':'CLAUDE_CONFIG_DIR', 'qoder':'QODER_CONFIG_DIR', 'qodercn':'QODERCN_CONFIG_DIR'}
+    defaults = {'codex':'.codex', 'claude':'.claude', 'qoder':'.qoder', 'qodercn':'.qoder-cn'}
+    variables = {'codex':'CODEX_HOME', 'claude':'CLAUDE_CONFIG_DIR', 'qoder':'QODER_CONFIG_DIR', 'qodercn':'QODERCN_CONFIG_DIR'}
     return Path(os.environ.get(variables[client], Path.home()/defaults[client])).expanduser().resolve()
 
 
@@ -57,8 +57,106 @@ def client_available(client):
     return any(shutil.which(name) for name in aliases) or (root/'settings.json').is_file() or (root/'bin').is_dir()
 
 
+def parse_toml(text, market=None):
+    try:
+        import tomllib
+    except ImportError:  # Python 3.10; pip is a Saygo runtime dependency.
+        try:
+            from pip._vendor import tomli as tomllib
+        except ImportError:
+            # A standalone installer can run on a host without pip. The private
+            # runtime has already been provisioned before client configuration.
+            if market is None:
+                raise ValueError('TOML parsing requires the prepared Saygo runtime')
+            metadata = json.loads((Path(market)/'plugins'/NAME/'managed_runtime.json').read_text())
+            code = 'import json,sys; from pip._vendor import tomli; print(json.dumps(tomli.loads(sys.stdin.read())))'
+            return json.loads(subprocess.check_output(
+                [metadata['python'], '-I', '-c', code], input=text, text=True))
+    return tomllib.loads(text)
+
+
+def write_codex_config(path, old, updated):
+    """Preserve formatting, back up once, and refuse concurrent edits."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    backup = path.with_name('config.toml.before-saygo')
+    if path.exists() and not backup.exists():
+        fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(old)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.saygo-config-')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(updated)
+        current = path.read_text(encoding='utf-8') if path.exists() else ''
+        if current != old:
+            raise ValueError('Codex configuration changed concurrently; retry installation')
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def configure_codex(market, uninstall=False):
+    def parse(text):
+        return parse_toml(text, market)
+
+    directory = client_directory('codex')
+    path = directory/'config.toml'
+    receipt_path = directory/'saygo-install.json'
+    receipt = json.loads(receipt_path.read_text()) if receipt_path.exists() else {}
+    owner = str(Path(market).resolve())
+    if receipt and receipt.get('owner') != owner:
+        raise ValueError('codex: Saygo is owned by another installation')
+    old = path.read_text(encoding='utf-8') if path.exists() else ''
+    data = parse(old)
+    plugin = NAME + '@' + MARKETPLACE
+    policy = data.get('plugins', {}).get(plugin, {}).get('mcp_servers', {}).get('saygo', {})
+    line = 'default_tools_approval_mode = "approve" # Managed by Saygo installer\n'
+    if uninstall:
+        if receipt.get('added_approval') and policy.get('default_tools_approval_mode') == 'approve' and old.count(line) == 1:
+            updated = old.replace(line, '', 1)
+            # Verify that only our scoped policy changes, even if the user moved the line.
+            expected = parse(old)
+            del expected['plugins'][plugin]['mcp_servers']['saygo']['default_tools_approval_mode']
+            if parse(updated) == expected:
+                write_codex_config(path, old, updated)
+        receipt_path.unlink(missing_ok=True)
+        return
+    if 'default_tools_approval_mode' in policy:
+        return  # Explicit user policy, including prompt/deny, takes precedence.
+    lines = old.splitlines(keepends=True)
+    target = {'plugins': {plugin: {'mcp_servers': {'saygo': {}}}}}
+    for index, header in enumerate(lines):
+        if not header.lstrip().startswith('['):
+            continue
+        try:
+            matches = parse(header) == target
+        except ValueError:
+            matches = False
+        if matches:
+            lines[index] = header.rstrip('\r\n') + '\n'
+            lines.insert(index + 1, line)
+            updated = ''.join(lines)
+            break
+    else:
+        updated = old + ('\n' if old and not old.endswith('\n') else '')
+        updated += '\n[plugins."' + plugin + '".mcp_servers.saygo]\n' + line
+    expected = parse(old)
+    expected.setdefault('plugins', {}).setdefault(plugin, {}).setdefault('mcp_servers', {}).setdefault('saygo', {})['default_tools_approval_mode'] = 'approve'
+    try:
+        valid = parse(updated) == expected
+    except ValueError as exc:
+        raise ValueError('Codex uses an unsupported inline policy layout; configuration left unchanged') from exc
+    if not valid:
+        raise ValueError('Codex policy edit would change unrelated settings; configuration left unchanged')
+    directory.mkdir(parents=True, exist_ok=True)
+    write_codex_config(path, old, updated)
+    write_json(receipt_path, {'owner': owner, 'client': 'codex', 'added_approval': True})
+
+
 def configure_client(client, market):
     """Default scoped authorization; Qoder also gets MCP + the shared Skill."""
+    if client == 'codex':
+        return configure_codex(market)
     directory = client_directory(client)
     settings = directory/'settings.json'
     receipt_path = directory/'saygo-install.json'
@@ -105,6 +203,8 @@ def configure_client(client, market):
 
 
 def unconfigure_client(client, market):
+    if client == 'codex':
+        return configure_codex(market, uninstall=True)
     directory = client_directory(client)
     receipt_path = directory/'saygo-install.json'
     if not receipt_path.exists():
@@ -234,6 +334,8 @@ def install_client(client, market):
     run([client, 'plugin', 'marketplace', 'add', market])
     command = 'add' if client == 'codex' else 'install'
     run([client, 'plugin', command, NAME + '@' + MARKETPLACE])
+    if client == 'codex':
+        configure_client(client, market)
     if client == 'claude':
         # install is a no-op for an existing plugin; update refreshes its cache.
         run([client, 'plugin', 'update', NAME + '@' + MARKETPLACE])
@@ -373,8 +475,7 @@ def uninstall(root):
         if client in ('codex', 'claude'):
             command = 'remove' if client == 'codex' else 'uninstall'
             run([client, 'plugin', command, NAME + '@' + MARKETPLACE])
-        if client != 'codex':
-            unconfigure_client(client, record['marketplace'])
+        unconfigure_client(client, record['marketplace'])
         record['clients'].remove(client)
         write_json(root / 'installation.json', record)
     if record.get('bridge'):
