@@ -1,8 +1,8 @@
 # Python package release
 
 Package: `saygo-agent-control`. CLI: `saygo`. Version: `0.4.3` (beta software).
-Publication is pending; do not advertise the PyPI install command as available until
-an installation from the public index succeeds.
+Version 0.4.3 is published on PyPI. Its wheel passed installation and plugin preparation
+checks on Linux, Windows and macOS before upload.
 
 ## Build and verify
 

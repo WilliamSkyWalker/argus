@@ -1,27 +1,69 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Saygo 为 AI 连接浏览器、桌面与手机。观看真实设备操作演示。">
-<title>Saygo — 你说，它做。</title>
-<link rel="canonical" href="https://saygo.work/">
-<link rel="icon" href="favicon.svg" type="image/svg+xml">
-<meta property="og:type" content="website">
-<meta property="og:site_name" content="Saygo">
-<meta property="og:title" content="Saygo — 你说，它做。">
-<meta property="og:description" content="一句话，让 AI 操作你的电脑、浏览器和手机。">
-<meta property="og:url" content="https://saygo.work/"><link rel="stylesheet" href="styles.css"><script src="site-config.js" defer></script><script src="app.js" defer></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="为 Codex、Claude Code 等 AI 工具连接浏览器、桌面和手机。通过命令行安装 Saygo 插件，让 AI 观察界面、执行操作并确认结果。">
+  <title>Saygo — 让你的 AI，操作真实设备。</title>
+  <link rel="canonical" href="https://saygo.work/">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Saygo">
+  <meta property="og:title" content="Saygo — 让你的 AI，操作真实设备。">
+  <meta property="og:description" content="为 Codex、Claude Code 等 AI 工具连接浏览器、桌面和手机。">
+  <meta property="og:url" content="https://saygo.work/">
+  <link rel="stylesheet" href="styles.css">
+  <script src="site-config.js" defer></script>
+  <script src="app.js" defer></script>
 </head>
 <body>
-<header class="navigation"><a class="brand" href="#" aria-label="首页"><span class="brand-icon" aria-hidden="true">s</span><span data-brand>Saygo</span><span class="brand-label">DEVICE INTELLIGENCE</span></a><nav aria-label="主导航"><a href="#approach">产品理念</a><a href="#film">真实演示</a><a class="nav-cta" href="#film">看它行动 <span>↗</span></a></nav></header>
-<main>
-<section class="hero" id="story">
-<div class="hero-copy"><p class="eyebrow"><span class="status-dot"></span> THE NEXT MOVE IS YOURS</p><h1>你说，<br><span class="accent-word">它做<span class="title-star" aria-hidden="true">✳</span></span>。</h1><p class="hero-description" data-intro>为 AI 连接真实设备。从一句指令，到屏幕上的下一步，让日常操作自然发生。</p><div class="hero-actions"><a class="button" href="#film">观看实机演示 <span aria-hidden="true">↗</span></a><span class="runtime">02:28 <span>一次真实的设备操作</span></span></div><div class="hero-platforms"><span>为真实世界的界面而生</span><b>浏览器</b><i>/</i><b>桌面</b><i>/</i><b>手机</b></div></div>
-<div class="hero-art" aria-label="从用户指令到设备操作的概念示意"><div class="art-grid"></div><div class="art-topline"><span>INTENT → ACTION</span><span>01 / 03</span></div><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="orb"><span class="orb-eye"></span></div><div class="command-card"><span class="card-icon">↗</span><div><span class="micro">YOU SAY</span><p>「打开 QQ 音乐，放一首歌」</p></div></div><div class="action-card"><span class="micro">SAYGO ACTS</span><div><span class="step-mark">01</span>观察界面<span class="step-symbol">↗</span></div><div><span class="step-mark">02</span>执行操作<span class="step-symbol">↗</span></div><div><span class="step-mark">03</span>确认结果<span class="step-symbol">✓</span></div></div><div class="art-bottomline"><span class="status-dot"></span> 看见 · 行动 · 确认 <span class="concept-label">工作流程示意</span></div></div>
-</section>
-<div class="manifesto-strip"><span>LESS CLICKING.</span><span class="strip-star">✳</span><span>MORE DOING.</span><span class="strip-note">把时间，还给更重要的事。</span></div>
-<section class="film-section" id="film" aria-labelledby="film-title"><div class="section-heading"><div><p class="eyebrow">01 — SEE IT IN ACTION</p><h2 id="film-title">不用想象。<br><span>亲眼看看它怎么做。</span></h2></div><p>打开应用，播放歌曲，搜索作品。<br>一段完整录屏，一次真实操作。</p></div><div class="video-frame"><div class="video-toolbar"><div class="window-dots"><i></i><i></i><i></i></div><span>SAYGO / DESKTOP SESSION</span><span class="recording-label">● RECORDED DEMO</span></div><div class="player-shell"><video id="video" controls playsinline preload="metadata" hidden aria-label="Saygo 操作 QQ 音乐演示"></video><div class="placeholder" id="placeholder"><span class="film-mark" aria-hidden="true">▷</span><p id="video-status" role="status">演示视频即将呈现</p></div></div></div><div class="caption"><span data-video-title>实机演示 · QQ 音乐</span><span>真实录屏 / 02:28 / 点击播放</span></div></section>
-<section class="approach" id="approach"><div class="section-heading"><div><p class="eyebrow">02 — BUILT TO ACT</p><h2>AI 的下一步，<br>在你的屏幕上。</h2></div><p>让理解与执行，发生在同一个流程里。</p></div><div class="feature-grid"><article><span class="feature-number">[ 01 ]</span><div class="feature-icon eye-icon" aria-hidden="true">◎</div><h3>先看清，再行动。</h3><p>从当前界面理解状态，为每一步操作找到准确的起点。</p><span class="feature-label">OBSERVE</span></article><article><span class="feature-number">[ 02 ]</span><div class="feature-icon" aria-hidden="true">↗</div><h3>跨过应用之间的距离。</h3><p>连接浏览器、桌面与手机，让设备操作融入你的工作流程。</p><span class="feature-label">ACT</span></article><article><span class="feature-number">[ 03 ]</span><div class="feature-icon" aria-hidden="true">⊙</div><h3>每一步，都有回应。</h3><p>操作后重新观察界面，让执行的过程和结果都看得见。</p><span class="feature-label">VERIFY</span></article></div></section>
-<section class="closing"><p class="eyebrow">FROM INTENT TO ACTION</p><div><h2>你来想。<br><span data-brand>Saygo</span> 来动手。</h2><a class="round-link" href="#film" aria-label="观看演示">↗</a></div></section>
-</main><footer><a class="brand" href="#"><span class="brand-icon" aria-hidden="true">s</span><span data-brand>Saygo</span></a><span>© <span id="year"></span> <span data-brand>Saygo</span> · 你说，它做。</span><a href="#">回到顶部 ↑</a></footer>
-</body></html>
+<a class="skip-link" href="#main">跳到主要内容</a>
+<header class="navigation wrap">
+  <a class="brand" href="#" aria-label="Saygo 首页"><span class="brand-icon" aria-hidden="true">s</span>Saygo<span class="beta">BETA</span></a>
+  <nav aria-label="主导航">
+    <a href="#film">实机演示</a><a href="#quickstart">接入指南</a><a class="desktop-link" href="https://github.com/WilliamSkyWalker/saygo/blob/main/docs/agent-control.md">文档 ↗</a><a class="github-link" href="https://github.com/WilliamSkyWalker/saygo">GitHub <span aria-hidden="true">↗</span></a>
+  </nav>
+</header>
+<main id="main">
+  <section class="hero wrap" aria-labelledby="hero-title">
+    <div class="hero-copy">
+      <p class="eyebrow"><span class="status-dot"></span> 为你的 AI 工具扩展行动能力</p>
+      <h1 id="hero-title">让你的 AI，<br>操作<span>真实设备。</span></h1>
+      <p class="hero-description">为 Codex、Claude Code 等 AI 工具连接浏览器、桌面和手机。从理解任务，到执行操作，再到确认结果。</p>
+      <div class="install-box" aria-label="插件安装命令">
+        <div class="install-controls">
+          <div class="client-switch" role="group" aria-label="选择 AI 工具"><button type="button" data-client="codex" aria-pressed="true">Codex</button><button type="button" data-client="claude" aria-pressed="false">Claude Code</button></div>
+          <label class="os-picker"><span class="sr-only">选择操作系统</span><select id="install-os"><option value="unix">macOS / Linux / WSL</option><option value="windows">Windows</option></select></label>
+        </div>
+        <div class="code-area"><pre tabindex="0" aria-label="安装命令"><code id="install-command">pipx install "saygo-agent-control[mcp]"
+saygo setup --client codex</code></pre></div>
+        <div class="install-bottom"><span id="install-requirements">Python 3.10+ · pipx</span><button class="copy-button" id="copy-command" type="button">复制命令 <span aria-hidden="true">⧉</span></button></div>
+        <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+      </div>
+      <noscript><p class="small-note">以上为 Codex 安装命令，其他客户端请查看<a href="https://github.com/WilliamSkyWalker/saygo#programming-agent-setup">安装文档</a>。</p></noscript>
+      <div class="hero-links"><a class="text-link" href="#quickstart">查看接入步骤 <span aria-hidden="true">→</span></a><span>沿用现有 AI 工具，无需另配模型 API Key</span></div>
+    </div>
+    <div class="demo" id="film">
+      <div class="demo-heading"><span><i class="status-dot"></i> 实机演示</span><span>桌面 / QQ 音乐</span></div>
+      <div class="demo-request"><span class="request-label">任务</span><p>打开 QQ 音乐，并搜索作品。</p><span aria-hidden="true">↗</span></div>
+      <div class="player-shell"><video id="video" controls playsinline preload="none" poster="public/videos/poster.jpg" src="public/videos/brand.mp4" aria-label="Saygo 操作 QQ 音乐完整实机演示"></video><div id="video-error" hidden role="status">视频暂时无法播放。<a href="public/videos/brand.mp4">打开视频文件 ↗</a></div></div>
+      <div class="demo-caption"><span><span class="play-mark" aria-hidden="true">▶</span> 观看完整操作过程</span><span>02:28 · 真实录屏</span></div>
+      <div class="demo-workflow" aria-label="工作流程"><span><b>01</b> 观察界面</span><i aria-hidden="true">→</i><span><b>02</b> 执行操作</span><i aria-hidden="true">→</i><span><b>03</b> 确认结果</span></div>
+    </div>
+  </section>
+  <div class="compatibility wrap"><span>你熟悉的 AI 工具，多一种能力。</span><div><b>Codex</b><b>Claude Code</b><b>Qoder CLI</b><a href="https://github.com/WilliamSkyWalker/saygo/blob/main/distribution/README.md">查看接入说明 ↗</a></div></div>
+  <section class="quickstart" id="quickstart" aria-labelledby="quickstart-title">
+    <div class="wrap">
+      <div class="section-heading"><div><p class="eyebrow">快速接入</p><h2 id="quickstart-title">从第一条命令开始。</h2></div><p>继续使用熟悉的工具。<br>把屏幕上的操作，交给 AI。</p></div>
+      <div class="steps">
+        <article class="step"><span class="step-number">01</span><h3>安装插件</h3><p><span id="setup-requirements">准备好 Python 3.10+、pipx 和对应的 AI 客户端，在终端运行上方命令。</span></p><div class="step-detail"><span class="detail-label">安装器会完成</span><p>创建独立运行环境，接入 MCP 与操作 Skill。</p></div><a class="text-link" href="#hero-title">选择工具并复制命令 <span aria-hidden="true">↑</span></a></article>
+        <article class="step"><span class="step-number">02</span><h3>连接你的设备</h3><p>先从一个浏览器页面开始。按照安装器提示，加载 Chrome 或 Edge 扩展。</p><div class="step-detail"><span class="detail-label">浏览器扩展</span><p>打开扩展弹窗，点击 <code>Connect local bridge</code>，然后重启 AI 客户端。</p></div><a class="text-link" href="https://github.com/WilliamSkyWalker/saygo/blob/main/docs/agent-control.md">桌面和手机接入说明 <span aria-hidden="true">↗</span></a></article>
+        <article class="step"><span class="step-number">03</span><h3>发出第一条指令</h3><p>在新的 AI 会话中描述任务，让它先查看当前界面，再开始操作。</p><div class="step-detail prompt"><span class="detail-label">试着对 AI 说</span><p>“使用 Saygo 查看已连接的设备，连接我的测试浏览器页面，告诉我屏幕上有什么。”</p></div><span class="step-note">从观察开始，确认连接成功。</span></article>
+      </div>
+      <div class="setup-note"><span class="note-label">开发测试版</span><p><span id="install-mode-note">通过 pipx 安装，再运行 saygo setup 接入 AI 工具。</span>手机需要额外工具链，桌面控制需要相应系统权限。<a href="https://github.com/WilliamSkyWalker/saygo#platforms-and-validation-limits">查看平台支持与验证范围 ↗</a></p></div>
+    </div>
+  </section>
+</main>
+<footer class="wrap"><a class="brand" href="#"><span class="brand-icon" aria-hidden="true">s</span>Saygo</a><span>你说，它做。</span><div><a href="https://github.com/WilliamSkyWalker/saygo/blob/main/docs/agent-control.md">文档</a><a href="https://github.com/WilliamSkyWalker/saygo">GitHub ↗</a><span>© <span id="year">2026</span> Saygo</span></div></footer>
+</body>
+</html>

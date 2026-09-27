@@ -20,15 +20,13 @@ Saygo gives external programming agents a shared CLI/MCP operation layer: observ
 | Desktop application user | Saygo Desktop (Qt 6 / PySide6) | Configure an OpenAI-compatible vision API URL, model and API key in the app |
 | Script or CI user | `saygo device`, `saygo task`, `saygo workflow`, `saygo run` | Direct control needs no key; the built-in QA loop needs model credentials |
 
-Saygo is currently a **development/beta distribution**. Installable source bundles and native packaging scripts exist; this does not mean the packages are published on PyPI or the Chrome Web Store. See the [distribution guide](distribution/README.md) for release artifacts, updates and uninstall.
+Saygo is currently a **development/beta distribution**. Installable source bundles and native packaging scripts exist; the Python package is available on PyPI; the browser extension is not yet published on the Chrome Web Store. See the [distribution guide](distribution/README.md) for release artifacts, updates and uninstall.
 
 ## Programming Agent setup
 
-### Python package (publication pending)
+### Install from PyPI
 
-The wheel and source distribution are prepared for PyPI under `saygo-agent-control`.
-Until publication, install the local wheel with `pipx install '/path/to/saygo_agent_control-0.4.3-py3-none-any.whl[mcp]'`.
-After the package is published, the standard installation is:
+Install [saygo-agent-control](https://pypi.org/project/saygo-agent-control/) with pipx, then connect your Agent client:
 
 ```sh
 pipx install 'saygo-agent-control[mcp]'
@@ -48,7 +46,9 @@ opt-in GitHub release channel.
 Build and first-publication instructions: [Python package release](distribution/PYPI.md).
 
 
-**Install from source for the Saygo rename.** The repository has been renamed, but the existing release assets predate this change. Use the source installation below until a Saygo-branded release is published:
+### Install from source
+
+For local development, clone the repository and run the source installer:
 
 ```sh
 git clone https://github.com/WilliamSkyWalker/saygo.git
