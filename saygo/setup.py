@@ -18,7 +18,7 @@ def installation_source():
     archive = package / '_setup_source.zip'
     if archive.is_file():
         with tempfile.TemporaryDirectory(prefix='saygo-setup-') as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             with zipfile.ZipFile(archive) as bundle:
                 for member in bundle.infolist():
                     if not (root / member.filename).resolve().is_relative_to(root):

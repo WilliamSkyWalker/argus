@@ -27,7 +27,7 @@ Saygo is currently a **development/beta distribution**. Installable source bundl
 ### Python package (publication pending)
 
 The wheel and source distribution are prepared for PyPI under `saygo-agent-control`.
-Until publication, install the local wheel with `pipx install '/path/to/saygo_agent_control-0.4.2-py3-none-any.whl[mcp]'`.
+Until publication, install the local wheel with `pipx install '/path/to/saygo_agent_control-0.4.3-py3-none-any.whl[mcp]'`.
 After the package is published, the standard installation is:
 
 ```sh
@@ -80,7 +80,7 @@ The command always selects the newest release, including betas. Add `--channel s
 
 After downloading, rerun `install-saygo.py` with `--client claude`, `codex`, `qoder`, `qodercn`, `both` (Claude + Codex), or `all` to select clients. Add `--mobile` for mobile dependencies. On native Windows use `py -3` in place of `python3`.
 
-From a checkout, developers can use `python3 scripts/install_agent_plugin.py`. Check [GitHub Releases](https://github.com/WilliamSkyWalker/saygo/releases) for published assets. The `saygo-0.4.2.zip` name below is the new build output, not a claim that this asset is already published.
+From a checkout, developers can use `python3 scripts/install_agent_plugin.py`. Check [GitHub Releases](https://github.com/WilliamSkyWalker/saygo/releases) for published assets. The `saygo-0.4.3.zip` name below is the new build output, not a claim that this asset is already published.
 
 Managed installations check for updates in the background and report new releases. Automatic runtime updates are opt-in: add `--auto-update --update-channel beta` when running the installer. Prepared updates activate on a later idle Agent startup; browser/Skill changes prompt a full upgrade. See [update controls and limits](distribution/README.md#update-and-uninstall).
 

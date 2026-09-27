@@ -25,6 +25,26 @@ class SetupInstallTests(unittest.TestCase):
                     self.assertTrue(source.is_dir())
                 self.assertFalse(source.exists())
 
+    def test_symlinked_temporary_directory_is_supported(self):
+        temporary_directory = tempfile.TemporaryDirectory
+        with temporary_directory() as tmp:
+            root = Path(tmp)
+            real = root / 'real'; real.mkdir()
+            alias = root / 'alias'
+            try:
+                alias.symlink_to(real, target_is_directory=True)
+            except OSError:
+                self.skipTest('Directory symlinks unavailable')
+            package = root / 'saygo'; package.mkdir()
+            with zipfile.ZipFile(package / '_setup_source.zip', 'w') as bundle:
+                bundle.writestr('scripts/install_agent_plugin.py', 'payload')
+            def temporary(**kwargs):
+                return temporary_directory(dir=alias, **kwargs)
+            with patch.object(setup, '__file__', str(package / 'setup.py')), patch.object(setup.tempfile, 'TemporaryDirectory', side_effect=temporary):
+                with setup.installation_source() as source:
+                    self.assertEqual((source / 'scripts/install_agent_plugin.py').read_text(), 'payload')
+                    self.assertTrue(source.is_relative_to(real.resolve()))
+
     def test_unsafe_archive_is_rejected_before_extraction(self):
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp)

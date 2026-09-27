@@ -1,10 +1,12 @@
-# Saygo 0.4.2 — CLI / Agent integration beta
+# Saygo 0.4.3 — CLI / Agent integration beta
 
 Saygo 品牌的 CLI 安装包已构建，待发布。支持 Claude Code、Codex、Qoder 和 QoderCN 的 MCP / Skill 集成，以及 Chrome / Edge 浏览器桥接。
 
 **桌面应用仍在开发测试中，本次不发布桌面安装包。**
 
 ## 本次变更
+
+- 修复 macOS 符号链接临时目录导致安装资源路径检查误报的问题。
 
 - 增加 Python wheel / sdist 与 `saygo setup`，安装后无需源码目录即可配置 Agent 插件。
 - PyPI 发布流程包含独立环境安装与跨平台准备检查；首次上传需配置 Trusted Publisher。
@@ -33,10 +35,10 @@ Invoke-WebRequest https://raw.githubusercontent.com/WilliamSkyWalker/saygo/main/
 
 安装器会自动检测客户端、下载源码并校验 SHA256，然后安装隔离运行环境和集成。无需 Git 或 pyenv；依赖下载需要网络。WSL 用户请在 Agent CLI 所在的 WSL 环境中执行。
 
-也可以同时下载 `saygo-0.4.2.zip`，放到安装器旁边：
+也可以同时下载 `saygo-0.4.3.zip`，放到安装器旁边：
 
 ```sh
-python3 install-saygo-0.4.2.py --archive saygo-0.4.2.zip
+python3 install-saygo-0.4.3.py --archive saygo-0.4.3.zip
 ```
 
 Windows 请将 `python3` 换为 `py -3`。可用 `--client codex`、`--client claude`、`--client qoder`、`--client qodercn` 或 `--client all` 指定客户端；手机控制额外加 `--mobile`。
@@ -49,7 +51,7 @@ Windows 请将 `python3` 换为 `py -3`。可用 `--client codex`、`--client cl
 - 下载包经过 SHA256 校验；新运行环境准备并检查成功后，在下一次空闲启动时启用。
 - 离线、下载失败或准备失败时继续使用旧版；旧运行环境保留。
 - 浏览器桥接、扩展或客户端 Skill 改变时提示使用完整安装器更新。
-- 0.4.0 用户需要运行一次 0.4.2 安装器，以获得更新功能。
+- 0.4.0 用户需要运行一次 0.4.3 安装器，以获得更新功能。
 
 macOS / Linux / WSL 管理命令（Windows 将 `python3` 换为 `py -3`）：
 
@@ -61,7 +63,7 @@ python3 "$HOME/.local/share/saygo/agent-plugin/update.py" --auto off
 
 ## 浏览器 / Browser
 
-**[下载 Chrome / Edge 浏览器插件 ZIP](https://github.com/WilliamSkyWalker/saygo/releases/download/v0.4.2/saygo-browser-0.4.2-development.zip)**
+**[下载 Chrome / Edge 浏览器插件 ZIP](https://github.com/WilliamSkyWalker/saygo/releases/download/v0.4.3/saygo-browser-0.4.3-development.zip)**
 
 解压 ZIP，打开 `chrome://extensions`（Edge 为 `edge://extensions`），开启开发者模式，点击“加载已解压的扩展”，选择包含 `manifest.json` 的解压目录。先运行上面的 CLI 安装命令准备本机桥接，再在扩展中点击 **Connect local bridge**。
 
@@ -71,11 +73,11 @@ MCP 浏览器控制使用扩展后端，不使用 Playwright。无需为 Saygo �
 
 ## Assets
 
-- `install-saygo-0.4.2.py` — 推荐入口，带源码校验的安装器。
-- `saygo-0.4.2.zip` — 配合安装器使用的源码包。
-- `saygo-browser-0.4.2-development.zip` — 可选的浏览器开发版扩展。
+- `install-saygo-0.4.3.py` — 推荐入口，带源码校验的安装器。
+- `saygo-0.4.3.zip` — 配合安装器使用的源码包。
+- `saygo-browser-0.4.3-development.zip` — 可选的浏览器开发版扩展。
 - `SHA256SUMS` / `release-manifest.json` — 校验值与版本元数据。
 
 This is a beta CLI distribution. Installer integrity, client configuration and native-host protocol checks have passed; clean-machine installation and platform-wide acceptance testing remain incomplete. Desktop installers are not included.
 
-[完整安装、更新与卸载说明](https://github.com/WilliamSkyWalker/saygo/blob/v0.4.2/distribution/README.md)
+[完整安装、更新与卸载说明](https://github.com/WilliamSkyWalker/saygo/blob/v0.4.3/distribution/README.md)
