@@ -1,8 +1,8 @@
 # language: zh-CN
 # encoding: utf-8
-# argus-target: ios_demo
-# argus-platform: ios
-# argus-package: com.apple.Preferences
+# saygo-target: ios_demo
+# saygo-platform: ios
+# saygo-package: com.apple.Preferences
 
 Feature: iOS 设置 App 自动化演示
 

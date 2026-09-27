@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from argus.devices import mobile_host
+from saygo.devices import mobile_host
 
 
 class WorkerBundleTests(unittest.TestCase):
@@ -27,7 +27,7 @@ class WorkerBundleTests(unittest.TestCase):
                 'devices/toolchain.py', 'devices/mobile_host_worker.py', 'devices/windows_no_console.cjs'})
             # HTTP avoids Windows locking. An invalid port exits before network I/O,
             # after importing mobile/toolchain from the copied package under -I -S.
-            payload = dict(details, operation='http', port=0, base_path='/argus-test', method='GET', path='/status')
+            payload = dict(details, operation='http', port=0, base_path='/saygo-test', method='GET', path='/status')
             result = subprocess.run([sys.executable, '-I', '-S', str(script)],
                 input=json.dumps(payload), text=True, capture_output=True, cwd=tmp, timeout=10)
             self.assertEqual(result.returncode, 2, result.stderr)

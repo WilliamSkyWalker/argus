@@ -8,19 +8,19 @@ import tempfile
 import unittest
 from unittest.mock import Mock, call, patch
 from PIL import Image
-from argus.platforms import device_session as ds
-from argus.cli import main
+from saygo.platforms import device_session as ds
+from saygo.cli import main
 
 
 class ForegroundCLITests(unittest.TestCase):
     def run_command(self, command, controller, expect_error=False):
         state = {'kind': 'desktop', 'os': 'windows', 'app': 'Example'}
         output = io.StringIO()
-        with patch.object(sys, 'argv', ['argus', 'device', *command]), \
+        with patch.object(sys, 'argv', ['saygo', 'device', *command]), \
              patch.object(ds, 'load_state', return_value=state), \
              patch.object(ds, 'attach_desktop', return_value=controller) as attach, \
-             patch('argus.devices.service.time.sleep'), \
-             patch('argus.devices.observations.wait', return_value={'condition_met':True,'timed_out':False}), contextlib.redirect_stdout(output):
+             patch('saygo.devices.service.time.sleep'), \
+             patch('saygo.devices.observations.wait', return_value={'condition_met':True,'timed_out':False}), contextlib.redirect_stdout(output):
             try:
                 main()
             except SystemExit:
@@ -29,7 +29,7 @@ class ForegroundCLITests(unittest.TestCase):
         return json.loads(output.getvalue()), attach
 
     def controller(self):
-        from argus.platforms.windows_runner import WindowsRunnerPlatform
+        from saygo.platforms.windows_runner import WindowsRunnerPlatform
         controller = Mock(spec=WindowsRunnerPlatform)
         png = io.BytesIO()
         Image.new('RGB', (20, 20)).save(png, format='PNG')

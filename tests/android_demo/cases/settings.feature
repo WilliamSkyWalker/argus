@@ -1,9 +1,9 @@
 # language: zh-CN
 # encoding: utf-8
-# argus-target: android_demo
-# argus-platform: android
-# argus-package: com.android.settings
-# argus-reset-default: relaunch
+# saygo-target: android_demo
+# saygo-platform: android
+# saygo-package: com.android.settings
+# saygo-reset-default: relaunch
 
 Feature: Android 设置 App 自动化演示
 

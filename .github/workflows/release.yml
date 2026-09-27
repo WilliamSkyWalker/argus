@@ -27,11 +27,11 @@ jobs:
       - run: python scripts/build_release.py
       - uses: actions/upload-artifact@v4
         with:
-          name: argus-release
+          name: saygo-release
           path: dist/release/*
       - name: Create reviewable draft (never publish automatically)
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" dist/release/* --draft --verify-tag --title "Argus $RELEASE_TAG" --notes-file distribution/RELEASE_NOTES.md
+        run: gh release create "$RELEASE_TAG" dist/release/* --draft --verify-tag --title "Saygo $RELEASE_TAG" --notes-file distribution/RELEASE_NOTES.md

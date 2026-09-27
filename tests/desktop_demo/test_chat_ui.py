@@ -19,10 +19,10 @@ class ChatTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
-        from argus.desktop.app import make_window
-        self.patches = [patch('argus.devices.control.sessions', return_value=[]),
-                        patch('argus.runtime.interactive.call', return_value={'tasks': []}),
-                        patch('argus.desktop.model.load_settings', side_effect=ValueError('not configured'))]
+        from saygo.desktop.app import make_window
+        self.patches = [patch('saygo.devices.control.sessions', return_value=[]),
+                        patch('saygo.runtime.interactive.call', return_value={'tasks': []}),
+                        patch('saygo.desktop.model.load_settings', side_effect=ValueError('not configured'))]
         for p in self.patches:
             p.start()
             self.addCleanup(p.stop)

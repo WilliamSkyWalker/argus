@@ -12,10 +12,10 @@ from unittest.mock import patch
 import tempfile
 import unittest
 
-from argus.runtime import Runtime, Store
-from argus.runtime.resources import PreconditionError, SQLiteResource, VisualResource, resource_key
-from argus.runtime.schema import resolve, validate
-from argus.runtime.store import BusyError
+from saygo.runtime import Runtime, Store
+from saygo.runtime.resources import PreconditionError, SQLiteResource, VisualResource, resource_key
+from saygo.runtime.schema import resolve, validate
+from saygo.runtime.store import BusyError
 
 
 def ref(path):
@@ -52,7 +52,7 @@ class RuntimeTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        from argus.platforms import device_session
+        from saygo.platforms import device_session
         session_patch = patch.object(device_session, "STATE_DIR", self.root / "device-sessions")
         session_patch.start()
         self.addCleanup(session_patch.stop)
@@ -335,7 +335,7 @@ class RuntimeTests(unittest.TestCase):
             def setup(self, config):
                 self.config = config
         desktop = Desktop()
-        with patch("argus.platforms.create_platform", return_value=desktop):
+        with patch("saygo.platforms.create_platform", return_value=desktop):
             adapter = VisualResource({"kind": "windows", "app": "Example"})
             self.assertIs(adapter._attach(), desktop)
         self.assertEqual(desktop.config["win"], {"app": "Example", "launch": ""})
@@ -348,7 +348,7 @@ class RuntimeTests(unittest.TestCase):
         ])
         path = self.root / "workflow.json"
         path.write_text(json.dumps(workflow))
-        command = [sys.executable, "-m", "argus.cli", "workflow", "--state-dir", str(self.store.root)]
+        command = [sys.executable, "-m", "saygo.cli", "workflow", "--state-dir", str(self.store.root)]
         created = subprocess.run(command + ["create", str(path)], capture_output=True, text=True, check=True,
                                  env={**os.environ, "LLM_API_KEY": ""})
         run_id = json.loads(created.stdout)["id"]

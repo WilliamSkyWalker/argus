@@ -30,7 +30,7 @@ public class FixtureNative {
 [Windows.Forms.Application]::SetUnhandledExceptionMode([Windows.Forms.UnhandledExceptionMode]::ThrowException)
 $initialForeground=[FixtureNative]::GetForegroundWindow().ToInt64()
 $form=New-Object PassiveForm
-$form.Text='Argus Background Fixture'
+$form.Text='Saygo Background Fixture'
 $form.StartPosition='Manual'
 $form.Location=New-Object Drawing.Point(120,120)
 $form.ClientSize=New-Object Drawing.Size(600,380)
@@ -55,12 +55,12 @@ $panel.Location=New-Object Drawing.Point(40,230);$panel.Size=New-Object Drawing.
 $panel.Add_MouseDown({param($sender,$event) $script:point="$($event.X),$($event.Y)"})
 $form.Controls.Add($panel)
 $cover=New-Object PassiveCoverForm
-$cover.Text='Argus Foreground Cover'
+$cover.Text='Saygo Foreground Cover'
 $cover.StartPosition='Manual'; $cover.Location=$form.Location
 $cover.Size=New-Object Drawing.Size(680,470);$cover.BackColor=[Drawing.Color]::Red;$cover.TopMost=$true
 $cover.Add_FormClosed({$form.Close()})
 $tiny=New-Object PassiveForm
-$tiny.FormBorderStyle='None';$tiny.Text='Argus Background Fixture GDI+ helper'
+$tiny.FormBorderStyle='None';$tiny.Text='Saygo Background Fixture GDI+ helper'
 $tiny.Size=New-Object Drawing.Size(1,1)
 $shadow=New-Object ShadowForm
 $shadow.FormBorderStyle='None';$shadow.Text='';$shadow.Size=New-Object Drawing.Size(700,500)

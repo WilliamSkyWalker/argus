@@ -4,7 +4,7 @@ import json
 import unittest
 from unittest.mock import patch
 
-from argus.platforms.selenium_grid import cleanup_grid_sessions
+from saygo.platforms.selenium_grid import cleanup_grid_sessions
 
 
 class GridCleanupTests(unittest.TestCase):

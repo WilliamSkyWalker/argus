@@ -1,4 +1,4 @@
-# Argus distribution
+# Saygo distribution
 
 One versioned Python installer prepares an isolated MCP runtime, registers the native
 Claude/Codex plugins, configures Qoder/QoderCN, and installs the Chrome/Edge native messaging host. Git is not
@@ -13,16 +13,16 @@ With Python 3.10+ available, run one command in a writable directory to download
 macOS / Linux / WSL:
 
 ```sh
-curl -fL https://raw.githubusercontent.com/WilliamSkyWalker/argus/main/scripts/install_argus.py -o install-argus.py && python3 install-argus.py
+curl -fL https://raw.githubusercontent.com/WilliamSkyWalker/saygo/main/scripts/install_saygo.py -o install-saygo.py && python3 install-saygo.py
 ```
 
 Windows PowerShell:
 
 ```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/WilliamSkyWalker/argus/main/scripts/install_argus.py -OutFile install-argus.py -ErrorAction Stop; py -3 install-argus.py
+Invoke-WebRequest https://raw.githubusercontent.com/WilliamSkyWalker/saygo/main/scripts/install_saygo.py -OutFile install-saygo.py -ErrorAction Stop; py -3 install-saygo.py
 ```
 
-The fixed command selects the newest version on each run, including prereleases. Use `python3 install-argus.py --channel stable` to exclude betas, or `--check` to show the newest version without installing. Installer options such as `--auto-update` are forwarded.
+The fixed command selects the newest version on each run, including prereleases. Use `python3 install-saygo.py --channel stable` to exclude betas, or `--check` to show the newest version without installing. Installer options such as `--auto-update` are forwarded.
 
 The installer auto-detects installed Claude, Codex, Qoder and QoderCN clients. Optional flags: `--client codex`,
 `--client claude`, `--client qoder`, `--client qodercn`, `--client all`,
@@ -34,7 +34,7 @@ The release installer verifies the downloaded source ZIP against its embedded
 SHA256 before extraction. For a locally downloaded archive:
 
 ```sh
-python3 install-argus-0.4.1.py --archive argus-0.4.1.zip
+python3 install-saygo-0.4.1.py --archive saygo-0.4.1.zip
 ```
 
 Python dependencies are fetched from PyPI; this is not an offline bundle or a
@@ -47,9 +47,9 @@ Until the store listing is available, open `chrome://extensions`, enable Develop
 mode, choose **Load unpacked**, and select the path printed by the installer.
 The development extension ID is `oifpojkdkggpmdfbbochlclhjahkkmpc` (public key in
 manifest); it is not an official Web Store ID. Open its popup and click **Connect
-local bridge**. All website tabs in that profile become accessible to Argus.
+local bridge**. All website tabs in that profile become accessible to Saygo.
 Restart the Agent client. Ask it to list browser pages and connect a named session.
-The bridge path is saved in `~/.argus/browser-bridge.json` (or `ARGUS_HOME_DIR`), so
+The bridge path is saved in `~/.saygo/browser-bridge.json` (or `SAYGO_HOME_DIR`), so
 new MCP extension connections no longer require a manually supplied path.
 
 ## Update and uninstall
@@ -62,25 +62,25 @@ The default is **notify only**, with the stable release channel.
 To enable automatic updates, add these options to the installation command:
 
 ```sh
-python3 install-argus-0.4.1.py --auto-update --update-channel beta
+python3 install-saygo-0.4.1.py --auto-update --update-channel beta
 ```
 
-`beta` includes prereleases (Argus currently ships beta releases). Use `stable`
+`beta` includes prereleases (Saygo currently ships beta releases). Use `stable`
 for non-prerelease versions only. Existing 0.4.0 users must run the 0.4.1 installer
 once to obtain the update launcher.
 
 After installation, manage updates without downloading another installer:
 
 ```sh
-python3 "$HOME/.local/share/argus/agent-plugin/update.py" --check
-python3 "$HOME/.local/share/argus/agent-plugin/update.py" --auto on --channel beta
-python3 "$HOME/.local/share/argus/agent-plugin/update.py" --apply
-python3 "$HOME/.local/share/argus/agent-plugin/update.py" --auto off
+python3 "$HOME/.local/share/saygo/agent-plugin/update.py" --check
+python3 "$HOME/.local/share/saygo/agent-plugin/update.py" --auto on --channel beta
+python3 "$HOME/.local/share/saygo/agent-plugin/update.py" --apply
+python3 "$HOME/.local/share/saygo/agent-plugin/update.py" --auto off
 ```
 
-Windows PowerShell uses `py -3 "$HOME/.local/share/argus/agent-plugin/update.py"`
+Windows PowerShell uses `py -3 "$HOME/.local/share/saygo/agent-plugin/update.py"`
 with the same options. For a custom installation root, use its `update.py` and
-append `--root PATH`. Package/checkout users can also use `argus update` with these
+append `--root PATH`. Package/checkout users can also use `saygo update` with these
 options; it manages the selected **managed installation**, not a source checkout
 or a global pip installation.
 
@@ -96,7 +96,7 @@ and any browser reload; the updater reports this instead of partially upgrading.
 The versioned installer itself still installs its named version. The desktop GUI
 and unmanaged installations are not automatically updated by this mechanism.
 
-Close active Argus tasks. Run the newer release installer using the same root,
+Close active Saygo tasks. Run the newer release installer using the same root,
 reload the unpacked extension in Chrome, reconnect it, then start a new Agent
 session. Old runtimes are preserved for rollback; existing sessions are retained.
 The extension and host negotiate protocol version before any actions are sent.
@@ -104,7 +104,7 @@ Protocol mismatch instructs the user to update both sides; it is not reported as
 successful connection. Versions 0.3.x lack this handshake and need both updated.
 
 ```sh
-python3 install-argus-0.4.1.py --uninstall
+python3 install-saygo-0.4.1.py --uninstall
 ```
 
 Uninstall removes native client plugins and this installation's browser host
@@ -122,7 +122,7 @@ python3 scripts/build_release.py --out dist/release
 Outputs: hash-pinned installer, source ZIP, development extension ZIP, store upload
 ZIP (without development key), SHA256SUMS and release metadata. Source bundling
 uses a narrow allowlist; no user session state, credentials or device captures are
-included. `--prepare-only --client both --root /tmp/argus-package-check` builds
+included. `--prepare-only --client both --root /tmp/saygo-package-check` builds
 client bundles without registering clients/hosts. Running from the checkout is
 also supported via `python3 scripts/install_agent_plugin.py`.
 
@@ -151,45 +151,45 @@ runs; existing Windows/WSL driver testing does not prove this new distribution f
 ## Private configuration (.env)
 
 The package never includes the developer's `.env`. External Agent device control
-does not require an Argus model API key or database. Optional QA/model settings
-load in this order: defaults → `~/.argus/config.env` → working-project `.env` →
-process environment. `ARGUS_HOME_DIR` changes the user-config directory. Explicit
-`ARGUS_CONFIG_FILE=/absolute/path/.env` replaces project-file discovery; a missing
+does not require an Saygo model API key or database. Optional QA/model settings
+load in this order: defaults → `~/.saygo/config.env` → working-project `.env` →
+process environment. `SAYGO_HOME_DIR` changes the user-config directory. Explicit
+`SAYGO_CONFIG_FILE=/absolute/path/.env` replaces project-file discovery; a missing
 explicit file is an error. Package installation paths are never searched for `.env`.
 
 To keep an existing configuration without copying credentials:
 
 ```sh
-python3 install-argus-0.4.1.py --config-file /absolute/path/to/private.env
+python3 install-saygo-0.4.1.py --config-file /absolute/path/to/private.env
 ```
 
-The managed plugin stores only `ARGUS_CONFIG_FILE` and preserves it on upgrades;
+The managed plugin stores only `SAYGO_CONFIG_FILE` and preserves it on upgrades;
 it never embeds the file's contents. Both clients then resolve the same file even
 when launched from different directories. For a portable user configuration, use
-`argus init --user` to create a blank template at `~/.argus/config.env`, or `argus
+`saygo init --user` to create a blank template at `~/.saygo/config.env`, or `saygo
 init` for the working project's `.env`. Templates are created with owner-only
 permissions on POSIX and never overwrite existing files. Keep secrets out of source
 control. Database settings belonging to another application are not automatically
-consumed by Argus.
+consumed by Saygo.
 
 ## Authorize continuous operation in Codex
 
 Codex controls MCP tool approvals. Selecting **Always allow** on one tool does not
-authorize all other Argus tools. To authorize the managed Argus plugin once, put
+authorize all other Saygo tools. To authorize the managed Saygo plugin once, put
 this service-scoped setting in the user's `~/.codex/config.toml`:
 
 ```toml
-[plugins."argus-device@argus-managed".mcp_servers.argus]
+[plugins."saygo-device@saygo-managed".mcp_servers.saygo]
 default_tools_approval_mode = "approve"
 ```
 
 Merge into that table if it exists; do not create a duplicate TOML table. Start a
-new Codex session after changing configuration. This applies to Argus tools,
+new Codex session after changing configuration. This applies to Saygo tools,
 including actions that change connected applications, and does not change shell
 sandboxing or other MCP services. Existing per-tool overrides and managed policies
 can still take precedence. Restore `"prompt"` to require confirmation again.
 For a directly configured MCP server instead of the managed plugin, use the
-corresponding `[mcp_servers.argus]` table. The installer does not silently grant
+corresponding `[mcp_servers.saygo]` table. The installer does not silently grant
 this trust for new users.
 
 Reference: https://developers.openai.com/plugins/build/plugins
@@ -197,17 +197,17 @@ Reference: https://developers.openai.com/plugins/build/plugins
 
 ## Default Claude, Qoder and QoderCN setup
 
-Selecting these clients automatically configures Argus-only continuous operation;
+Selecting these clients automatically configures Saygo-only continuous operation;
 there is no separate trust flag or per-tool setup step. Installation updates
 existing settings without replacing unrelated entries and saves a private
-`settings.json.before-argus` backup. `--prepare-only` never changes client settings.
+`settings.json.before-saygo` backup. `--prepare-only` never changes client settings.
 
-- Claude: after native plugin installation, add `mcp__plugin_argus-device_argus__*`
-  and `mcp__argus__*` to `permissions.allow` in the user settings. These cover the
-  plugin and direct Argus server naming conventions.
-- Qoder: install the `argus` MCP entry with `trust: true` in
+- Claude: after native plugin installation, add `mcp__plugin_saygo-device_saygo__*`
+  and `mcp__saygo__*` to `permissions.allow` in the user settings. These cover the
+  plugin and direct Saygo server naming conventions.
+- Qoder: install the `saygo` MCP entry with `trust: true` in
   `~/.qoder/settings.json` and copy the shared operation Skill to
-  `~/.qoder/skills/argus-device/SKILL.md`.
+  `~/.qoder/skills/saygo-device/SKILL.md`.
 - QoderCN: the same setup in `~/.qoder-cn`, selectable as `--client qodercn`.
   This is the QoderCN CLI configuration used by the tested local installation.
 
@@ -219,9 +219,9 @@ are respected; the installer accepts `QODERCN_CONFIG_DIR` for a custom domestic
 client directory (launch that client with its matching configuration directory).
 
 Restart client sessions after installation. Managed deny/ask policies or higher
-priority project settings may still require approval. Argus authorization does
+priority project settings may still require approval. Saygo authorization does
 not change shell approval or authorize other MCP servers. Uninstall removes only
-permissions it added and unchanged Argus server/Skill entries that it owns;
+permissions it added and unchanged Saygo server/Skill entries that it owns;
 user-customized entries are preserved. Native Qoder IDE configuration is not
 claimed verified by the CLI integration.
 

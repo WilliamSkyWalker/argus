@@ -1,6 +1,6 @@
 """Opt-in real Chromium/CDP integration, isolated profiles and local HTTP only.
 
-ARGUS_TEST_CHROME=/path/to/chrome python3 -m unittest discover -s tests/browser_demo -v
+SAYGO_TEST_CHROME=/path/to/chrome python3 -m unittest discover -s tests/browser_demo -v
 """
 
 import io
@@ -18,14 +18,14 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from argus.platforms import device_session
-from argus.platforms.browser_playwright import PlaywrightBrowserPlatform, PageSelectionError
-from argus.runtime import Runtime, Store
+from saygo.platforms import device_session
+from saygo.platforms.browser_playwright import PlaywrightBrowserPlatform, PageSelectionError
+from saygo.runtime import Runtime, Store
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = b'''<!doctype html><title>Argus browser fixture</title>
+        body = b'''<!doctype html><title>Saygo browser fixture</title>
         <style>body {margin:0} input,button {display:block;width:200px;height:50px}</style>
         <input id="entry"><button id="login" onclick="window.open('/login','login')">Login</button>
         <div style="height:2000px">Local test page</div>'''
@@ -39,7 +39,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-@unittest.skipUnless(os.environ.get("ARGUS_TEST_CHROME"), "set ARGUS_TEST_CHROME for real-browser integration")
+@unittest.skipUnless(os.environ.get("SAYGO_TEST_CHROME"), "set SAYGO_TEST_CHROME for real-browser integration")
 class ChromiumIntegration(unittest.TestCase):
     def test_popup_reconnect_runtime_handoff_and_cli(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -54,7 +54,7 @@ class ChromiumIntegration(unittest.TestCase):
             # Test-only isolated browser; --no-sandbox supports restricted CI user namespaces.
             log = (root / "chrome.log").open("w+")
             self.addCleanup(log.close)
-            proc = subprocess.Popen([os.environ["ARGUS_TEST_CHROME"], "--headless=new", "--no-sandbox",
+            proc = subprocess.Popen([os.environ["SAYGO_TEST_CHROME"], "--headless=new", "--no-sandbox",
                                      "--disable-dev-shm-usage", "--remote-debugging-port=0",
                                      f"--user-data-dir={profile}", "--no-first-run", "about:blank"],
                                     stdout=log, stderr=log)
@@ -80,8 +80,8 @@ class ChromiumIntegration(unittest.TestCase):
                 platform.select_page(original)
                 platform.open_target(url)
                 platform.tap(30, 25)
-                platform.input_text("Argus 中文")
-                self.assertEqual(platform.page.locator("#entry").input_value(), "Argus 中文")
+                platform.input_text("Saygo 中文")
+                self.assertEqual(platform.page.locator("#entry").input_value(), "Saygo 中文")
                 platform.press_key("select_all")
                 platform.input_text("replaced")
                 self.assertEqual(platform.page.locator("#entry").input_value(), "replaced")
@@ -102,7 +102,7 @@ class ChromiumIntegration(unittest.TestCase):
 
                 # New Python process reconnects to the exact popup, not pages[0].
                 script = '''import json,sys
-from argus.platforms.browser_playwright import PlaywrightBrowserPlatform
+from saygo.platforms.browser_playwright import PlaywrightBrowserPlatform
 p=PlaywrightBrowserPlatform().connect(sys.argv[1], page_id=sys.argv[2])
 try: print(json.dumps({'page_id':p.page_id,'url':p.page.url,'marker':p.page.evaluate("localStorage.getItem('session-marker')")}))
 finally: p.disconnect()
@@ -114,17 +114,17 @@ finally: p.disconnect()
                 self.assertEqual(data["marker"], "preserved")
 
                 sessions = root / "device-sessions"
-                env = {**os.environ, "ARGUS_HOME_DIR": str(root)}
+                env = {**os.environ, "SAYGO_HOME_DIR": str(root)}
                 with patch.object(device_session, "STATE_DIR", sessions):
                     device_session.save_state("web", {"kind": "browser", "browser_backend": "playwright",
                         "debugger_address": f"127.0.0.1:{port}", "port": port, "page_id": original})
-                    command = [sys.executable, "-m", "argus.cli", "device"]
+                    command = [sys.executable, "-m", "saygo.cli", "device"]
                     out = subprocess.run(command + ["pages", "--serial", "web"], env=env,
                                          capture_output=True, text=True, check=True, timeout=30)
                     self.assertEqual(len(json.loads(out.stdout)["pages"]), 2)
                     # Playwright remains a CLI backend; MCP must reject it explicitly.
-                    from argus.mcp import server as mcp_server
-                    from argus.runtime.interactive import InteractiveRuntime
+                    from saygo.mcp import server as mcp_server
+                    from saygo.runtime.interactive import InteractiveRuntime
                     out = subprocess.run(command + ["tap", "30", "25", "--session", "web"], env=env,
                                          capture_output=True, text=True, check=True, timeout=30)
                     self.assertTrue(json.loads(out.stdout)["dispatched"])
@@ -148,7 +148,7 @@ finally: p.disconnect()
                     self.assertIsNone(task["error"], task)
                     task = interactive.observe(task["id"], "mail")
                     self.assertEqual(task["observations"]["mail"]["page_id"], popup)
-                    task_command = [sys.executable, "-m", "argus.cli", "task"]
+                    task_command = [sys.executable, "-m", "saygo.cli", "task"]
                     recovered = subprocess.run(task_command + ["recover", task["id"]], env=env,
                                                capture_output=True, text=True, check=True, timeout=30)
                     recovered = json.loads(recovered.stdout)

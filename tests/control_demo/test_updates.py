@@ -10,7 +10,7 @@ import time
 import unittest
 from unittest.mock import patch
 import zipfile
-from argus import updates as u
+from saygo import updates as u
 
 
 class UpdateTests(unittest.TestCase):
@@ -18,7 +18,7 @@ class UpdateTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         u.write(self.root/'installation.json', {'python': sys.executable, 'version': '0.4.0', 'compatibility': 'same'})
-        self.env = patch.dict(os.environ, {'ARGUS_HOME_DIR': str(self.root/'home'), 'ARGUS_RUNTIME_DIR': str(self.root/'runtime')})
+        self.env = patch.dict(os.environ, {'SAYGO_HOME_DIR': str(self.root/'home'), 'SAYGO_RUNTIME_DIR': str(self.root/'runtime')})
         self.env.start(); self.addCleanup(self.env.stop)
         background = patch.object(u.subprocess, 'Popen')
         background.start(); self.addCleanup(background.stop)
@@ -41,7 +41,7 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(u.current(self.root)['python'], sys.executable)
 
     def test_asset_digest_and_origin_are_required(self):
-        release = self.release('0.5.0'); name = 'install-argus-0.5.0.py'
+        release = self.release('0.5.0'); name = 'install-saygo-0.5.0.py'
         release['assets'] = [{'name': name, 'browser_download_url': u.DOWNLOAD+'v0.5.0/'+name, 'digest': 'sha256:'+'0'*64}]
         with patch.object(u, 'fetch', return_value=b'corrupt'):
             with self.assertRaisesRegex(ValueError, 'SHA256 mismatch'): u.asset(release, name, self.root)
@@ -57,7 +57,7 @@ class UpdateTests(unittest.TestCase):
         self.assertFalse(u.busy(self.root))
 
     def test_unfinished_tasks_block_activation(self):
-        from argus.runtime.store import Store
+        from saygo.runtime.store import Store
         store = Store(self.root/'runtime'); state = store.create({'resources': {}})
         self.assertTrue(u.busy(self.root))
         state['status'] = 'cancelled'; store.save(state, 'cancelled')
@@ -66,7 +66,7 @@ class UpdateTests(unittest.TestCase):
     def stage(self, fail=False):
         installer = self.root/'installer.py'; installer.write_text('')
         archive = self.root/'source.zip'
-        with zipfile.ZipFile(archive, 'w') as bundle: bundle.writestr('argus-0.5.0/placeholder', '')
+        with zipfile.ZipFile(archive, 'w') as bundle: bundle.writestr('saygo-0.5.0/placeholder', '')
         def run(command, **kwargs):
             if fail: raise subprocess.CalledProcessError(1, command)
             stage = self.root/'updates/0.5.0'
@@ -107,7 +107,7 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), '')
 
     def test_cli_update_routes_flags(self):
-        from argus.cli import main
+        from saygo.cli import main
         with patch.object(u, 'main', return_value=0) as command:
             main(['update', '--auto', 'on'])
             command.assert_called_once_with(['--auto', 'on'])
@@ -115,7 +115,7 @@ class UpdateTests(unittest.TestCase):
     def test_changed_integration_requires_full_installer(self):
         installer = self.root/'installer.py'; installer.write_text('')
         archive = self.root/'source.zip'
-        with zipfile.ZipFile(archive, 'w') as bundle: bundle.writestr('argus-0.5.0/placeholder', '')
+        with zipfile.ZipFile(archive, 'w') as bundle: bundle.writestr('saygo-0.5.0/placeholder', '')
         with patch.object(u, 'asset', side_effect=[installer, archive]), patch.object(u, 'compatibility', return_value='different'), patch.object(u.subprocess, 'run') as run:
             result = u.apply(self.root, {'available': True, 'release': self.release('0.5.0')})
             self.assertIn('full installer', result['deferred']); run.assert_not_called()

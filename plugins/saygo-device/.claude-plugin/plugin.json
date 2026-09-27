@@ -1,0 +1,38 @@
+{
+  "name": "saygo-device",
+  "version": "0.2.0",
+  "description": "Visual control for phones, browser pages and desktop windows, with shared CLI/MCP sessions, durable interactive tasks and human handoff. No LLM key needed.",
+  "author": {
+    "name": "saygo",
+    "url": "https://github.com/WilliamSkyWalker/saygo"
+  },
+  "homepage": "https://github.com/WilliamSkyWalker/saygo/tree/main/plugins/saygo-device",
+  "repository": "https://github.com/WilliamSkyWalker/saygo",
+  "keywords": [
+    "testing",
+    "qa",
+    "android",
+    "ios",
+    "appium",
+    "emulator",
+    "simulator",
+    "mobile",
+    "vision",
+    "browser",
+    "desktop",
+    "agent",
+    "workflow"
+  ],
+  "mcpServers": {
+    "saygo": {
+      "command": "python3",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/saygo_mcp.py"
+      ],
+      "env": {
+        "SAYGO_MCP_PROFILE": "device",
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}

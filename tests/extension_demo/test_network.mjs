@@ -4,7 +4,7 @@ import {webcrypto} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 globalThis.crypto ||= webcrypto;
 // Import the browser ES module without imposing package.json on the repository.
-const source = await readFile(new URL('../../extensions/argus-browser/network.js',import.meta.url),'utf8');
+const source = await readFile(new URL('../../extensions/saygo-browser/network.js',import.meta.url),'utf8');
 const {NetworkJournal} = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 const request = (id='1',type='Fetch') => ({requestId:id,timestamp:1,type,request:{url:'https://example.test/api',method:'POST',headers:{a:'b'},postData:'hello'}});
 

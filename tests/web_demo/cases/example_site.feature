@@ -1,7 +1,7 @@
 # language: zh-CN
 # encoding: utf-8
-# argus-target: web_demo
-# argus-platform: browser
+# saygo-target: web_demo
+# saygo-platform: browser
 
 Feature: 浏览器示例站点自动化演示
 

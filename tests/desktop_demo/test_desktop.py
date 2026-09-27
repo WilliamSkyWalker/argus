@@ -5,19 +5,19 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import Mock, patch
-from argus.desktop import model
-from argus.desktop.runner import TaskLoop, decision
+from saygo.desktop import model
+from saygo.desktop.runner import TaskLoop, decision
 
 
 class DesktopTests(unittest.TestCase):
     def test_settings_never_persist_secret(self):
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ,{'ARGUS_HOME_DIR':tmp}):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ,{'SAYGO_HOME_DIR':tmp}):
             model.save_settings({'base_url':'https://example.com/v1','model':'vision'},'private-token',False)
             self.assertNotIn('private-token',model.settings_path().read_text())
             self.assertEqual(model.load_key(model.load_settings()),'')
 
     def test_no_plaintext_fallback(self):
-        with patch('argus.desktop.model.secure_backend',side_effect=RuntimeError('no secure store')):
+        with patch('saygo.desktop.model.secure_backend',side_effect=RuntimeError('no secure store')):
             with self.assertRaisesRegex(RuntimeError,'no secure store'):
                 model.save_settings({'base_url':'https://example.com/v1','model':'vision'},'key',True)
 
@@ -59,9 +59,9 @@ class DesktopTests(unittest.TestCase):
     def test_loop_uses_real_durable_runtime_and_exports_evidence(self):
         import io
         from PIL import Image
-        from argus.platforms import device_session as ds
-        from argus.runtime.interactive import InteractiveRuntime
-        from argus.runtime.store import Store
+        from saygo.platforms import device_session as ds
+        from saygo.runtime.interactive import InteractiveRuntime
+        from saygo.runtime.store import Store
         with tempfile.TemporaryDirectory() as tmp, patch.object(ds,'STATE_DIR',Path(tmp)/'sessions'):
             ds.save_state('demo',{'kind':'browser','browser_backend':'extension','bridge_directory':tmp})
             raw=io.BytesIO();Image.new('RGB',(40,20),'white').save(raw,format='PNG')

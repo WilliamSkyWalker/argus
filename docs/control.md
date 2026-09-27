@@ -1,51 +1,51 @@
 # Unified device interface
 
-Use `argus device` for mobile, desktop and browser control. Each connected target
+Use `saygo device` for mobile, desktop and browser control. Each connected target
 has a named session; shared actions use `--session` (`--serial` remains an alias).
-Standalone `argus mobile`, `argus devices`, `argus setup`, and
-`argus.integrations.browser_bridge bind` have been removed. Use `device list`, `device connect`,
+Standalone `saygo mobile`, `saygo devices`, `saygo setup`, and
+`saygo.integrations.browser_bridge bind` have been removed. Use `device list`, `device connect`,
 `device install`, and `device boot` instead. `device list` always emits JSON.
 `device start/stop` remain within this unified command group. The browser bridge's
 `install/host` commands remain for native-host registration and Chrome startup.
 
 ```bash
-python3 -m argus.cli device list
-python3 -m argus.cli device sessions
+python3 -m saygo.cli device list
+python3 -m saygo.cli device sessions
 
 # Mobile: physical device or booted simulator
-python3 -m argus.cli device connect --platform android --device DEVICE_ID --session phone
-python3 -m argus.cli device connect --platform ios --device UDID --session iphone
+python3 -m saygo.cli device connect --platform android --device DEVICE_ID --session phone
+python3 -m saygo.cli device connect --platform ios --device UDID --session iphone
 
 # Existing browser (install/connect extension first)
-python3 -m argus.cli device connect --platform browser --backend extension \
+python3 -m saygo.cli device connect --platform browser --backend extension \
   --bridge-directory /path/to/browser-bridge --session web
-# Or create/reconnect an Argus-managed Chromium session
-python3 -m argus.cli device connect --platform browser --backend playwright --session test-web
+# Or create/reconnect an Saygo-managed Chromium session
+python3 -m saygo.cli device connect --platform browser --backend playwright --session test-web
 
 # Desktop: Windows window-title substring / macOS application name
-python3 -m argus.cli device connect --platform desktop --app "Example App" --session desktop
+python3 -m saygo.cli device connect --platform desktop --app "Example App" --session desktop
 
 # Same commands across all connected targets
-python3 -m argus.cli device screenshot --session phone --out screen.png
-python3 -m argus.cli device tap 100 200 --session phone
-python3 -m argus.cli device input "Hello" --session web
-python3 -m argus.cli device key enter --session desktop
-python3 -m argus.cli device scroll down --session web
-python3 -m argus.cli device open https://example.com --session web
+python3 -m saygo.cli device screenshot --session phone --out screen.png
+python3 -m saygo.cli device tap 100 200 --session phone
+python3 -m saygo.cli device input "Hello" --session web
+python3 -m saygo.cli device key enter --session desktop
+python3 -m saygo.cli device scroll down --session web
+python3 -m saygo.cli device open https://example.com --session web
 
 # Simulator provisioning uses the same entry point
-python3 -m argus.cli device install --platform android --boot --connect
-python3 -m argus.cli device install --platform android --host auto --dry-run
-python3 -m argus.cli device install --platform ios --boot --connect
-python3 -m argus.cli device boot --platform android Argus
+python3 -m saygo.cli device install --platform android --boot --connect
+python3 -m saygo.cli device install --platform android --host auto --dry-run
+python3 -m saygo.cli device install --platform ios --boot --connect
+python3 -m saygo.cli device boot --platform android Saygo
 
 # Browser-specific actions
-python3 -m argus.cli device pages --session web
-python3 -m argus.cli device new-page https://example.com --session web
-python3 -m argus.cli device select-page PAGE_ID --session web
-python3 -m argus.cli device close-page PAGE_ID --session web
+python3 -m saygo.cli device pages --session web
+python3 -m saygo.cli device new-page https://example.com --session web
+python3 -m saygo.cli device select-page PAGE_ID --session web
+python3 -m saygo.cli device close-page PAGE_ID --session web
 
-python3 -m argus.cli device disconnect --session web
+python3 -m saygo.cli device disconnect --session web
 ```
 
 `list` discovers local phones/simulators and desktop windows, and lists saved
@@ -119,12 +119,12 @@ launch attempts. A successful connection returns process/window identity and
 `launched`/`restored` flags; it does **not** assert login readiness.
 
 ```bash
-argus device connect --platform windows --app Example --process Example --launch 'C:\Example\Example.exe' --session desktop
+saygo device connect --platform windows --app Example --process Example --launch 'C:\Example\Example.exe' --session desktop
 ```
 
 An explicit new-window request is different from reconnecting. Use `--new-window`
 with `--launch` and application-supported `--new-window-arg=VALUE` arguments.
-Argus makes one attempt and verifies that another window appeared. It never
+Saygo makes one attempt and verifies that another window appeared. It never
 assumes that starting another process means a new window. Missing arguments are
 rejected before launch; ordinary screenshots/actions do not repeat this intent.
 These explicit lifecycle options currently apply to Windows.
@@ -133,8 +133,8 @@ When visual observation finds a login/payment/manual-interaction page, the calle
 can persistently pause a standalone desktop session:
 
 ```bash
-argus device handoff --session desktop --reason login --instructions 'Complete login in the existing window'
-argus device resume --session desktop --note 'Login completed'
+saygo device handoff --session desktop --reason login --instructions 'Complete login in the existing window'
+saygo device resume --session desktop --note 'Login completed'
 ```
 
 Device actions and reconnect are blocked while the handoff is pending. Resume
@@ -147,10 +147,10 @@ screens: visual readiness remains the agent's responsibility. Workflow runs use
 ### Windows background control (experimental)
 
 ```bash
-argus device connect --platform windows --app 'Example App' --session work --background
-argus device screenshot --session work --out /tmp/work.png
-argus device tap 120 90 --session work
-argus device input 'Example text' --session work
+saygo device connect --platform windows --app 'Example App' --session work --background
+saygo device screenshot --session work --out /tmp/work.png
+saygo device tap 120 90 --session work
+saygo device input 'Example text' --session work
 ```
 
 `--background` selects the PowerShell/Win32 runner on native Windows; WSL already
@@ -176,33 +176,33 @@ shortcuts are rejected. Use a visual button or human handoff when unsupported.
 Opt-in background regression on an unlocked Windows/WSL desktop:
 
 ```bash
-ARGUS_TEST_WINDOWS=1 python3 -m unittest discover -s tests/control_demo -p test_background_live.py -v
+SAYGO_TEST_WINDOWS=1 python3 -m unittest discover -s tests/control_demo -p test_background_live.py -v
 ```
 
 The test creates only its own non-activating fixture and cover windows.
 It verifies occluded capture, two text fields, Unicode input, button clicks,
 coordinates, restored bindings, invalid targets, and zero target activation.
 It also reports cursor/foreground/clipboard changes; concurrent human activity can
-change these. Set `ARGUS_TEST_WINDOWS_IDLE=1` on an idle desktop to assert all three
+change these. Set `SAYGO_TEST_WINDOWS_IDLE=1` on an idle desktop to assert all three
 remain unchanged. The separate foreground test is skipped unless
-`ARGUS_TEST_WINDOWS_FOREGROUND=1` is explicitly set; it moves the mouse and focus.
+`SAYGO_TEST_WINDOWS_FOREGROUND=1` is explicitly set; it moves the mouse and focus.
 Tests do not call an LLM or establish compatibility with every Windows app.
 
 ### Explicit Windows foreground actions
 
-Use the same `argus device` entry point when a custom/GPU application cannot be
+Use the same `saygo device` entry point when a custom/GPU application cannot be
 operated or observed reliably in the background. `--foreground` applies only to
 that command; it does not change the saved session's background preference.
 
 ```bash
 # Restore the existing bound window and capture its visible contents.
-argus device focus --session work --out /tmp/window.png
+saygo device focus --session work --out /tmp/window.png
 
 # Prepare and inspect a draft; this does not click Send.
-argus device type-send 'Example message' --session work --foreground --replace --prepare-only --input-x 400 --input-y 620 --out /tmp/draft.png
+saygo device type-send 'Example message' --session work --foreground --replace --prepare-only --input-x 400 --input-y 620 --out /tmp/draft.png
 
 # After visually confirming the recipient and draft, click Send and capture the result.
-argus device tap 800 690 --session work --foreground --out /tmp/result.png
+saygo device tap 800 690 --session work --foreground --out /tmp/result.png
 ```
 
 Coordinates are examples, not application-specific defaults. `--replace` selects
@@ -221,9 +221,9 @@ The background path never automatically switches to foreground mode.
 
 These commands reuse the fixed CLI authorization boundary instead of requiring
 application-specific temporary scripts. Approval decisions still belong to the
-calling agent's environment; Argus cannot bypass or guarantee the absence of
+calling agent's environment; Saygo cannot bypass or guarantee the absence of
 sandbox/OS approval prompts. Device commands themselves do not call an LLM:
-the calling agent inspects their screenshots; `argus run` uses the configured LLM.
+the calling agent inspects their screenshots; `saygo run` uses the configured LLM.
 
 Validation note: the foreground replacement path remains pending live verification
 after its latest change. Background validation does not exercise global input.

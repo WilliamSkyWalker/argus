@@ -2,8 +2,8 @@
 import unittest
 from unittest.mock import Mock, call, patch
 
-from argus.platforms.desktop_mac import DesktopMacPlatform
-from argus.platforms.desktop_win import DesktopWinPlatform
+from saygo.platforms.desktop_mac import DesktopMacPlatform
+from saygo.platforms.desktop_win import DesktopWinPlatform
 
 
 class DesktopTests(unittest.TestCase):
@@ -17,7 +17,7 @@ class DesktopTests(unittest.TestCase):
 
     def test_native_coordinates_used_by_all_pointer_actions(self):
         for p in self.controllers():
-            with self.subTest(platform=p.platform_name), patch('argus.platforms.desktop.time.sleep') as sleep:
+            with self.subTest(platform=p.platform_name), patch('saygo.platforms.desktop.time.sleep') as sleep:
                 first = (-91, 41) if p.platform_name == 'mac' else (-90, 40)
                 last = (-71, 61) if p.platform_name == 'mac' else (-70, 60)
                 p.tap(10, 20)
@@ -68,7 +68,7 @@ class DesktopTests(unittest.TestCase):
                 self.assertEqual(p.scale, 2.0 if p.platform_name == 'mac' else 1.0)
 
     def test_runner_scale_tracks_resized_screenshots(self):
-        from argus.platforms.windows_runner import WindowsRunnerPlatform
+        from saygo.platforms.windows_runner import WindowsRunnerPlatform
         runner = WindowsRunnerPlatform()
         runner._size = (2560, 1440)
         self.assertEqual(runner.scale, .5)
@@ -76,8 +76,8 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(runner.scale, 1.0)
 
     def test_background_factory_never_falls_back_to_foreground(self):
-        from argus.platforms import create_platform
-        from argus.platforms.windows_runner import WindowsRunnerPlatform
+        from saygo.platforms import create_platform
+        from saygo.platforms.windows_runner import WindowsRunnerPlatform
         with patch('platform.system', return_value='Windows'), patch('platform.release', return_value='10'):
             with patch('shutil.which', return_value='powershell.exe'):
                 self.assertIsInstance(create_platform('desktop', {'win': {'background': True}}), WindowsRunnerPlatform)
@@ -86,12 +86,12 @@ class DesktopTests(unittest.TestCase):
                     create_platform('windows', {'win': {'background': True}})
 
     def test_background_binding_survives_separate_controllers(self):
-        from argus.platforms import device_session as ds
+        from saygo.platforms import device_session as ds
         state = {'kind': 'desktop', 'os': 'windows', 'app': 'Example',
                  'background': True, 'process_id': 123}
         binding = {'window': 12, 'target': 13, 'process_id': 123, 'class_name': 'Edit'}
         with patch.object(ds, 'load_state', return_value=state.copy()), patch.object(ds, 'save_state') as save:
-            with patch('argus.platforms.create_platform') as factory:
+            with patch('saygo.platforms.create_platform') as factory:
                 ds.attach_desktop(state, serial='example')
                 options = factory.call_args.args[1]['win']
                 self.assertTrue(options['background'])

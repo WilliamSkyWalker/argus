@@ -1,6 +1,6 @@
 # [项目名] 测试前置状态恢复指南（样例 — 按实际产品改写）
 
-> argus.cli 自动加载本目录的 `_preconditions.md`，prepend 到本 target 下每个 case 文本前。
+> saygo.cli 自动加载本目录的 `_preconditions.md`，prepend 到本 target 下每个 case 文本前。
 > 当 LLM 发现当前屏幕与 Background/Given 描述的前置状态不符时，按此指引先恢复，再开始测试主体。
 > ⚠️ 删掉本说明段、把下面的占位内容替换成你产品的真实状态机与导航路径，否则会误导 LLM。
 

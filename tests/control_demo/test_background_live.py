@@ -11,17 +11,17 @@ import unittest
 
 from PIL import Image
 
-from argus.platforms.windows_runner import WindowsRunnerPlatform
-from argus.devices.toolchain import background_options
+from saygo.platforms.windows_runner import WindowsRunnerPlatform
+from saygo.devices.toolchain import background_options
 
 
-@unittest.skipUnless(os.environ.get('ARGUS_TEST_WINDOWS') == '1',
-                     'set ARGUS_TEST_WINDOWS=1 on Windows or WSL with an unlocked desktop')
+@unittest.skipUnless(os.environ.get('SAYGO_TEST_WINDOWS') == '1',
+                     'set SAYGO_TEST_WINDOWS=1 on Windows or WSL with an unlocked desktop')
 class BackgroundLiveTests(unittest.TestCase):
     def test_occluded_window_input_and_reconnection(self):
         self._exercise()
 
-    @unittest.skipUnless(os.environ.get('ARGUS_TEST_WINDOWS_FOREGROUND') == '1',
+    @unittest.skipUnless(os.environ.get('SAYGO_TEST_WINDOWS_FOREGROUND') == '1',
                          'foreground tests require a separate explicit opt-in')
     def test_explicit_foreground_actions(self):
         self._exercise(foreground=True)
@@ -33,7 +33,7 @@ class BackgroundLiveTests(unittest.TestCase):
             return subprocess.check_output(['wslpath', '-w', str(path)], text=True).strip()
 
         self.assertTrue(shutil.which('powershell.exe'))
-        with tempfile.TemporaryDirectory(prefix='argus-background-') as directory:
+        with tempfile.TemporaryDirectory(prefix='saygo-background-') as directory:
             state_path = Path(directory) / 'state.json'
             fixture = subprocess.Popen([
                 'powershell.exe', '-NoProfile', '-NonInteractive', '-STA', '-WindowStyle', 'Hidden',
@@ -73,7 +73,7 @@ class BackgroundLiveTests(unittest.TestCase):
                 self.assertNotEqual(before['foreground'], before['target'])
                 self.assertEqual(before['activations'], 0, before)
                 self.assertNotEqual(before['foreground'], before['cover'], before)
-                config = {'win': {'app': 'Argus Background Fixture', 'background': True,
+                config = {'win': {'app': 'Saygo Background Fixture', 'background': True,
                                   'process_name': 'powershell', 'process_id': before['pid']}}
                 runner.setup(config)
                 check()
@@ -127,7 +127,7 @@ class BackgroundLiveTests(unittest.TestCase):
                 observations = {key + '_unchanged': after[key] == before[key]
                                 for key in ('foreground', 'cursor', 'clipboard')}
                 print('Background observations:', observations, flush=True)
-                if os.environ.get('ARGUS_TEST_WINDOWS_IDLE') == '1':
+                if os.environ.get('SAYGO_TEST_WINDOWS_IDLE') == '1':
                     self.assertTrue(all(observations.values()), observations)
                 self.assertNotEqual(after['foreground'], after['cover'], after)
                 runner.teardown()

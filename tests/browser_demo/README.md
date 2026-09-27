@@ -8,7 +8,7 @@ Offline tests cover backend compatibility, page identity and disconnect semantic
 To include the real Chromium integration test, install Playwright and set the Chrome binary:
 
 ```bash
-ARGUS_TEST_CHROME=/path/to/chrome python3 -m unittest discover -s tests/browser_demo -v
+SAYGO_TEST_CHROME=/path/to/chrome python3 -m unittest discover -s tests/browser_demo -v
 ```
 
 The integration test uses a temporary browser profile and a localhost HTTP fixture.

@@ -7,28 +7,28 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location('argus_plugin_install', ROOT / 'scripts/install_agent_plugin.py')
+spec = importlib.util.spec_from_file_location('saygo_plugin_install', ROOT / 'scripts/install_agent_plugin.py')
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
 
 
 class PluginInstallTests(unittest.TestCase):
     def test_both_clients_use_same_isolated_runtime_and_skill(self):
-        with tempfile.TemporaryDirectory(prefix='argus plugin ') as tmp:
+        with tempfile.TemporaryDirectory(prefix='saygo plugin ') as tmp:
             root = Path(tmp)
             python = root / 'runtime with spaces/bin/python'
             market = installer.prepare_plugin(ROOT, root, python, 'abc123')
-            plugin = market / 'plugins/argus-device'
+            plugin = market / 'plugins/saygo-device'
             claude = json.loads((plugin / '.claude-plugin/plugin.json').read_text())
             codex = json.loads((plugin / '.codex-plugin/plugin.json').read_text())
             mcp = json.loads((plugin / codex['mcpServers']).read_text())
             self.assertEqual(claude['mcpServers'], mcp['mcpServers'])
-            server = mcp['mcpServers']['argus']
+            server = mcp['mcpServers']['saygo']
             self.assertEqual(server['command'], str(python))
             self.assertEqual(server['args'], ['-I', str(root/'update.py'), '--root', str(root), '--serve', '--profile', 'device'])
             self.assertTrue((root/'update.py').is_file())
             self.assertEqual((plugin / 'skills/device/SKILL.md').read_bytes(),
-                             (ROOT / 'plugins/argus-device/skills/device/SKILL.md').read_bytes())
+                             (ROOT / 'plugins/saygo-device/skills/device/SKILL.md').read_bytes())
             self.assertNotIn('PYTHONPATH', server['env'])
             self.assertEqual(json.loads((plugin / 'managed_runtime.json').read_text())['python'], str(python))
 
@@ -46,7 +46,7 @@ class PluginInstallTests(unittest.TestCase):
 
     def test_incomplete_source_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(ValueError, 'Incomplete Argus source'):
+            with self.assertRaisesRegex(ValueError, 'Incomplete Saygo source'):
                 installer.source_root(tmp, Path(tmp))
 
 

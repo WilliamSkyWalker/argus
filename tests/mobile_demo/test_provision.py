@@ -6,7 +6,7 @@ import sys
 import unittest
 from unittest.mock import Mock, patch
 
-from argus.devices import mobile, mobile_host_worker
+from saygo.devices import mobile, mobile_host_worker
 
 
 class ProvisionTests(unittest.TestCase):

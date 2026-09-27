@@ -170,7 +170,7 @@ __marimo__/
 .DS_Store
 
 # ─────────────────────────────────────────────────────
-# Argus project-specific
+# Saygo project-specific
 # ─────────────────────────────────────────────────────
 
 # Claude Code local config (Bash 权限白名单等)；skills 是项目能力的一部分，入库
@@ -180,11 +180,11 @@ __marimo__/
 # Qoder local settings
 .qoder/settings.local.json
 
-# Test cases (各项目独立 repo 或本地数据，不进 argus repo)
+# Test cases (各项目独立 repo 或本地数据，不进 saygo repo)
 # 注意：用 `tests/*` 而不是 `tests/` —— 后者会让 git 不再递归进入该目录，
 # 导致下面的 `!tests/_template/` 例外失效。
 tests/*
-# 例外：tests/_template 是 argus 自带的「新项目骨架」模板，需要进 argus repo
+# 例外：tests/_template 是 saygo 自带的「新项目骨架」模板，需要进 saygo repo
 # 供其他人 clone 后参考（_accounts.json.example / README 写法等）
 !tests/_template/
 !tests/_template/**
@@ -193,23 +193,23 @@ tests/*
 !tests/*_demo/**
 tests/*_demo/reports/
 
-# Argus run artifacts (报告/截图/缓存)
-.argus_runs/
+# Saygo run artifacts (报告/截图/缓存)
+.saygo_runs/
 
-# argus.mcp.client 的本地外部 MCP 配置（含 token）— .example 文件入库
-.argus/mcp_clients.json
+# saygo.mcp.client 的本地外部 MCP 配置（含 token）— .example 文件入库
+.saygo/mcp_clients.json
 
-# argus.probes 的非视觉断言插件注册表（含连接串/密钥）— .example 文件入库
-.argus/probes.json
+# saygo.probes 的非视觉断言插件注册表（含连接串/密钥）— .example 文件入库
+.saygo/probes.json
 
-# argus-drive 在 repo 根目录生成的「最近一次报告」产物（symlink + 实体文件）
+# saygo-drive 在 repo 根目录生成的「最近一次报告」产物（symlink + 实体文件）
 /__auto__.html
 /latest.html
 
 # go-ios / WDA 签名时在 repo 根目录落的产物
 /selfIdentity.plist
 
-# argus run --report 对 inline/无 target 用例的机读报告 fallback(运行产物，勿入库)
+# saygo run --report 对 inline/无 target 用例的机读报告 fallback(运行产物，勿入库)
 /__auto__.json
 
 # Local databases used by public workflow examples
@@ -218,3 +218,7 @@ tests/*_demo/reports/
 # Keep generated Python caches ignored after public demo re-inclusion rules.
 tests/*_demo/**/__pycache__/
 tests/*_demo/**/*.py[codz]
+
+# Unused pre-rename local state (never package or commit)
+.argus/
+.argus_runs/

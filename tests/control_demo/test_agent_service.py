@@ -7,12 +7,12 @@ import unittest
 from unittest.mock import patch
 
 from PIL import Image, ImageDraw
-from argus.devices import service, control, observations, actions
-from argus.platforms import device_session as ds
-from argus.platforms.base import Platform
-from argus.runtime.interactive import InteractiveRuntime
-from argus.runtime.store import Store, BusyError
-from argus.runtime.locking import resource_guard, session_keys
+from saygo.devices import service, control, observations, actions
+from saygo.platforms import device_session as ds
+from saygo.platforms.base import Platform
+from saygo.runtime.interactive import InteractiveRuntime
+from saygo.runtime.store import Store, BusyError
+from saygo.runtime.locking import resource_guard, session_keys
 
 
 def png(color='white', dot=None):
@@ -64,8 +64,8 @@ class AgentServiceTests(unittest.TestCase):
         self.attach = patcher.start(); self.addCleanup(patcher.stop)
 
     def test_cli_mcp_share_binding_and_release(self):
-        from argus.cli import main
-        from argus.mcp import server
+        from saygo.cli import main
+        from saygo.mcp import server
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             main(['device', 'tap', '20', '30', '--session', 'mail'])
@@ -76,9 +76,9 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual([c.args[0] for c in self.attach.call_args_list], ['mail','mail'])
 
     def test_mcp_rejects_playwright_before_connect_or_dispatch(self):
-        from argus.mcp import server
+        from saygo.mcp import server
         ds.save_state('pw', {'kind':'browser', 'browser_backend':'playwright'})
-        with patch('argus.devices.service.execute') as execute, patch('argus.devices.control.connect') as connect:
+        with patch('saygo.devices.service.execute') as execute, patch('saygo.devices.control.connect') as connect:
             results = [server.device_tap(1, 2, 'pw'),
                        server.device_command('start', 'new', {'os':'browser', 'backend':'playwright'}),
                        server.device_connect('browser', 'new', {'backend':'playwright'}),
@@ -97,16 +97,16 @@ class AgentServiceTests(unittest.TestCase):
         self.assertTrue(service.execute('tap', 'pw', x=1, y=2)['ok'])
 
     def test_mcp_defaults_new_browser_to_extension(self):
-        from argus.mcp import server
-        with patch('argus.devices.control.connect', return_value={'ok':True}) as connect:
+        from saygo.mcp import server
+        with patch('saygo.devices.control.connect', return_value={'ok':True}) as connect:
             server.device_connect('browser', 'new', {'bridge_directory':'/tmp/bridge'})
             self.assertEqual(connect.call_args.args[0].backend, 'extension')
 
     def test_mcp_blocks_playwright_task_recovery_but_allows_audit_and_cancel(self):
-        from argus.mcp import server
+        from saygo.mcp import server
         ds.save_state('pw', {'kind':'browser', 'browser_backend':'playwright'})
         store = Store(self.root / 'policy-runtime')
-        with patch('argus.runtime.interactive.default_store', return_value=store):
+        with patch('saygo.runtime.interactive.default_store', return_value=store):
             rejected = server.agent_task('create', options={'bindings':{'web':'pw'}})
             self.assertEqual(rejected['error_type'], 'UnsupportedBackendError')
             runtime = InteractiveRuntime(store)
@@ -173,7 +173,7 @@ class AgentServiceTests(unittest.TestCase):
             self.assertTrue(service.execute('tap','other-window',x=1,y=2)['ok'])
 
     def test_mcp_image_content_and_journal_uncertainty(self):
-        from argus.mcp import server
+        from saygo.mcp import server
         content = server.device_observe('mail')
         self.assertEqual([c.type for c in content], ['text','image'])
         self.device.fail=True
@@ -192,7 +192,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(self.device.calls, [])
 
     def test_mcp_explicit_target_and_mode_reach_shared_service(self):
-        from argus.mcp import server
+        from saygo.mcp import server
         with patch.object(server, '_device', return_value={'ok':False}) as execute:
             server.device_observe('mail', foreground=True, window_id='23')
             self.assertEqual(execute.call_args.kwargs['window_id'], '23')
@@ -266,9 +266,9 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(self.device.calls,[])
 
     def test_task_mcp_observe_and_submit_return_images(self):
-        from argus.mcp import server
+        from saygo.mcp import server
         store = Store(self.root/'runtime')
-        with patch('argus.runtime.interactive.default_store', return_value=store):
+        with patch('saygo.runtime.interactive.default_store', return_value=store):
             task = server.agent_task('create', options={'bindings':{'web':'mail'}})
             seen = server.agent_task('observe', task['id'], {'resource':'web'})
             self.assertEqual([c.type for c in seen], ['text','image'])
@@ -281,7 +281,7 @@ class AgentServiceTests(unittest.TestCase):
 
     def test_mcp_sdk_preserves_image_content(self):
         import asyncio
-        from argus.mcp import server
+        from saygo.mcp import server
         result = asyncio.run(server.mcp.call_tool('device_observe', {'session':'mail'}))
         # SDK 2 returns CallToolResult; SDK 1 returns content or (content, structured).
         if hasattr(result, 'content'):
@@ -300,7 +300,7 @@ class AgentServiceTests(unittest.TestCase):
 
     def test_mobile_input_failure_and_unknown_keys_propagate(self):
         from unittest.mock import Mock
-        from argus.platforms.appium import AppiumPlatform
+        from saygo.platforms.appium import AppiumPlatform
         platform = AppiumPlatform()
         platform._os = 'android'
         platform._driver = Mock()

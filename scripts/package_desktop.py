@@ -18,26 +18,26 @@ def package(build_dir=None, out_dir=None):
     out = Path(out_dir or ROOT/'dist/installers').resolve()
     out.mkdir(parents=True, exist_ok=True)
     version = json.loads((ROOT/'distribution/release.json').read_text())['version']
-    name = f'ArgusDesktop-{version}-{sys.platform}-{platform.machine()}'
+    name = f'SaygoDesktop-{version}-{sys.platform}-{platform.machine()}'
     if sys.platform == 'darwin':
-        app = build_dir/'ArgusDesktop.app'
+        app = build_dir/'SaygoDesktop.app'
         if not app.is_dir():
-            raise FileNotFoundError('Build ArgusDesktop.app on macOS first')
+            raise FileNotFoundError('Build SaygoDesktop.app on macOS first')
         artifact = out/(name+'.dmg')
-        with tempfile.TemporaryDirectory(prefix='argus-dmg-') as temporary:
+        with tempfile.TemporaryDirectory(prefix='saygo-dmg-') as temporary:
             stage = Path(temporary)
             shutil.copytree(app, stage/app.name, symlinks=True)
             (stage/'Applications').symlink_to('/Applications', target_is_directory=True)
-            subprocess.run(['hdiutil','create','-volname','Argus Desktop','-srcfolder',str(stage),
+            subprocess.run(['hdiutil','create','-volname','Saygo Desktop','-srcfolder',str(stage),
                             '-ov','-format','UDZO',str(artifact)],check=True)
         subprocess.run(['hdiutil','verify',str(artifact)],check=True)
     else:
-        directory = build_dir/'ArgusDesktop'
-        executable = directory/('ArgusDesktop.exe' if sys.platform == 'win32' else 'ArgusDesktop')
+        directory = build_dir/'SaygoDesktop'
+        executable = directory/('SaygoDesktop.exe' if sys.platform == 'win32' else 'SaygoDesktop')
         if not executable.is_file():
             raise FileNotFoundError('Build the native desktop executable first')
         artifact = Path(shutil.make_archive(str(out/name), 'zip' if sys.platform=='win32' else 'gztar',
-                                           root_dir=build_dir,base_dir='ArgusDesktop'))
+                                           root_dir=build_dir,base_dir='SaygoDesktop'))
     digest=hashlib.sha256(artifact.read_bytes()).hexdigest()
     artifact.with_suffix(artifact.suffix+'.sha256').write_text(digest+'  '+artifact.name+'\n')
     return artifact

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install Argus for Claude, Codex, Qoder and QoderCN with scoped tool authorization.
+"""Install Saygo for Claude, Codex, Qoder and QoderCN with scoped tool authorization.
 
 Run from a checkout, or download this script alone: it fetches a source archive
 without requiring Git. Optional background updates prepare separate runtimes.
@@ -21,8 +21,8 @@ import urllib.request
 import venv
 import zipfile
 
-NAME = "argus-device"
-MARKETPLACE = "argus-managed"
+NAME = "saygo-device"
+MARKETPLACE = "saygo-managed"
 # Replaced with immutable release coordinates by build_release.py.
 RELEASE = None
 
@@ -34,7 +34,7 @@ def run(args, **kwargs):
 
 def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.argus-')
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.saygo-')
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as stream:
             stream.write(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
@@ -61,40 +61,40 @@ def configure_client(client, market):
     """Default scoped authorization; Qoder also gets MCP + the shared Skill."""
     directory = client_directory(client)
     settings = directory/'settings.json'
-    receipt_path = directory/'argus-install.json'
+    receipt_path = directory/'saygo-install.json'
     value = json.loads(settings.read_text()) if settings.exists() else {}
     receipt = json.loads(receipt_path.read_text()) if receipt_path.exists() else {}
     owner = str(Path(market).resolve())
     if receipt and receipt.get('owner') != owner:
-        raise ValueError(f'{client}: Argus is owned by another installation: {receipt_path}')
+        raise ValueError(f'{client}: Saygo is owned by another installation: {receipt_path}')
     receipt = {**receipt, 'owner':owner, 'client':client}
     if client == 'claude':
         allow = value.setdefault('permissions', {}).setdefault('allow', [])
         added = receipt.setdefault('added_rules', [])
-        for rule in ('mcp__argus__*', 'mcp__plugin_argus-device_argus__*'):
+        for rule in ('mcp__saygo__*', 'mcp__plugin_saygo-device_saygo__*'):
             if rule not in allow:
                 allow.append(rule)
                 if rule not in added:
                     added.append(rule)
     else:
         source = Path(market)/'plugins'/NAME
-        server = json.loads((source/'.mcp.json').read_text())['mcpServers']['argus']
+        server = json.loads((source/'.mcp.json').read_text())['mcpServers']['saygo']
         server = {**server, 'trust':True}
         servers = value.setdefault('mcpServers', {})
-        existing = servers.get('argus')
+        existing = servers.get('saygo')
         if existing is not None and existing != receipt.get('server') and existing != server:
-            raise ValueError(f'{client}: an independently configured argus server exists; left unchanged')
-        skill = directory/'skills'/'argus-device'/'SKILL.md'
+            raise ValueError(f'{client}: an independently configured saygo server exists; left unchanged')
+        skill = directory/'skills'/'saygo-device'/'SKILL.md'
         content = (source/'skills/device/SKILL.md').read_bytes()
         if skill.exists() and hashlib.sha256(skill.read_bytes()).hexdigest() != receipt.get('skill_sha256'):
             raise ValueError(f'{client}: existing Skill is not managed by this installer: {skill}')
         receipt.update(server=server, skill_sha256=hashlib.sha256(content).hexdigest())
-        servers['argus'] = server
+        servers['saygo'] = server
         skill.parent.mkdir(parents=True, exist_ok=True)
         skill.write_bytes(content)
     directory.mkdir(parents=True, exist_ok=True)
     if settings.exists():
-        backup = settings.with_name('settings.json.before-argus')
+        backup = settings.with_name('settings.json.before-saygo')
         if not backup.exists():
             fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, 'wb') as stream:
@@ -106,7 +106,7 @@ def configure_client(client, market):
 
 def unconfigure_client(client, market):
     directory = client_directory(client)
-    receipt_path = directory/'argus-install.json'
+    receipt_path = directory/'saygo-install.json'
     if not receipt_path.exists():
         return
     receipt = json.loads(receipt_path.read_text())
@@ -121,9 +121,9 @@ def unconfigure_client(client, market):
                 allow.remove(rule)
     else:
         servers = value.get('mcpServers', {})
-        if servers.get('argus') == receipt.get('server'):
-            servers.pop('argus', None)
-        skill = directory/'skills'/'argus-device'/'SKILL.md'
+        if servers.get('saygo') == receipt.get('server'):
+            servers.pop('saygo', None)
+        skill = directory/'skills'/'saygo-device'/'SKILL.md'
         if skill.exists() and hashlib.sha256(skill.read_bytes()).hexdigest() == receipt.get('skill_sha256'):
             skill.unlink()
     write_json(settings, value)
@@ -140,7 +140,7 @@ def source_root(explicit, temporary, archive_path=None):
             raise ValueError('Use a versioned release installer or --source; unpinned downloads are disabled')
         archive = Path(archive_path).resolve() if archive_path else temporary / 'source.zip'
         if not archive_path:
-            print('Downloading verified Argus release (no Git required)...', flush=True)
+            print('Downloading verified Saygo release (no Git required)...', flush=True)
             with urllib.request.urlopen(RELEASE['url'], timeout=60) as response, archive.open('wb') as dest:
                 shutil.copyfileobj(response, dest)
         if hashlib.sha256(archive.read_bytes()).hexdigest() != RELEASE['sha256']:
@@ -152,9 +152,9 @@ def source_root(explicit, temporary, archive_path=None):
                     raise ValueError('Unsafe path in source archive')
             bundle.extractall(temporary)
         root = temporary / RELEASE['root']
-    for required in ('pyproject.toml', 'argus/__init__.py', 'plugins/argus-device/.codex-plugin/plugin.json'):
+    for required in ('pyproject.toml', 'saygo/__init__.py', 'plugins/saygo-device/.codex-plugin/plugin.json'):
         if not (root / required).is_file():
-            raise ValueError(f'Incomplete Argus source: missing {required} in {root}')
+            raise ValueError(f'Incomplete Saygo source: missing {required} in {root}')
     return root
 
 
@@ -162,7 +162,7 @@ def fingerprint(source, extras):
     digest = hashlib.sha256()
     digest.update(f'{sys.version_info[:2]}:{sys.platform}:{extras}'.encode())
     paths = [source / 'pyproject.toml']
-    for directory in ('argus', 'plugins/argus-device', 'scripts', 'distribution', 'extensions/argus-browser'):
+    for directory in ('saygo', 'plugins/saygo-device', 'scripts', 'distribution', 'extensions/saygo-browser'):
         paths.extend(p for p in (source / directory).rglob('*')
                      if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc')
     for path in sorted(paths):
@@ -186,7 +186,7 @@ def prepare_runtime(source, root, extras):
         # Keep pip in the private runtime so future updates do not depend on
         # ensurepip being supplied by the host Python (e.g. Debian installations).
         run([*pip, 'install', '--disable-pip-version-check', 'pip', f'{source}[{extras}]'])
-        run([python, '-I', '-c', 'import argus, mcp, PIL, pip; from argus.mcp import server'])
+        run([python, '-I', '-c', 'import saygo, mcp, PIL, pip; from saygo.mcp import server'])
         write_json(ready, {'source': str(source), 'extras': extras})
     return python
 
@@ -198,29 +198,29 @@ def prepare_plugin(source, root, python, version, config_file=None):
                     ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     # Absolute interpreter path survives both clients copying the plugin into caches.
     root.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source/'argus/updates.py', root/'update.py')
+    shutil.copy2(source/'saygo/updates.py', root/'update.py')
     server = {'command': str(python),
               'args': ['-I', str(root/'update.py'), '--root', str(root), '--serve', '--profile', 'device'],
-              'env': {'PYTHONUNBUFFERED': '1', 'ARGUS_INSTALL_ROOT': str(root)}}
+              'env': {'PYTHONUNBUFFERED': '1', 'SAYGO_INSTALL_ROOT': str(root)}}
     if config_file:
-        server['env']['ARGUS_CONFIG_FILE'] = str(config_file)
+        server['env']['SAYGO_CONFIG_FILE'] = str(config_file)
         version = hashlib.sha256((version + str(config_file)).encode()).hexdigest()[:16]
-    write_json(plugin / '.mcp.json', {'mcpServers': {'argus': server}})
+    write_json(plugin / '.mcp.json', {'mcpServers': {'saygo': server}})
     for directory in ('.claude-plugin', '.codex-plugin'):
         path = plugin / directory / 'plugin.json'
         manifest = json.loads(path.read_text())
         release = json.loads((source / 'distribution/release.json').read_text())
         manifest['version'] = f"{release['version']}+managed.{version}"
         if directory == '.claude-plugin':
-            manifest['mcpServers'] = {'argus': server}
+            manifest['mcpServers'] = {'saygo': server}
         write_json(path, manifest)
     write_json(plugin / 'managed_runtime.json', {'python': str(python)})
     write_json(market / '.claude-plugin' / 'marketplace.json', {
-        'name': MARKETPLACE, 'owner': {'name': 'argus'},
+        'name': MARKETPLACE, 'owner': {'name': 'saygo'},
         'plugins': [{'name': NAME, 'source': './plugins/' + NAME,
-                     'description': 'Managed Argus runtime and visual operation skill'}]})
+                     'description': 'Managed Saygo runtime and visual operation skill'}]})
     write_json(market / '.agents' / 'plugins' / 'marketplace.json', {
-        'name': MARKETPLACE, 'interface': {'displayName': 'Argus Managed'},
+        'name': MARKETPLACE, 'interface': {'displayName': 'Saygo Managed'},
         'plugins': [{'name': NAME, 'source': {'source': 'local', 'path': './plugins/' + NAME},
                      'policy': {'installation': 'AVAILABLE', 'authentication': 'ON_INSTALL'},
                      'category': 'Productivity'}]})
@@ -246,7 +246,7 @@ def main(argv=None):
                         help='auto detects installed clients; both = Claude+Codex; all = all four')
     parser.add_argument('--source', help='Explicit source checkout (development only)')
     parser.add_argument('--archive', help='Local source ZIP, checked against this release installer SHA256')
-    parser.add_argument('--root', type=Path, default=Path.home() / '.local/share/argus/agent-plugin')
+    parser.add_argument('--root', type=Path, default=Path.home() / '.local/share/saygo/agent-plugin')
     parser.add_argument('--mobile', action='store_true', help='Also install mobile Python dependencies')
     parser.add_argument('--install-browser', action='store_true', help='Download Chromium for Playwright')
     parser.add_argument('--prepare-only', action='store_true', help='Build runtime and plugins without changing client configuration')
@@ -305,7 +305,7 @@ def main(argv=None):
         config_file = args.config_file or previous.get('config_file')
         if args.prepare_only and previous and not previous.get('prepared_only'):
             raise ValueError('--prepare-only requires a separate root from an installed plugin')
-        with tempfile.TemporaryDirectory(prefix='argus-install-') as temporary:
+        with tempfile.TemporaryDirectory(prefix='saygo-install-') as temporary:
             source = source_root(args.source, Path(temporary), args.archive)
             extra_string = ','.join(extras)
             python = prepare_runtime(source, root, extra_string)
@@ -321,12 +321,12 @@ def main(argv=None):
                       'version': release['version'], 'extension_id': extension_id,
                       'config_file': str(config_file) if config_file else None,
                       'mobile': args.mobile, 'install_browser': args.install_browser}
-            spec = importlib.util.spec_from_file_location('argus_update_metadata', source/'argus/updates.py')
+            spec = importlib.util.spec_from_file_location('saygo_update_metadata', source/'saygo/updates.py')
             updater = importlib.util.module_from_spec(spec); spec.loader.exec_module(updater)
             record['compatibility'] = updater.compatibility(source)
             if not args.prepare_only:
                 if args.browser != 'none':
-                    command = [str(python), '-I', '-m', 'argus.integrations.browser_setup',
+                    command = [str(python), '-I', '-m', 'saygo.integrations.browser_setup',
                                '--extension-id', extension_id, '--browser', args.browser, '--save-default']
                     if args.bridge_directory:
                         command += ['--directory', args.bridge_directory]
@@ -340,7 +340,7 @@ def main(argv=None):
                     write_json(root / 'installation.json', record)
                     install_client(client, market)
             extension = Path(bridge['directory']) / 'extension' if bridge else root / 'browser-extension'
-            shutil.copytree(source / 'extensions/argus-browser', extension, dirs_exist_ok=True)
+            shutil.copytree(source / 'extensions/saygo-browser', extension, dirs_exist_ok=True)
             write_json(root / 'installation.json', record)
             (root/'active-runtime.json').unlink(missing_ok=True)
             (root/'update-state.json').unlink(missing_ok=True)
@@ -350,7 +350,7 @@ def main(argv=None):
             write_json(root/'updates.json', updates)
             print(f'Prepared plugin: {market / "plugins" / NAME}')
             if not args.prepare_only:
-                print('Installed. Start a new client session and ask Argus to operate a test application.')
+                print('Installed. Start a new client session and ask Saygo to operate a test application.')
                 if args.browser != 'none':
                     if extension_id != release['development_extension_id']:
                         print('Install the extension from: https://chromewebstore.google.com/detail/' + extension_id)
@@ -358,7 +358,7 @@ def main(argv=None):
                         if bridge.get('host') == 'windows':
                             extension = subprocess.check_output(['wslpath', '-w', str(extension)], text=True).strip()
                         print(f'Open {args.browser}://extensions, enable Developer mode, Load unpacked: {extension}')
-                    print('Then open Argus Browser and click Connect. Browser confirmation is required.')
+                    print('Then open Saygo Browser and click Connect. Browser confirmation is required.')
 
 
 def uninstall(root):
@@ -379,7 +379,7 @@ def uninstall(root):
         write_json(root / 'installation.json', record)
     if record.get('bridge'):
         run(record['bridge']['uninstall_command'])
-        default = Path(os.environ.get('ARGUS_HOME_DIR', Path.home()/'.argus')) / 'browser-bridge.json'
+        default = Path(os.environ.get('SAYGO_HOME_DIR', Path.home()/'.saygo')) / 'browser-bridge.json'
         if default.exists() and json.loads(default.read_text()).get('directory') == record['bridge']['directory']:
             default.unlink()
     record['uninstalled'] = True
@@ -391,5 +391,5 @@ if __name__ == '__main__':
     try:
         main()
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
-        print(f'Argus installation failed: {exc}', file=sys.stderr)
+        print(f'Saygo installation failed: {exc}', file=sys.stderr)
         sys.exit(1)

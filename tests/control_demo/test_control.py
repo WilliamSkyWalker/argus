@@ -9,10 +9,10 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from argus.devices import control
-from argus.platforms import device_session as ds
-from argus.runtime.resources import VisualResource
-from argus.runtime.schema import validate
+from saygo.devices import control
+from saygo.platforms import device_session as ds
+from saygo.runtime.resources import VisualResource
+from saygo.runtime.schema import validate
 
 
 def args(**kwargs):
@@ -22,8 +22,8 @@ def args(**kwargs):
 
 class ControlTests(unittest.TestCase):
     def test_removed_entry_points_are_rejected(self):
-        for module, command in [('argus.cli', 'mobile'), ('argus.cli', 'devices'),
-                                ('argus.cli', 'setup'), ('argus.integrations.browser_bridge', 'bind')]:
+        for module, command in [('saygo.cli', 'mobile'), ('saygo.cli', 'devices'),
+                                ('saygo.cli', 'setup'), ('saygo.integrations.browser_bridge', 'bind')]:
             with self.subTest(command=command):
                 result = subprocess.run([sys.executable, '-m', module, command],
                                         capture_output=True, text=True)
@@ -31,14 +31,14 @@ class ControlTests(unittest.TestCase):
                 self.assertIn('invalid choice', result.stderr)
 
     def test_unified_cli_routes_mobile_discovery_and_boot(self):
-        from argus.cli import main
+        from saygo.cli import main
         for command, method, response in [
             (['list', '--platform', 'android'], 'discover', {'devices': []}),
             (['boot', '--platform', 'android', '--host', 'local', 'Example'], 'boot_device', {'state': 'ready'}),
         ]:
             with self.subTest(command=command), patch.object(control.mobile, method, return_value=response) as call:
                 output = io.StringIO()
-                with patch.object(sys, 'argv', ['argus', 'device', *command]), contextlib.redirect_stdout(output):
+                with patch.object(sys, 'argv', ['saygo', 'device', *command]), contextlib.redirect_stdout(output):
                     main()
                 call.assert_called_once()
                 data = json.loads(output.getvalue())
@@ -133,7 +133,7 @@ class ControlTests(unittest.TestCase):
         controller.teardown.assert_not_called()
 
     def test_cli_releases_selenium_service_after_failed_action(self):
-        from argus.commands.device import cmd_device
+        from saygo.commands.device import cmd_device
         ds.save_state('test', {'kind': 'browser'})
         controller = Mock(spec=['platform_name', '_driver', 'press_key'])
         controller.platform_name = 'browser'
@@ -145,16 +145,16 @@ class ControlTests(unittest.TestCase):
         controller._driver.quit.assert_not_called()
 
     def test_inline_auto_report_does_not_write_sentinel_filename(self):
-        from argus.commands import run as cli
+        from saygo.commands import run as cli
         with patch.object(cli, 'load_config', return_value={'llm': {'api_key': 'placeholder'}}), \
                 patch.object(cli, '_resolve_test_target', return_value=(['example'], None)), \
                 patch.object(cli, '_load_preconditions', return_value=''), \
                 patch.object(cli, '_load_accounts', return_value=[]), \
-                patch('argus.qa.execution._run_sequential', return_value=[]), \
+                patch('saygo.qa.execution._run_sequential', return_value=[]), \
                 patch.object(cli, '_probes_mode', return_value=''), \
-                patch.dict(cli.os.environ, {'ARGUS_SHARD': ''}), \
-                patch('argus.qa.report.save_html') as html, \
-                patch('argus.qa.report.save_json') as json_report, contextlib.redirect_stdout(io.StringIO()):
+                patch.dict(cli.os.environ, {'SAYGO_SHARD': ''}), \
+                patch('saygo.qa.report.save_html') as html, \
+                patch('saygo.qa.report.save_json') as json_report, contextlib.redirect_stdout(io.StringIO()):
             cli.cmd_run('example', report_path='__auto__')
             html.assert_not_called()
             json_report.assert_not_called()
@@ -174,11 +174,11 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(state['process_id'],42)
 
     def test_handoff_blocks_until_resume_observes_again(self):
-        from argus.platforms.desktop import DesktopHandoffRequired
+        from saygo.platforms.desktop import DesktopHandoffRequired
         ds.save_state('test',{'kind':'desktop','os':'windows','app':'Example'})
         result=control.handoff(Namespace(session='test',reason='login',instructions='Please log in'))
         self.assertEqual(result['status'],'waiting_for_human')
-        with patch('argus.platforms.create_platform') as create:
+        with patch('saygo.platforms.create_platform') as create:
             with self.assertRaises(DesktopHandoffRequired): ds.attach_desktop(ds.load_state('test'))
             create.assert_not_called()
         self.assertFalse(control.connect(args(platform='windows',app='Example'))['connected'])
@@ -201,7 +201,7 @@ class ControlTests(unittest.TestCase):
         self.assertNotIn('handoff',ds.load_state('test'))
 
     def test_running_app_without_window_requests_human_instead_of_retry(self):
-        from argus.platforms.desktop import DesktopHandoffRequired
+        from saygo.platforms.desktop import DesktopHandoffRequired
         details={'status':'waiting_for_human','reason':'window_unavailable','instructions':'Restore the app'}
         with patch.object(ds,'attach_desktop',side_effect=DesktopHandoffRequired(details)) as attach:
             result=control.connect(args(platform='windows',app='Example'))

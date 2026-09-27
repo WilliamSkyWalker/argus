@@ -20,10 +20,10 @@ jobs:
       - name: Qt startup
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m argus.desktop.app --smoke-test
+        run: python -m saygo.desktop.app --smoke-test
       - run: python scripts/build_desktop.py
       - run: python scripts/package_desktop.py
       - uses: actions/upload-artifact@v4
         with:
-          name: ArgusDesktop-${{ matrix.os }}
+          name: SaygoDesktop-${{ matrix.os }}
           path: dist/installers/

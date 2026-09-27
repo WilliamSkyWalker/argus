@@ -1,0 +1,17 @@
+{
+  "name": "saygo-device",
+  "version": "0.3.0",
+  "description": "Operate phones, browser pages and desktop windows with shared sessions and durable tasks.",
+  "author": {"name": "saygo"},
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Saygo Device",
+    "shortDescription": "Visual control across phones, browsers and desktop windows",
+    "longDescription": "Observe and operate named sessions, resume cross-device tasks and export execution evidence.",
+    "developerName": "saygo",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": ["Use Saygo to inspect my connected devices and help me operate a test application."]
+  }
+}

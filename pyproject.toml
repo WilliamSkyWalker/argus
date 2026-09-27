@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "argus-agent-control"
+name = "saygo-agent-control"
 version = "0.4.1"
 description = "Persistent visual control sessions for external programming agents"
 requires-python = ">=3.10"
@@ -22,16 +22,16 @@ windows = ["pyautogui>=0.9; sys_platform == 'win32'", "pywin32>=306; sys_platfor
 mac = ["pyautogui>=0.9; sys_platform == 'darwin'", "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'", "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'"]
 
 [project.scripts]
-argus = "argus.cli:main"
-argus-mcp = "argus.mcp.server:main"
-argus-desktop = "argus.desktop.app:main"
+saygo = "saygo.cli:main"
+saygo-mcp = "saygo.mcp.server:main"
+saygo-desktop = "saygo.desktop.app:main"
 
 [tool.setuptools.packages.find]
-include = ["argus*"]
+include = ["saygo*"]
 
 [tool.setuptools.package-data]
-argus = ["platforms/*.ps1", "devices/*.cjs", "skills/**/*.md", "skills/**/*.json", "skills/**/*.txt"]
+saygo = ["platforms/*.ps1", "devices/*.cjs", "skills/**/*.md", "skills/**/*.json", "skills/**/*.txt"]
 
 [tool.setuptools.data-files]
-"share/argus/browser-extension" = ["extensions/argus-browser/manifest.json", "extensions/argus-browser/background.js", "extensions/argus-browser/network.js", "extensions/argus-browser/popup.html", "extensions/argus-browser/popup.js", "extensions/argus-browser/LICENSE"]
-"share/argus/browser-extension/icons" = ["extensions/argus-browser/icons/*.png"]
+"share/saygo/browser-extension" = ["extensions/saygo-browser/manifest.json", "extensions/saygo-browser/background.js", "extensions/saygo-browser/network.js", "extensions/saygo-browser/popup.html", "extensions/saygo-browser/popup.js", "extensions/saygo-browser/LICENSE"]
+"share/saygo/browser-extension/icons" = ["extensions/saygo-browser/icons/*.png"]

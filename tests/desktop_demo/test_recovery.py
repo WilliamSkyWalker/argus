@@ -7,10 +7,10 @@ import threading
 import unittest
 from unittest.mock import Mock, patch
 from PIL import Image
-from argus.desktop.runner import TaskLoop
-from argus.platforms import device_session as ds
-from argus.runtime.interactive import InteractiveRuntime
-from argus.runtime.store import Store
+from saygo.desktop.runner import TaskLoop
+from saygo.platforms import device_session as ds
+from saygo.runtime.interactive import InteractiveRuntime
+from saygo.runtime.store import Store
 
 
 class RecoveryTests(unittest.TestCase):
@@ -102,6 +102,6 @@ class RecoveryTests(unittest.TestCase):
         self.resource.execute.assert_not_called()
 
     def test_numeric_window_handles_are_normalized(self):
-        from argus.desktop.runner import decision
+        from saygo.desktop.runner import decision
         value = decision('{"kind":"recover","resource":"app","operation":"select_window","window_id":2,"note":"eligible window"}', {'app':{}})
         self.assertEqual(value['window_id'], '2')

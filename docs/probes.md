@@ -1,13 +1,13 @@
 # Probe —— 非视觉断言插件（埋点 / 后端落库 / 上报日志）
 
-argus 是**纯视觉**的：只看截图做决策和判断。屏幕上看不见的东西（埋点上报、后端
+saygo 是**纯视觉**的：只看截图做决策和判断。屏幕上看不见的东西（埋点上报、后端
 落库、系统时间、通知抽屉…）视觉层永远判不了，所以有条铁律：**不可视断言一律
 fail，不许 LLM「推断成立」蒙混**。
 
 Probe 是给这类断言开的一条**代码层**通道：
 
-- 用例在某个 Then 下面挂一行 `# argus-probe: <name> k=v`
-- 那个 step **不由 LLM 裁决**，argus 直接调插件，用返回的 verdict 定 pass/fail
+- 用例在某个 Then 下面挂一行 `# saygo-probe: <name> k=v`
+- 那个 step **不由 LLM 裁决**，saygo 直接调插件，用返回的 verdict 定 pass/fail
 - 「具体怎么查」100% 由插件决定（查数据仓库 / 查上报日志 / 抓包 / 调后端 API）
 
 这些步骤的 verdict 来自代码层，不依赖 Brain 的视觉判断，也不参与连续视觉断言合并。
@@ -17,12 +17,12 @@ Probe 是给这类断言开的一条**代码层**通道：
 ## 30 秒上手
 
 ```bash
-cp .argus/probes.json.example .argus/probes.json        # 注册表（gitignored）
+cp .saygo/probes.json.example .saygo/probes.json        # 注册表（gitignored）
 mkdir -p tests/<target>/probes
 cp tests/_template/probes/analytics.py.example tests/<target>/probes/analytics.py
-# 改 analytics.py 里的 _query()，填 .argus/probes.json 里的 dsn / 表名 / 事件映射
-argus probes list                                       # 确认插件能加载
-argus probes check analytics check=首页曝光 --target <target>   # 不起设备单发调试
+# 改 analytics.py 里的 _query()，填 .saygo/probes.json 里的 dsn / 表名 / 事件映射
+saygo probes list                                       # 确认插件能加载
+saygo probes check analytics check=首页曝光 --target <target>   # 不起设备单发调试
 ```
 
 用例里：
@@ -33,13 +33,13 @@ Scenario: 首页曝光埋点
   Given 已登录进入首页
   When 停留 3 秒
   Then 上报首页曝光埋点
-  # argus-probe: analytics check=首页曝光
+  # saygo-probe: analytics check=首页曝光
 ```
 
 ## 用例侧语法
 
 ```
-# argus-probe: <probe名> [k=v ...]
+# saygo-probe: <probe名> [k=v ...]
 ```
 
 - 放在 step 的**下一行**，绑定它**上面最近的那个 step**（`.feature` 和 `.md`
@@ -62,7 +62,7 @@ Background 里的 probe 声明**不会执行**（Background 不进 step 主循�
 埋点链路普遍是**批量上报**，落库有分钟级延迟。查太早得到 0 行**不等于漏报**，
 据此判 fail 就是造假 bug。所以除了 `pass` / `fail` 还有第三态：
 
-| verdict | 含义 | argus 的动作 |
+| verdict | 含义 | saygo 的动作 |
 |---|---|---|
 | `pass` | 查到了，符合预期 | step pass，evidence 打 `[probe:<name>]` 前缀进报告和后续 step 的锚点 |
 | `fail` | 确定性否定（事件到了但属性不对 / 意图没配映射） | 整 case fail，不再重试 |
@@ -85,8 +85,8 @@ inconclusive 继续重试**，预算耗尽才 fail 并把 error 写进报告。�
 ## 跳过埋点检查 / 只跑埋点检查
 
 ```bash
-argus run <target> --skip-probes    # probe step 全部标 skip，不调插件
-argus run <target> --only-probes    # 只跑「声明了 probe 断言」的 case
+saygo run <target> --skip-probes    # probe step 全部标 skip，不调插件
+saygo run <target> --only-probes    # 只跑「声明了 probe 断言」的 case
 ```
 
 两者互斥。也可以用 env `PROBES_MODE=skip|only`（`--bg` 子进程、多设备 worker、
@@ -104,11 +104,11 @@ MCP `run_target(probes="skip")` 都走这条通道）。
 `@manual` 一样进报告的 skip 计数）。开跑时会打印 `N/M 个 case 声明了 probe 断言`，
 一个都没命中会告警。
 
-真的想「完全不跑 App、只查一次数据」→ 用 `argus probes check`（见下）。
+真的想「完全不跑 App、只查一次数据」→ 用 `saygo probes check`（见下）。
 
-## 注册表 `.argus/probes.json`
+## 注册表 `.saygo/probes.json`
 
-跟 `.argus/mcp_clients.json` 同一档：**gitignored**，里面放连接串和密钥；
+跟 `.saygo/mcp_clients.json` 同一档：**gitignored**，里面放连接串和密钥；
 `.example` 入库。`${VAR}` 会用环境变量展开，所以真值可以只放 `.env`。
 
 ```json
@@ -132,10 +132,10 @@ MCP `run_target(probes="skip")` 都走这条通道）。
 ```
 
 `module` 支持文件路径（相对 cwd）或点分模块名。`class` 省略时自动找模块里唯一的
-`Probe` 子类。也可以用 `PROBES_CONFIG` / `ARGUS_PROBES_CONFIG` 指到别处。
+`Probe` 子类。也可以用 `PROBES_CONFIG` / `SAYGO_PROBES_CONFIG` 指到别处。
 
 **插件代码放哪**：`tests/<target>/probes/` —— 那个目录整体是客户私有仓，事件名、
-表名、查询逻辑都属于客户内容，不该进 argus 主仓。argus 主仓只有接口 + 加载器 +
+表名、查询逻辑都属于客户内容，不该进 saygo 主仓。saygo 主仓只有接口 + 加载器 +
 占位符示例。
 
 ## 两种插件形态
@@ -143,7 +143,7 @@ MCP `run_target(probes="skip")` 都走这条通道）。
 ### A. Python 类（最短路径）
 
 ```python
-from argus.probes.base import Probe, ProbeResult
+from saygo.probes.base import Probe, ProbeResult
 
 class MyProbe(Probe):
     name = "analytics"
@@ -165,10 +165,10 @@ class MyProbe(Probe):
 ### B. 子进程（任何语言）
 
 stdin 收一个 JSON 请求，stdout 出一个 JSON verdict，调试信息写 stderr。
-协议全文见 `argus/probes/subprocess_probe.py` 的 docstring，
+协议全文见 `saygo/probes/subprocess_probe.py` 的 docstring，
 可跑的示例见 `tests/_template/probes/applog.sh.example`。
 
-进程隔离，所以插件的依赖（DB driver、抓包库）不会污染 argus 自己的环境 ——
+进程隔离，所以插件的依赖（DB driver、抓包库）不会污染 saygo 自己的环境 ——
 这是它相对 Python 型的主要优势。
 
 ## 插件能拿到的上下文（`ProbeContext`）
@@ -189,8 +189,8 @@ stdin 收一个 JSON 请求，stdout 出一个 JSON verdict，调试信息写 st
 ## 调试
 
 ```bash
-argus probes list [--json]                     # 有哪些插件 + 逐个试加载
-argus probes check <name> [k=v ...] \
+saygo probes list [--json]                     # 有哪些插件 + 逐个试加载
+saygo probes check <name> [k=v ...] \
     --target <target>      # 绑 tests/<target>/_accounts.json 的 accounts[0]
     --since-s 600          # 假装 case 是 600 秒前开跑的（查询时间窗）
     --wait                 # inconclusive 时按节奏轮询到预算耗尽

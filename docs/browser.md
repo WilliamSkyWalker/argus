@@ -1,8 +1,8 @@
 # Playwright 浏览器后端
 
-新 `argus workflow` 的 browser 资源默认使用 Playwright，通过 CDP 连接独立运行的 Chromium。
-原 QA 入口 `argus run` 继续使用 Selenium（含 Selenium Grid）。旧 device 会话没有 backend 字段时
-仍按 Selenium 连接；新 `argus device start` 也保留 Selenium 默认值，可显式选择 Playwright。
+新 `saygo workflow` 的 browser 资源默认使用 Playwright，通过 CDP 连接独立运行的 Chromium。
+原 QA 入口 `saygo run` 继续使用 Selenium（含 Selenium Grid）。旧 device 会话没有 backend 字段时
+仍按 Selenium 连接；新 `saygo device start` 也保留 Selenium 默认值，可显式选择 Playwright。
 
 Playwright 后端仍按截图和坐标操作，不向模型提供 DOM 树，也不依赖 selector 定位。
 迁移新增的是持久会话接入、稳定页面身份、页面事件和显式标签页管理。
@@ -13,13 +13,13 @@ Playwright 后端仍按截图和坐标操作，不向模型提供 DOM 树，也�
 pip3 install -r requirements.txt
 # 没有本地 Chrome/Chromium 时，下载 Playwright 配套 Chromium：
 python3 -m playwright install chromium
-python3 -m argus.cli device start --platform browser --backend playwright --serial admin-web
-python3 -m argus.cli device navigate https://example.com --serial admin-web
-python3 -m argus.cli device screenshot --serial admin-web --out /tmp/admin.png
+python3 -m saygo.cli device start --platform browser --backend playwright --serial admin-web
+python3 -m saygo.cli device navigate https://example.com --serial admin-web
+python3 -m saygo.cli device screenshot --serial admin-web --out /tmp/admin.png
 ```
 
-浏览器查找顺序：`ARGUS_CHROME_BIN`、常见系统安装路径/PATH、Playwright 配套 Chromium。
-支持现有 `ARGUS_BROWSER_HEADLESS`、`ARGUS_BROWSER_W`、`ARGUS_BROWSER_H`。
+浏览器查找顺序：`SAYGO_CHROME_BIN`、常见系统安装路径/PATH、Playwright 配套 Chromium。
+支持现有 `SAYGO_BROWSER_HEADLESS`、`SAYGO_BROWSER_W`、`SAYGO_BROWSER_H`。
 人工接管需要有头浏览器；无头浏览器仅适合自动化执行和集成测试。
 
 Chrome 由独立进程启动，使用该 session 的独立用户目录。控制器退出仅断开 Playwright，
@@ -28,7 +28,7 @@ Chrome 由独立进程启动，使用该 session 的独立用户目录。控制�
 也可以将已有的 Selenium Chrome 会话切换为 Playwright，无需重建浏览器或清理登录状态：
 
 ```bash
-python3 -m argus.cli device start --platform browser --backend playwright --serial admin-web
+python3 -m saygo.cli device start --platform browser --backend playwright --serial admin-web
 ```
 
 若已有多个标签页且从未选择过目标，命令会拒绝任意挑选第一页。先列出页面并显式选择。
@@ -36,9 +36,9 @@ python3 -m argus.cli device start --platform browser --backend playwright --seri
 ## 页面选择与弹窗
 
 ```bash
-python3 -m argus.cli device pages --serial admin-web
-python3 -m argus.cli device select-page PAGE_ID --serial admin-web
-python3 -m argus.cli device close-page PAGE_ID --serial admin-web
+python3 -m saygo.cli device pages --serial admin-web
+python3 -m saygo.cli device select-page PAGE_ID --serial admin-web
+python3 -m saygo.cli device close-page PAGE_ID --serial admin-web
 ```
 
 `pages` 返回 `page_id`、URL、标题、`opener_id`、是否选中。`page_id` 是 Chromium target ID，
@@ -97,18 +97,18 @@ Runtime 在观察或完成切页时将 page ID 保存到任务检查点。恢复
 ```bash
 python3 -m unittest discover -s tests/browser_demo -v
 # 已安装 Playwright 后，指定 Chromium 执行真实浏览器集成测试：
-ARGUS_TEST_CHROME=/path/to/chrome python3 -m unittest discover -s tests/browser_demo -v
+SAYGO_TEST_CHROME=/path/to/chrome python3 -m unittest discover -s tests/browser_demo -v
 python3 -m unittest discover -s tests/runtime_demo -v
 ```
 
 真实集成测试只访问本机测试页面，使用临时浏览器用户目录，覆盖坐标点击、中文输入、弹窗发现、
 跨进程重连、登录状态存储保留、人工接管恢复、CLI 页面管理、关闭页面后的保护以及控制器断开后浏览器存活。
 它模拟登录流程，不会连接真实第三方登录或支付服务。测试浏览器为 headless；测试启动参数中的
-`--no-sandbox` 仅用于兼容受限 CI 环境，不是 Argus 常规浏览器启动参数。
+`--no-sandbox` 仅用于兼容受限 CI 环境，不是 Saygo 常规浏览器启动参数。
 
 当前仅支持 Chromium 的 CDP 接入，尚未加入 Playwright 原生远程协议、Firefox/WebKit 或通用下载管理。
 Playwright 官方说明 CDP 接入与原生连接存在功能差异，见 [connect_over_cdp](https://playwright.dev/python/docs/api/class-browsertype#browser-type-connect-over-cdp)。
-坐标点击不具备 Locator 的元素可操作性自动等待，页面稳定检测和视觉定位仍由 Argus 负责。
+坐标点击不具备 Locator 的元素可操作性自动等待，页面稳定检测和视觉定位仍由 Saygo 负责。
 
 ## Connect an existing daily browser
 

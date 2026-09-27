@@ -6,12 +6,12 @@ import subprocess
 import sys
 
 ROOT=Path(__file__).resolve().parents[1]
-command=[sys.executable,'-m','PyInstaller','--noconfirm','--clean','--onedir','--name','ArgusDesktop',
+command=[sys.executable,'-m','PyInstaller','--noconfirm','--clean','--onedir','--name','SaygoDesktop',
          '--paths',str(ROOT), '--distpath',str(ROOT/'dist/desktop'), '--workpath',str(ROOT/'build/desktop'),
          '--specpath',str(ROOT/'build'), '--collect-submodules','keyring.backends',
-         '--add-data',str(ROOT/'extensions/argus-browser')+os.pathsep+'argus/desktop/assets/extension',
+         '--add-data',str(ROOT/'extensions/saygo-browser')+os.pathsep+'saygo/desktop/assets/extension',
          '--add-data',str(ROOT/'LICENSE')+os.pathsep+'.',
-         str(ROOT/'argus/desktop/app.py')]
+         str(ROOT/'saygo/desktop/app.py')]
 if sys.platform == 'win32':
     command = [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean',
                '--distpath', str(ROOT/'dist/desktop'),

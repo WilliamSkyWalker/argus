@@ -1,7 +1,7 @@
 # language: zh-CN
 # encoding: utf-8
-# argus-target: mac_demo
-# argus-platform: mac
+# saygo-target: mac_demo
+# saygo-platform: mac
 
 Feature: macOS 计算器自动化演示
 

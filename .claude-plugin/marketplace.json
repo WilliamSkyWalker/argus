@@ -1,16 +1,16 @@
 {
-  "name": "argus-plugins",
+  "name": "saygo-plugins",
   "owner": {
-    "name": "argus",
-    "url": "https://github.com/WilliamSkyWalker/argus"
+    "name": "saygo",
+    "url": "https://github.com/WilliamSkyWalker/saygo"
   },
   "metadata": {
     "description": "Visual operation of phones, browser pages and desktop windows by external programming agents, with persistent sessions and task recovery."
   },
   "plugins": [
     {
-      "name": "argus-device",
-      "source": "./plugins/argus-device",
+      "name": "saygo-device",
+      "source": "./plugins/saygo-device",
       "description": "Shared CLI/MCP control for mobile, browser and desktop sessions, with observations, durable tasks, human handoff and evidence export.",
       "category": "testing",
       "tags": [

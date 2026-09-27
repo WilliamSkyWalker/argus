@@ -9,15 +9,15 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from argus.cli import build_parser, main
-from argus.commands import background, targets
-from argus.qa import cases
+from saygo.cli import build_parser, main
+from saygo.commands import background, targets
+from saygo.qa import cases
 
 
 class CommandTests(unittest.TestCase):
     def test_help_does_not_import_qa_agent(self):
         result = subprocess.run([sys.executable, '-c',
-            "from argus.cli import build_parser; import sys; build_parser(); assert 'argus.qa.agent' not in sys.modules"],
+            "from saygo.cli import build_parser; import sys; build_parser(); assert 'saygo.qa.agent' not in sys.modules"],
             capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 

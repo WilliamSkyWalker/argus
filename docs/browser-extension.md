@@ -1,17 +1,17 @@
 # Existing browser extension backend
 
-Argus can control all HTTP(S) tabs in your existing Chrome/Edge
+Saygo can control all HTTP(S) tabs in your existing Chrome/Edge
 profile, preserving its cookies and login state. This backend uses a Manifest V3
 extension and a Native Messaging host; it does not need a remote debugging port.
 Screenshots and coordinate input remain the visual interface; page DOM and cookies
 are not extracted for the model.
 
 ```text
-Argus CLI / Runtime (Linux, macOS, Windows or WSL)
+Saygo CLI / Runtime (Linux, macOS, Windows or WSL)
         ↕ private shared directory (one-shot JSON requests)
 Native Messaging host (runs on the browser's OS)
         ↕ Chrome native messaging / stdio
-Argus Browser extension → all website tabs in the connected profile
+Saygo Browser extension → all website tabs in the connected profile
 ```
 
 The directory transport lets WSL use a host running on Windows through `/mnt/c/`
@@ -26,10 +26,10 @@ in a repository or cloud-synced folder.
 ## Install on the browser's operating system
 
 Python 3.11+ is required on that OS. The native host uses only the Python standard
-library; Windows does not need the rest of Argus or Playwright installed.
+library; Windows does not need the rest of Saygo or Playwright installed.
 
 1. Open `chrome://extensions` (Edge: `edge://extensions`), enable Developer mode,
-   and **Load unpacked** → `extensions/argus-browser`. Keep these files at a
+   and **Load unpacked** → `extensions/saygo-browser`. Keep these files at a
    permanent path. Copy the extension's 32-letter ID.
 2. Register the native host for that exact extension ID. Run this command on the
    **same OS as Chrome**, using the Python executable you want Chrome to launch.
@@ -37,45 +37,45 @@ library; Windows does not need the rest of Argus or Playwright installed.
    Linux/macOS, from the repository:
 
    ```bash
-   python3 -m argus.integrations.browser_bridge install \
+   python3 -m saygo.integrations.browser_bridge install \
      --extension-id YOUR_EXTENSION_ID \
-     --directory "$HOME/.argus/browser-bridge"
+     --directory "$HOME/.saygo/browser-bridge"
    ```
 
-   Windows PowerShell, with a permanent copy of `argus/integrations/browser_bridge.py`:
+   Windows PowerShell, with a permanent copy of `saygo/integrations/browser_bridge.py`:
 
    ```powershell
-   py -3 C:\Argus\browser_bridge.py install `
+   py -3 C:\Saygo\browser_bridge.py install `
      --extension-id YOUR_EXTENSION_ID `
-     --directory "$env:LOCALAPPDATA\Argus\browser-bridge"
+     --directory "$env:LOCALAPPDATA\Saygo\browser-bridge"
    ```
 
    Add `--browser edge` for Edge. Windows registration is per user (HKCU);
    administrator access is unnecessary. Linux/macOS registration targets the
    normal Chrome/Edge user data directory. For a custom `--user-data-dir`, copy
-   the generated `com.argus.browser.json` into its `NativeMessagingHosts/`
+   the generated `com.saygo.browser.json` into its `NativeMessagingHosts/`
    subdirectory. Managed browser policy can block unpacked extensions or native
    messaging.
-3. Open a normal website, then open the Argus extension popup. Click **Connect
+3. Open a normal website, then open the Saygo extension popup. Click **Connect
    local bridge**. All existing and newly opened website tabs become available;
    no per-tab sharing is required. The popup shows available page IDs.
-   Chrome may display its normal debugger control banner when Argus operates.
+   Chrome may display its normal debugger control banner when Saygo operates.
 
-## Bind to Argus and operate
+## Bind to Saygo and operate
 
-From the environment where Argus runs:
+From the environment where Saygo runs:
 
 ```bash
-python3 -m argus.cli device connect --platform browser --backend extension \
-  --bridge-directory "$HOME/.argus/browser-bridge" --serial daily-web
-python3 -m argus.cli device pages --serial daily-web
-python3 -m argus.cli device select-page PAGE_ID --serial daily-web
-python3 -m argus.cli device screenshot --serial daily-web --out /tmp/page.png
-python3 -m argus.cli device navigate https://www.baidu.com --serial daily-web
+python3 -m saygo.cli device connect --platform browser --backend extension \
+  --bridge-directory "$HOME/.saygo/browser-bridge" --serial daily-web
+python3 -m saygo.cli device pages --serial daily-web
+python3 -m saygo.cli device select-page PAGE_ID --serial daily-web
+python3 -m saygo.cli device screenshot --serial daily-web --out /tmp/page.png
+python3 -m saygo.cli device navigate https://www.baidu.com --serial daily-web
 ```
 
 For WSL, use the **Windows directory's WSL path** in `device connect --bridge-directory`, for example
-`/mnt/c/Users/YOUR_USER/AppData/Local/Argus/browser-bridge`. Installing the host
+`/mnt/c/Users/YOUR_USER/AppData/Local/Saygo/browser-bridge`. Installing the host
 inside WSL alone does not register it with Windows Chrome. Connecting refuses to
 overwrite a session belonging to another platform or bridge. Subsequent device commands reconnect
 through the saved directory. No Playwright package is required for this backend.
@@ -125,7 +125,7 @@ not proof of a real payment.
 
 ```bash
 python3 -m unittest discover -s tests/extension_demo -v
-ARGUS_TEST_CHROME=/path/to/chromium \
+SAYGO_TEST_CHROME=/path/to/chromium \
   python3 -m unittest discover -s tests/extension_demo -v
 ```
 
@@ -142,10 +142,10 @@ Chrome API references: [Native Messaging](https://developer.chrome.com/docs/exte
 Playwright and extension sessions both support:
 
 ```bash
-python3 -m argus.cli device new-page https://example.com --serial daily-web
-python3 -m argus.cli device pages --serial daily-web
-python3 -m argus.cli device select-page PAGE_ID --serial daily-web
-python3 -m argus.cli device close-page PAGE_ID --serial daily-web
+python3 -m saygo.cli device new-page https://example.com --serial daily-web
+python3 -m saygo.cli device pages --serial daily-web
+python3 -m saygo.cli device select-page PAGE_ID --serial daily-web
+python3 -m saygo.cli device close-page PAGE_ID --serial daily-web
 ```
 
 `new-page` requires an HTTP(S) URL and returns `created_page_id`. It preserves the
@@ -165,18 +165,18 @@ must be reconciled manually; it is never automatically replayed.
 
 Connecting the extension automatically starts passive capture on all controllable
 HTTP(S) tabs in this browser profile, including new tabs and popups. There is no
-additional Argus permission dialog. Chrome's own debugger indicator still applies.
+additional Saygo permission dialog. Chrome's own debugger indicator still applies.
 The selected session tab determines which journal the CLI reads:
 
 ```bash
-argus device network --session web
-argus device network read --session web --url /api --kind http
-argus device network read --session web --kind ws --after 100 --capture-id CAPTURE_ID
-argus device network read --session web --kind sse
-argus device network read --session web --kind stream
-argus device network stop --session web
-argus device network start --session web
-argus device network clear --session web
+saygo device network --session web
+saygo device network read --session web --url /api --kind http
+saygo device network read --session web --kind ws --after 100 --capture-id CAPTURE_ID
+saygo device network read --session web --kind sse
+saygo device network read --session web --kind stream
+saygo device network stop --session web
+saygo device network start --session web
+saygo device network clear --session web
 ```
 
 - `http.*`: request URL/method/headers/post data, response status/headers, completion

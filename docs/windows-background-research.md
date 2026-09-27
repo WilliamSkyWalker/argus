@@ -1,10 +1,10 @@
 # Windows 后台视觉操作调研
 
-调研日期：2026-09-26。以下区分公开实现与 Argus 的建议路线，尚未实现 WGC 或独立桌面会话。
+调研日期：2026-09-26。以下区分公开实现与 Saygo 的建议路线，尚未实现 WGC 或独立桌面会话。
 
 ## 可以参考的实现
 
-| 项目 | 公开方案 | 对 Argus 的启示 |
+| 项目 | 公开方案 | 对 Saygo 的启示 |
 | --- | --- | --- |
 | UiPath | 区分 Simulate、Window Messages、Hardware Events；支持程度取决于应用技术 | 输入能力必须分别验证，不能把后台模式当作通用保证 |
 | Power Automate PiP | Child session 提供独立 Windows 会话；Virtual desktop 模式不支持截图和物理输入 | 纯视觉操作优先研究独立会话，而非只隔离控件操作的桌面模式 |
@@ -25,7 +25,7 @@
 2. **输入支持单独声明和测试。** 保留已验证的原生 Edit/Button 后台路径。自绘控件可研究窗口绑定的 UIA 执行适配，但依赖应用提供相应能力；不向 LLM 提供 UI 树。截图成功不代表 PostMessage 输入成功。SendInput 注入系统输入流，没有指定 HWND 的参数，不能提供私人鼠标。参见 [UIA providers](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-providersoverview) 和 [SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput)。
 3. **无法后台输入的应用，研究独立会话或虚拟机。** 在隔离环境内执行真实鼠标操作，用户桌面保持独立。现有应用进程、登录态不能假定可以直接迁移，需要另行验证应用多实例限制与登录流程。普通 Win+Tab 桌面不能视作这类隔离方案。
 
-Argus 为 MIT 项目，OBS 仅作设计参考，不复制其 GPL 实现。实现候选包括 MIT 的 [Microsoft 示例](https://github.com/microsoft/Windows.UI.Composition-Win32-Samples/blob/master/LICENSE) 和 [windows-capture](https://github.com/NiiightmareXD/windows-capture)，采用前核查具体版本与许可证声明。
+Saygo 为 MIT 项目，OBS 仅作设计参考，不复制其 GPL 实现。实现候选包括 MIT 的 [Microsoft 示例](https://github.com/microsoft/Windows.UI.Composition-Win32-Samples/blob/master/LICENSE) 和 [windows-capture](https://github.com/NiiightmareXD/windows-capture)，采用前核查具体版本与许可证声明。
 
 ## 验证范围
 

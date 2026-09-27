@@ -1,8 +1,8 @@
 # 多资源操作运行时（首版）
 
-Argus 的通用操作引擎正在从 QA 引擎中独立出来。新增 `argus workflow` 支持显式 JSON
+Saygo 的通用操作引擎正在从 QA 引擎中独立出来。新增 `saygo workflow` 支持显式 JSON
 工作流：手机、浏览器、桌面之间顺序切换，传递结构化结果，查询数据库，暂停交给用户，
-并在用户交还控制权后继续。原有 `argus run` 和 QA Agent 保持原入口。
+并在用户交还控制权后继续。原有 `saygo run` 和 QA Agent 保持原入口。
 
 当前版本提供执行基础，不会根据自然语言自动规划步骤、识别支付页面或生成点击坐标。
 人工步骤需显式声明；视觉操作使用截图和百分比坐标，适合外部 Agent 或显式流程调用。
@@ -19,7 +19,7 @@ JSON workflow → 校验 → Runtime → 资源适配器
                          └─ waiting_for_human → 用户 resume → 重新观察 → 后续验证
 ```
 
-- `argus/runtime/schema.py`：版本化格式与保留 JSON 类型的变量引用。
+- `saygo/runtime/schema.py`：版本化格式与保留 JSON 类型的变量引用。
 - `store.py`：任务快照、事件、资源归属；任务执行使用 OS 文件锁，进程退出后自动释放执行锁。
 - `resources.py`：复用现有视觉驱动；查询只读数据库。
 - `engine.py`：顺序路由、动作意图记录、暂停恢复和不确定动作核对。
@@ -27,16 +27,16 @@ JSON workflow → 校验 → Runtime → 资源适配器
 
 ## 启动
 
-所有命令都从仓库根目录运行。默认状态保存在 `.argus_runs/runtime/`（已被 Git 忽略）。
-也可以设置 `ARGUS_RUNTIME_DIR` 或使用 `workflow --state-dir /absolute/path ...`。
+所有命令都从仓库根目录运行。默认状态保存在 `.saygo_runs/runtime/`（已被 Git 忽略）。
+也可以设置 `SAYGO_RUNTIME_DIR` 或使用 `workflow --state-dir /absolute/path ...`。
 **同一组资源必须使用同一个状态目录**，资源锁只在这个目录内协调。
 
 移动端与浏览器需要先创建命名会话：
 
 ```bash
-python3 -m argus.cli device start --platform android --serial emulator-5554
-python3 -m argus.cli device start --platform browser --backend playwright --serial admin-web
-python3 -m argus.cli workflow start examples/workflows/phone_browser_payment.json
+python3 -m saygo.cli device start --platform android --serial emulator-5554
+python3 -m saygo.cli device start --platform browser --backend playwright --serial admin-web
+python3 -m saygo.cli workflow start examples/workflows/phone_browser_payment.json
 ```
 
 跨端示例需要替换设备序列号、业务页面，并提供实际 SQLite 数据库。创建订单后通过 `resume --data` 返回订单 ID。
@@ -50,7 +50,7 @@ macOS 使用 `kind: "mac"` 与应用名；当前 macOS 驱动 setup 会打开/�
 纯数据库示例：先准备含 `orders(id,status)` 表的 `examples/workflows/orders.sqlite`，再运行：
 
 ```bash
-python3 -m argus.cli workflow start examples/workflows/query.json
+python3 -m saygo.cli workflow start examples/workflows/query.json
 ```
 
 不要把真实数据库或工作流中的账户信息加入版本库。
@@ -114,11 +114,11 @@ SQLite 每个 operation 对应资源规格里的已注册 SQL，参数使用 `ar
 再检查其等于 `paid`。该 check 的业务正确性由工作流作者负责。
 
 ```bash
-python3 -m argus.cli workflow status RUN_ID
-python3 -m argus.cli workflow resume RUN_ID --note "已创建订单" --data '{"order_id":"order-1"}'
+python3 -m saygo.cli workflow status RUN_ID
+python3 -m saygo.cli workflow resume RUN_ID --note "已创建订单" --data '{"order_id":"order-1"}'
 # 遇到后续支付接管时：
-python3 -m argus.cli workflow resume RUN_ID --note "已在手机完成支付"
-python3 -m argus.cli workflow events RUN_ID
+python3 -m saygo.cli workflow resume RUN_ID --note "已在手机完成支付"
+python3 -m saygo.cli workflow events RUN_ID
 ```
 
 暂停返回 `waiting_for_human`，命令正常退出，不持续调用模型或控制设备。
@@ -130,13 +130,13 @@ python3 -m argus.cli workflow events RUN_ID
 还可以主动请求暂停或取消：
 
 ```bash
-python3 -m argus.cli workflow pause RUN_ID
-python3 -m argus.cli workflow cancel RUN_ID
+python3 -m saygo.cli workflow pause RUN_ID
+python3 -m saygo.cli workflow cancel RUN_ID
 ```
 
 执行中的任务在动作边界处理请求，不强行中断已派发的点击或查询。
 首版接管暂停整个工作流；不支持暂停手机后让另一分支并行执行。
-单独使用旧的 `argus device`、QA 引擎或外部应用不会遵守新运行时的锁，使用期间不要混用自动化入口。
+单独使用旧的 `saygo device`、QA 引擎或外部应用不会遵守新运行时的锁，使用期间不要混用自动化入口。
 
 ## 崩溃恢复与不确定动作
 
@@ -148,9 +148,9 @@ python3 -m argus.cli workflow cancel RUN_ID
 - 已完成的步骤不重放。没有在途动作的中断任务可恢复为 queued；有在途动作必须先核对。
 
 ```bash
-python3 -m argus.cli workflow recover RUN_ID
-python3 -m argus.cli workflow resolve RUN_ID --outcome completed --note "已核对订单确实创建"
-python3 -m argus.cli workflow run RUN_ID
+python3 -m saygo.cli workflow recover RUN_ID
+python3 -m saygo.cli workflow resolve RUN_ID --outcome completed --note "已核对订单确实创建"
+python3 -m saygo.cli workflow run RUN_ID
 ```
 
 如果确定动作未执行，可使用 `--outcome not_executed`。再次执行前会重新截图，只有画面仍与

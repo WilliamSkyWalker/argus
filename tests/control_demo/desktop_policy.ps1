@@ -1,6 +1,6 @@
 # Exercise the actual lifecycle policy with synthetic process/window inventories.
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot/../../argus/platforms/windows_runner.ps1"
+. "$PSScriptRoot/../../saygo/platforms/windows_runner.ps1"
 function Assert($condition, $message) { if (-not $condition) { throw $message } }
 function Get-Process {
     param($Name, $Id, $ErrorAction)

@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "argus": {
-      "command": "python3",
-      "args": ["-m", "argus.mcp.server", "--profile", "device"],
-      "env": {"ARGUS_MCP_PROFILE": "device", "PYTHONUNBUFFERED": "1"}
-    }
-  }
-}

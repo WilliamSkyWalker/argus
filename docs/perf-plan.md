@@ -1,4 +1,4 @@
-# Argus 执行引擎性能优化 —— 开发 Plan
+# Saygo 执行引擎性能优化 —— 开发 Plan
 
 > 目标：砍墙钟、砍大模型调用次数、减少"慢加载"导致的假失败。
 > 基准（baseline，一个含 25 scenario 的聊天类 feature / 3 台 Android 真机）：**墙钟 30m48s，聚合 76min，通过率 60%**。

@@ -9,11 +9,11 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from argus.devices import mobile, mobile_host, mobile_host_worker, mobile_relay
+from saygo.devices import mobile, mobile_host, mobile_host_worker, mobile_relay
 
 
 def install_args(**changes):
-    values = dict(device_command="install", platform="android", host="auto", name="Argus",
+    values = dict(device_command="install", platform="android", host="auto", name="Saygo",
                   api=35, accept_licenses=False, boot=False, connect=False, session=None,
                   headless=False, dry_run=False)
     return Namespace(**(values | changes))
@@ -21,7 +21,7 @@ def install_args(**changes):
 
 class HostTests(unittest.TestCase):
     def test_windows_helpers_request_no_console(self):
-        from argus.devices import toolchain
+        from saygo.devices import toolchain
         with patch.object(mobile, "environment", return_value={}), patch.object(toolchain.os, "name", "nt"), patch.object(toolchain.subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True), patch.object(toolchain.subprocess, "run", return_value=Mock(returncode=0, stdout="", stderr="")) as run:
             mobile.run(["adb.exe", "version"])
             self.assertEqual(run.call_args.kwargs["creationflags"], 0x08000000)
@@ -40,8 +40,8 @@ class HostTests(unittest.TestCase):
             self.assertEqual(os.environ["ADB_SERVER_SOCKET"], "tcp:15037")
 
     def test_private_adb_port_reaches_appium_capabilities(self):
-        from argus.platforms.appium import AppiumPlatform
-        with patch("argus.platforms.appium_server.AppiumServerManager") as manager, patch("appium.webdriver.Remote") as remote, patch.object(AppiumPlatform, "_detect_screen_size"):
+        from saygo.platforms.appium import AppiumPlatform
+        with patch("saygo.platforms.appium_server.AppiumServerManager") as manager, patch("appium.webdriver.Remote") as remote, patch.object(AppiumPlatform, "_detect_screen_size"):
             manager.return_value.ensure_running.return_value = "http://127.0.0.1:4723"
             AppiumPlatform().setup({"appium": {"os": "android", "device": "emulator-5554", "adb_port": 15037}})
         self.assertEqual(remote.call_args.kwargs["options"].to_capabilities()["appium:adbPort"], 15037)
@@ -114,7 +114,7 @@ class HostTests(unittest.TestCase):
             consent.assert_not_called()
 
     def test_preflight_rejects_low_disk_and_missing_acceleration(self):
-        details = dict(home=r"C:\Example\Argus", sdk_root=r"C:\Example\sdk", free_bytes=1,
+        details = dict(home=r"C:\Example\Saygo", sdk_root=r"C:\Example\sdk", free_bytes=1,
                        architecture="AMD64", hypervisor=True, whpx=False)
         with patch.object(mobile_host, "select_host", return_value="windows"), patch.object(mobile_host, "windows_info", return_value=details):
             result = mobile_host.plan(install_args())
@@ -143,7 +143,7 @@ class HostTests(unittest.TestCase):
             details = {"host": "windows", "blockers": []}
             controller = Mock()
             controller.screenshot_raw.return_value = b"screenshot"
-            with patch.object(mobile_host, "plan", return_value=details), patch.object(mobile_host, "prepare_windows", return_value={}) as prepare, patch.object(mobile_host, "call_windows", return_value={"boot": {"device": "emulator-5554"}}), patch.object(mobile_host, "connect_windows", return_value={"session": "phone"}) as connect, patch("argus.platforms.device_session.attach", return_value=controller), patch.object(mobile, "home", return_value=Path(tmp)), contextlib.redirect_stderr(io.StringIO()):
+            with patch.object(mobile_host, "plan", return_value=details), patch.object(mobile_host, "prepare_windows", return_value={}) as prepare, patch.object(mobile_host, "call_windows", return_value={"boot": {"device": "emulator-5554"}}), patch.object(mobile_host, "connect_windows", return_value={"session": "phone"}) as connect, patch("saygo.platforms.device_session.attach", return_value=controller), patch.object(mobile, "home", return_value=Path(tmp)), contextlib.redirect_stderr(io.StringIO()):
                 result = mobile_host.execute(args)
             prepare.assert_called_once_with(details, install=True)
             connect.assert_called_once_with({}, "emulator-5554", "phone")
@@ -156,32 +156,32 @@ class HostTests(unittest.TestCase):
             connect.assert_not_called()
 
     def test_windows_boot_without_install_and_named_connection(self):
-        args = Namespace(device_command="boot", host="windows", platform="android", device="Argus",
+        args = Namespace(device_command="boot", host="windows", platform="android", device="Saygo",
                          timeout=300, headless=True, connect=True, session="phone")
         with patch.object(mobile_host, "select_host", return_value="windows"), patch.object(mobile_host, "windows_info", return_value={}), patch.object(mobile_host, "prepare_windows", return_value={}) as prepare, patch.object(mobile_host, "call_windows", return_value={"device": "emulator-5554"}) as call, patch.object(mobile_host, "connect_windows", return_value={}) as connect:
             mobile_host.execute(args)
         prepare.assert_called_once_with({})
-        call.assert_called_once_with({}, "boot", device="Argus", timeout=300, headless=True)
+        call.assert_called_once_with({}, "boot", device="Saygo", timeout=300, headless=True)
         connect.assert_called_once_with({}, "emulator-5554", "phone")
 
     def test_windows_worker_uses_json_stdin_not_shell_interpolation(self):
         host = {"python": "/mnt/c/Program Files/python.exe", "script": r"C:\Path With Spaces\worker.py",
                 "home": r"C:\Example", "sdk_root": r"C:\Example\sdk"}
         with patch.object(mobile_host.subprocess, "run", return_value=Mock(returncode=0, stdout='{"ok": true}')) as run:
-            result = mobile_host.call_windows(host, "boot", device="Argus")
+            result = mobile_host.call_windows(host, "boot", device="Saygo")
         self.assertTrue(result["ok"])
         self.assertEqual(run.call_args.args[0], [host["python"], host["script"]])
-        self.assertEqual(json.loads(run.call_args.kwargs["input"])["device"], "Argus")
+        self.assertEqual(json.loads(run.call_args.kwargs["input"])["device"], "Saygo")
 
     def test_transport_failure_never_replays_request(self):
         with patch.object(mobile_host, "call_windows", side_effect=RuntimeError("lost response")) as call:
             with self.assertRaisesRegex(RuntimeError, "lost response"):
-                mobile_relay.relay_request({"host": {}, "port": 4723, "base_path": "/argus-example"}, "POST", "/session/example/actions", b"{}")
+                mobile_relay.relay_request({"host": {}, "port": 4723, "base_path": "/saygo-example"}, "POST", "/session/example/actions", b"{}")
         self.assertEqual(call.call_count, 1)
 
     def test_host_http_targets_only_fixed_loopback_endpoint(self):
         with self.assertRaisesRegex(ValueError, "path"):
-            mobile_host_worker.request_appium(4723, "/argus-example", "GET", "//example.com")
+            mobile_host_worker.request_appium(4723, "/saygo-example", "GET", "//example.com")
         response = Mock(status=200, headers={"Content-Type": "application/json"})
         response.read.return_value = b'{"value": {}}'
         response.__enter__ = Mock(return_value=response)
@@ -189,9 +189,9 @@ class HostTests(unittest.TestCase):
         opener = Mock()
         opener.open.return_value = response
         with patch.object(mobile_host_worker.urllib.request, "build_opener", return_value=opener):
-            result = mobile_host_worker.request_appium(4723, "/argus-example", "POST", "/session", base64.b64encode(b"{}").decode())
+            result = mobile_host_worker.request_appium(4723, "/saygo-example", "POST", "/session", base64.b64encode(b"{}").decode())
         request = opener.open.call_args.args[0]
-        self.assertEqual(request.full_url, "http://127.0.0.1:4723/argus-example/session")
+        self.assertEqual(request.full_url, "http://127.0.0.1:4723/saygo-example/session")
         self.assertEqual(base64.b64decode(result["body"]), b'{"value": {}}')
 
     def test_bad_download_checksum_is_rejected(self):

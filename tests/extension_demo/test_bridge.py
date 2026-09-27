@@ -11,18 +11,18 @@ import time
 import unittest
 from unittest.mock import patch
 
-from argus.integrations.browser_bridge import Client, atomic_json, read_frame, write_frame
-from argus.platforms.browser_extension import ExtensionBrowserPlatform
-from argus.platforms.browser_playwright import PageSelectionError
-from argus.platforms import device_session as ds
+from saygo.integrations.browser_bridge import Client, atomic_json, read_frame, write_frame
+from saygo.platforms.browser_extension import ExtensionBrowserPlatform
+from saygo.platforms.browser_playwright import PageSelectionError
+from saygo.platforms import device_session as ds
 
 
 class BridgeTests(unittest.TestCase):
     def test_frozen_windows_uses_separate_stdio_host(self):
-        from argus.integrations.browser_bridge import host_command
+        from saygo.integrations.browser_bridge import host_command
         with tempfile.TemporaryDirectory() as tmp:
-            exe = Path(tmp)/'ArgusDesktop.exe'
-            host = Path(tmp)/'ArgusNativeHost.exe'
+            exe = Path(tmp)/'SaygoDesktop.exe'
+            host = Path(tmp)/'SaygoNativeHost.exe'
             with patch.object(sys, 'frozen', True, create=True), \
                  patch.object(sys, 'platform', 'win32'), patch.object(sys, 'executable', str(exe)):
                 with self.assertRaisesRegex(FileNotFoundError, 'complete desktop ZIP'):
@@ -44,13 +44,13 @@ class BridgeTests(unittest.TestCase):
             read_frame(io.BytesIO(b"\x01"))
 
     def test_real_host_roundtrip_chunks_and_stale_epoch(self):
-        self._host_roundtrip(["-m", "argus.integrations.browser_bridge"])
+        self._host_roundtrip(["-m", "saygo.integrations.browser_bridge"])
 
     def test_legacy_module_host_roundtrip(self):
-        self._host_roundtrip(["-m", "argus.browser_bridge"])
+        self._host_roundtrip(["-m", "saygo.browser_bridge"])
 
     def test_installed_legacy_script_host_roundtrip(self):
-        script = Path(__file__).resolve().parents[2] / "argus" / "browser_bridge.py"
+        script = Path(__file__).resolve().parents[2] / "saygo" / "browser_bridge.py"
         self._host_roundtrip(["-I", "-S", str(script)])
 
     def _host_roundtrip(self, entry):
@@ -104,7 +104,7 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(list(Path(tmp).glob("*.request")),[])
 
     def test_selection_and_session_backend_routing(self):
-        with tempfile.TemporaryDirectory() as tmp, patch.object(ds,"STATE_DIR",Path(tmp)), patch("argus.platforms.browser_extension.Client") as factory:
+        with tempfile.TemporaryDirectory() as tmp, patch.object(ds,"STATE_DIR",Path(tmp)), patch("saygo.platforms.browser_extension.Client") as factory:
             client = factory.return_value
             client.call.return_value = [{"page_id":"epoch:1"},{"page_id":"epoch:2"}]
             ds.save_state("web",{"kind":"browser","browser_backend":"extension","bridge_directory":tmp})

@@ -3,10 +3,10 @@
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
-from argus.platforms import device_session
-from argus.platforms.browser_playwright import PlaywrightBrowserPlatform, PageSelectionError
-from argus.runtime.resources import VisualResource, PreconditionError
-from argus.runtime.schema import validate
+from saygo.platforms import device_session
+from saygo.platforms.browser_playwright import PlaywrightBrowserPlatform, PageSelectionError
+from saygo.runtime.resources import VisualResource, PreconditionError
+from saygo.runtime.schema import validate
 
 
 class PlaywrightTests(TestCase):
@@ -34,7 +34,7 @@ class PlaywrightTests(TestCase):
         platform._browser = browser
         platform._contexts = {context}
         platform._playwright = pw
-        with patch("argus.platforms.browser_playwright._release_playwright") as release:
+        with patch("saygo.platforms.browser_playwright._release_playwright") as release:
             platform.disconnect()
             release.assert_called_once_with(pw)
         browser.close.assert_not_called()

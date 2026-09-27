@@ -5,15 +5,15 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-spec = importlib.util.spec_from_file_location('latest_installer', Path(__file__).resolve().parents[2]/'scripts/install_argus.py')
+spec = importlib.util.spec_from_file_location('latest_installer', Path(__file__).resolve().parents[2]/'scripts/install_saygo.py')
 installer = importlib.util.module_from_spec(spec); spec.loader.exec_module(installer)
 
 
 class LatestInstallerTests(unittest.TestCase):
     def release(self, number, beta=False):
-        name='install-argus-'+number+'.py'
+        name='install-saygo-'+number+'.py'
         return {'tag_name':'v'+number, 'prerelease':beta, 'assets':[{
-            'name':name, 'browser_download_url':'https://github.com/WilliamSkyWalker/argus/releases/download/v'+number+'/'+name,
+            'name':name, 'browser_download_url':'https://github.com/WilliamSkyWalker/saygo/releases/download/v'+number+'/'+name,
             'digest':'sha256:'+hashlib.sha256(b'installer').hexdigest()}]}
 
     def test_latest_semver_and_stable_channel(self):

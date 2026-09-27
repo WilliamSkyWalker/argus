@@ -6,15 +6,15 @@ import sys
 import unittest
 from unittest.mock import Mock, patch
 
-from argus.cli import main
-from argus.platforms import device_session as ds
+from saygo.cli import main
+from saygo.platforms import device_session as ds
 
 
 class NetworkCLITests(unittest.TestCase):
     def test_routes_query_and_releases_only_controller(self):
         controller = Mock()
         controller.network.return_value = {'events': [], 'active': True}
-        with patch.object(sys, 'argv', ['argus', 'device', 'network', '--session', 'web',
+        with patch.object(sys, 'argv', ['saygo', 'device', 'network', '--session', 'web',
                 '--after', '3', '--url', '/api', '--kind', 'ws', '--capture-id', 'capture']), \
                 patch.object(ds, 'load_state', return_value={'kind':'browser','browser_backend':'extension'}), \
                 patch.object(ds, 'attach_browser', return_value=controller) as attach, \
@@ -27,7 +27,7 @@ class NetworkCLITests(unittest.TestCase):
         controller.teardown.assert_not_called()
 
     def test_unsupported_backend_never_starts_a_browser(self):
-        with patch.object(sys, 'argv', ['argus','device','network','--session','web']), \
+        with patch.object(sys, 'argv', ['saygo','device','network','--session','web']), \
                 patch.object(ds, 'load_state', return_value={'kind':'browser','browser_backend':'playwright'}), \
                 patch.object(ds, 'start') as start, patch.object(ds, 'attach_browser') as attach, \
                 contextlib.redirect_stdout(io.StringIO()) as output:

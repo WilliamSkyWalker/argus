@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "argus": {
+    "saygo": {
       "type": "stdio",
       "command": "python3",
-      "args": ["-m", "argus.mcp.server"],
+      "args": ["-m", "saygo.mcp.server"],
       "env": {
         "PYTHONUNBUFFERED": "1"
       }

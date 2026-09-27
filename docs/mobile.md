@@ -1,6 +1,6 @@
 # Phones and mobile simulators
 
-`argus device` discovers local devices, connects them through the existing Appium
+`saygo device` discovers local devices, connects them through the existing Appium
 visual driver, and provisions Android/iOS simulators. It does not reset the phone
 or launch an app on connection. Screenshots, touch and typing remain Appium
 operations; adb/simctl are used here for discovery and simulator lifecycle only.
@@ -8,13 +8,13 @@ operations; adb/simctl are used here for discovery and simulator lifecycle only.
 ## Discover and connect
 
 ```bash
-python3 -m argus.cli device list
-python3 -m argus.cli device list --platform android
-python3 -m argus.cli device list --platform ios
+python3 -m saygo.cli device list
+python3 -m saygo.cli device list --platform android
+python3 -m saygo.cli device list --platform ios
 
-python3 -m argus.cli device connect --platform android --device DEVICE_ID --session phone
-python3 -m argus.cli device connect --platform ios --device DEVICE_UDID --session iphone
-python3 -m argus.cli device screenshot --serial phone --out phone.png
+python3 -m saygo.cli device connect --platform android --device DEVICE_ID --session phone
+python3 -m saygo.cli device connect --platform ios --device DEVICE_UDID --session iphone
+python3 -m saygo.cli device screenshot --serial phone --out phone.png
 ```
 
 Discovery returns JSON containing `devices`, installed `android_avds`, and
@@ -25,7 +25,7 @@ physical iPhones/iPads separately (physical discovery requires Xcode's devicectl
 
 Omit `--device` only when exactly one device is online. Shut-down simulators must
 be booted first. Multiple candidates produce an explicit selection error.
-`--session` is a persistent Argus alias; it is distinct from the physical UDID.
+`--session` is a persistent Saygo alias; it is distinct from the physical UDID.
 An alias already bound to another device/server is rejected. The existing
 `device start` entry point continues to work.
 
@@ -36,8 +36,8 @@ the device before screenshotting. These on-device permissions are not bypassed.
 For an existing phone, install the automation tools first if necessary:
 
 ```bash
-python3 -m argus.cli mcp init --skip-ios   # Android
-python3 -m argus.cli mcp init              # iOS on macOS
+python3 -m saygo.cli mcp init --skip-ios   # Android
+python3 -m saygo.cli mcp init              # iOS on macOS
 ```
 
 The emulator installer below also installs Appium and its required drivers.
@@ -48,15 +48,15 @@ is not a complete Android SDK installation.
 ## One-command Android setup
 
 ```bash
-python3 -m argus.cli device install --platform android --host auto --dry-run
-python3 -m argus.cli device install --platform android --host auto --name Argus --boot --connect --session phone
+python3 -m saygo.cli device install --platform android --host auto --dry-run
+python3 -m saygo.cli device install --platform android --host auto --name Saygo --boot --connect --session phone
 ```
 
 This prepares Java (reusing Java 17+ or downloading a private Temurin JDK 21),
 Android command-line tools, platform-tools, SDK platform/build-tools, emulator, an API 35 Google APIs system
 image, an AVD, and isolated Node/Appium/UiAutomator2. It then boots the AVD, waits
 for Android boot completion, opens an Appium session, and saves a verification
-screenshot under the caller's Argus runtime directory. Download size is several
+screenshot under the caller's Saygo runtime directory. Download size is several
 GB; SDK/package failures return an error instead of reporting success.
 
 The plan shows the host, paths, components, available disk space and acceleration
@@ -65,7 +65,7 @@ install anything. Provisioning requires at least 12 GiB free space. Installed
 components and matching AVDs are reused; failed downloads can be retried by
 rerunning the command. Partial SDK downloads are managed by Google's SDK manager.
 Download counters and periodic SDK installation messages go to stderr; stdout
-contains the final JSON result. Archives downloaded directly by Argus are
+contains the final JSON result. Archives downloaded directly by Saygo are
 SHA-256 checked (Node uses its official checksum manifest).
 
 SDK license acceptance is requested interactively before downloads. For unattended
@@ -75,7 +75,7 @@ Use `--headless` to omit the simulator window. Omit `--boot --connect` to instal
 without starting a device; `--connect` alone implies boot.
 
 The installer reuses `ANDROID_HOME`/`ANDROID_SDK_ROOT` or a detected SDK, otherwise
-uses `~/.argus/runtime/android-sdk`. Java, Node and Appium are private to Argus;
+uses `~/.saygo/runtime/android-sdk`. Java, Node and Appium are private to Saygo;
 system Node/npm are not replaced. AVDs use Android's configured/default AVD
 location. Reinstalling the same name/image preserves it. An existing name with a
 different image is rejected; use another `--name`. No AVD is force-overwritten.
@@ -91,7 +91,7 @@ host. See [Android acceleration requirements](https://developer.android.com/stud
 On a Mac with full Xcode installed and selected:
 
 ```bash
-python3 -m argus.cli device install --platform ios --name Argus --boot --connect
+python3 -m saygo.cli device install --platform ios --name Saygo --boot --connect
 ```
 
 This runs Xcode first-launch setup, downloads an iOS runtime with
@@ -109,15 +109,15 @@ See [Apple's component installation guide](https://developer.apple.com/documenta
 ## Boot an existing simulator
 
 ```bash
-python3 -m argus.cli device boot --platform android Argus
-python3 -m argus.cli device boot --platform android --host windows Argus --connect --session phone
-python3 -m argus.cli device boot --platform ios SIMULATOR_UDID
+python3 -m saygo.cli device boot --platform android Saygo
+python3 -m saygo.cli device boot --platform android --host windows Saygo --connect --session phone
+python3 -m saygo.cli device boot --platform ios SIMULATOR_UDID
 ```
 
 Android reuses the exact running AVD by name; iOS reuses an already booted
 simulator. Successful output means boot readiness was observed. A timeout leaves
 the emulator available for inspection, with Android startup logs in
-`~/.argus/runtime/emulator-NAME.log`. It does not silently choose another device.
+`~/.saygo/runtime/emulator-NAME.log`. It does not silently choose another device.
 
 ## Windows, WSL and remote hosts
 
@@ -128,7 +128,7 @@ WSL interop, not an installer for arbitrary remote machines. Windows host suppor
 currently requires x64 Windows, WSL interop and PowerShell.
 
 The Windows worker installs a private embedded Python and automation tools under
-`%LOCALAPPDATA%\Argus\mobile`. It reuses a Windows SDK from `ANDROID_HOME`,
+`%LOCALAPPDATA%\Saygo\mobile`. It reuses a Windows SDK from `ANDROID_HOME`,
 `ANDROID_SDK_ROOT` or the standard Android SDK location, if available. Otherwise
 the SDK is installed under that private directory. It never modifies the global
 PATH. Only the stdlib worker source files are copied; project configs and secrets
@@ -143,7 +143,7 @@ WSL loopback relay forwards requests through Windows Python stdio; no firewall
 rule or mirrored-networking setting is needed. Failed requests are not replayed.
 The worker uses a persistent private Windows adb port and supplies it to Appium,
 avoiding WSL's forwarding of the default adb port without stopping other adb servers.
-Background Windows tools use hidden consoles. Argus's private Appium process also
+Background Windows tools use hidden consoles. Saygo's private Appium process also
 preloads a small Node helper to hide adb/logcat child consoles; the emulator GUI
 remains visible. Emulator metrics and crash-report prompts are disabled for this
 automated launch; startup errors remain in the emulator log.
@@ -157,12 +157,12 @@ alias if the old one belongs to a previous server endpoint.
 Windows-hosted sessions appear under `device sessions`. Windows USB discovery
 from WSL requires a separately configured adb/USB connection.
 
-Argus in WSL/Linux can connect to devices managed by a Mac or Windows Appium host:
+Saygo in WSL/Linux can connect to devices managed by a Mac or Windows Appium host:
 
 ```bash
-python3 -m argus.cli device connect --platform ios --device DEVICE_UDID \
+python3 -m saygo.cli device connect --platform ios --device DEVICE_UDID \
   --server-url http://mac-host.example:4723 --session iphone
-python3 -m argus.cli device connect --platform android --device DEVICE_ID \
+python3 -m saygo.cli device connect --platform android --device DEVICE_ID \
   --server-url http://windows-host.example:4723 --session phone
 ```
 

@@ -1,6 +1,6 @@
 # Architecture and module layout
 
-`argus/` is organized by responsibility. Root modules are the stable CLI entry
+`saygo/` is organized by responsibility. Root modules are the stable CLI entry
 point (`cli.py`), shared configuration (`config.py`), logging (`logger.py`) and
 a compatibility command for the browser bridge (`browser_bridge.py`). Package
 initializers do not eagerly import engines or optional host dependencies.
@@ -40,14 +40,14 @@ cleanup. `devices.mobile.provision_runtime` owns shared installation orchestrati
 
 ## Entry points and deployment
 
-Existing commands remain available: `python -m argus.cli`,
-`python -m argus.mcp.server`, `python -m argus.drive.render`, and
-`python -m argus.browser_bridge`. The browser bridge implementation also runs as
-`python -m argus.integrations.browser_bridge` or directly as a standalone script.
+Existing commands remain available: `python -m saygo.cli`,
+`python -m saygo.mcp.server`, `python -m saygo.drive.render`, and
+`python -m saygo.browser_bridge`. The browser bridge implementation also runs as
+`python -m saygo.integrations.browser_bridge` or directly as a standalone script.
 Internal Python imports use the new package paths; they are not compatibility
 aliases at the package root.
 
-The Windows mobile bundle explicitly includes only `argus/__init__.py`, logging,
+The Windows mobile bundle explicitly includes only `saygo/__init__.py`, logging,
 the `devices` initializer, mobile provisioning, toolchain code, its worker and the
 Node console-suppression preload. It excludes repository configuration and
 credentials. Its isolated subprocess regression test uses no installed packages.
@@ -58,7 +58,7 @@ from the repository root. Keep these paths in sync when changing package layout.
 
 Run unittest discovery for `tests/cli_demo`, `tests/control_demo`, `tests/mobile_demo`,
 `tests/runtime_demo`, `tests/browser_demo` and `tests/extension_demo`.
-Real browser tests require `ARGUS_TEST_CHROME`; mocked tests do not establish
+Real browser tests require `SAYGO_TEST_CHROME`; mocked tests do not establish
 real desktop or mobile device compatibility.
 
 ## CLI responsibilities
@@ -72,5 +72,5 @@ Shared case discovery and filtering live in `qa/cases.py`; device readiness,
 APK installation and Android reset live in `qa/device_setup.py`.
 `qa/execution.py` owns sequential, Grid and multi-device scheduling. These paths
 share skip decisions, empty result construction and browser/Android preparation.
-MCP imports the owning modules directly; old private helpers in `argus.cli` have
+MCP imports the owning modules directly; old private helpers in `saygo.cli` have
 no compatibility aliases. Update callers when moving these internal interfaces.

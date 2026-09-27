@@ -7,15 +7,15 @@ import unittest
 from unittest.mock import Mock, patch
 import zipfile
 
-from argus.devices import mobile
-from argus.platforms import device_session as ds
+from saygo.devices import mobile
+from saygo.platforms import device_session as ds
 
 
 class MobileTests(unittest.TestCase):
     def test_wsl_discovery_uses_windows_host_when_linux_adb_missing(self):
-        from argus.devices import mobile_host
+        from saygo.devices import mobile_host
         result = {'devices':[{'id':'emulator-5554','platform':'android','connectable':True}],
-                  'android_avds':['Argus'],'diagnostics':[]}
+                  'android_avds':['Saygo'],'diagnostics':[]}
         with patch.object(mobile.platform, 'system', return_value='Linux'), \
              patch.object(mobile.platform, 'release', return_value='microsoft-WSL2'), \
              patch.object(mobile, 'android_devices', return_value=[]), \
@@ -76,7 +76,7 @@ class MobileTests(unittest.TestCase):
     def test_ios_install_requires_mac_before_download(self):
         with patch.object(mobile.platform,'system',return_value='Linux'), patch.object(mobile,'run') as run:
             with self.assertRaisesRegex(RuntimeError,'macOS'):
-                mobile.install_ios('Argus')
+                mobile.install_ios('Saygo')
             run.assert_not_called()
 
     def test_ios_discovery_uses_udid_not_coredevice_identifier(self):
@@ -88,14 +88,14 @@ class MobileTests(unittest.TestCase):
 
     def test_ios_install_picks_latest_version_and_reuses(self):
         runtimes={'runtimes':[{'identifier':'com.apple.CoreSimulator.SimRuntime.iOS-9-0','version':'9.0','isAvailable':True},{'identifier':'com.apple.CoreSimulator.SimRuntime.iOS-18-0','version':'18.0','isAvailable':True}]}
-        with patch.object(mobile,'require_mac'), patch.object(mobile,'run',side_effect=['','',json.dumps(runtimes)]) as run, patch.object(mobile,'ios_simulators',return_value=[{'name':'Argus','id':'SIM_ID','runtime':runtimes['runtimes'][1]['identifier']}]):
-            result=mobile.install_ios('Argus')
+        with patch.object(mobile,'require_mac'), patch.object(mobile,'run',side_effect=['','',json.dumps(runtimes)]) as run, patch.object(mobile,'ios_simulators',return_value=[{'name':'Saygo','id':'SIM_ID','runtime':runtimes['runtimes'][1]['identifier']}]):
+            result=mobile.install_ios('Saygo')
         self.assertEqual(result['device'],'SIM_ID')
         self.assertFalse(result['created'])
         self.assertEqual(run.call_count,3)
 
     def test_ios_boot_already_booted_is_idempotent(self):
-        with patch.object(mobile,'require_mac'), patch.object(mobile,'ios_simulators',return_value=[{'id':'SIM_ID','name':'Argus','state':'Booted'}]), patch.object(mobile,'run',return_value='') as run:
+        with patch.object(mobile,'require_mac'), patch.object(mobile,'ios_simulators',return_value=[{'id':'SIM_ID','name':'Saygo','state':'Booted'}]), patch.object(mobile,'run',return_value='') as run:
             self.assertEqual(mobile.boot_device('ios','SIM_ID',headless=True)['state'],'ready')
         self.assertEqual(run.call_args.args[0],['xcrun','simctl','bootstatus','SIM_ID','-b'])
 
@@ -105,7 +105,7 @@ class MobileTests(unittest.TestCase):
             (root/'cmdline-tools/latest/bin/sdkmanager').touch()
             (root/'cmdline-tools/latest/bin/avdmanager').touch()
             with patch.object(mobile,'sdk_root',return_value=root), patch.object(mobile,'ensure_java'), patch.object(mobile.platform,'system',return_value='Linux'), patch.object(mobile.platform,'machine',return_value='x86_64'), patch.object(mobile,'run',return_value='') as run:
-                result=mobile.install_android('Argus',35,True)
+                result=mobile.install_android('Saygo',35,True)
             self.assertTrue(result['created'])
             calls=[list(map(str,c.args[0])) for c in run.call_args_list]
             self.assertIn('system-images;android-35;google_apis;x86_64',calls[1])
@@ -116,7 +116,7 @@ class MobileTests(unittest.TestCase):
 
     def test_invalid_names_rejected_before_install(self):
         with patch.object(mobile,'ensure_java') as java:
-            for name in ['../outside','Argus;bad','x\ny']:
+            for name in ['../outside','Saygo;bad','x\ny']:
                 with self.assertRaises(ValueError): mobile.install_android(name)
             java.assert_not_called()
 
@@ -129,30 +129,30 @@ class MobileTests(unittest.TestCase):
 
     def test_android_boot_reuses_exact_avd(self):
         rows=[{'id':'emulator-5554','type':'emulator','connectable':True}]
-        with patch.object(mobile,'android_devices',return_value=rows), patch.object(mobile,'run',side_effect=['Argus','Argus\nOK','1','Argus\nOK']), patch.object(mobile.subprocess,'Popen') as spawn:
-            result=mobile.boot_device('android','Argus')
+        with patch.object(mobile,'android_devices',return_value=rows), patch.object(mobile,'run',side_effect=['Saygo','Saygo\nOK','1','Saygo\nOK']), patch.object(mobile.subprocess,'Popen') as spawn:
+            result=mobile.boot_device('android','Saygo')
         self.assertEqual(result['device'],'emulator-5554')
         spawn.assert_not_called()
 
     def test_boot_waits_for_new_adb_server_to_discover_existing_emulator(self):
         rows=[{'id':'emulator-5554','type':'emulator','connectable':True}]
-        with patch.object(mobile,'android_devices',side_effect=[[],rows]), patch.object(mobile,'run',side_effect=['Argus','Argus\nOK','1','Argus\nOK']), patch.object(mobile.time,'sleep'), patch.object(mobile.subprocess,'Popen') as spawn:
-            result=mobile.boot_device('android','Argus')
+        with patch.object(mobile,'android_devices',side_effect=[[],rows]), patch.object(mobile,'run',side_effect=['Saygo','Saygo\nOK','1','Saygo\nOK']), patch.object(mobile.time,'sleep'), patch.object(mobile.subprocess,'Popen') as spawn:
+            result=mobile.boot_device('android','Saygo')
         self.assertEqual(result['device'],'emulator-5554')
         spawn.assert_not_called()
 
     def test_boot_rejects_wrong_port_owner(self):
         rows=[{'id':'emulator-5554','type':'emulator','connectable':True}]
-        with patch.object(mobile,'android_devices',return_value=rows), patch.object(mobile,'run',side_effect=['Argus','Argus\nOK','1','Other\nOK']):
-            with self.assertRaisesRegex(ValueError,'another AVD'): mobile.boot_device('android','Argus')
+        with patch.object(mobile,'android_devices',return_value=rows), patch.object(mobile,'run',side_effect=['Saygo','Saygo\nOK','1','Other\nOK']):
+            with self.assertRaisesRegex(ValueError,'another AVD'): mobile.boot_device('android','Saygo')
 
     def test_boot_timeout_is_not_ready(self):
         rows=[{'id':'emulator-5554','type':'emulator','connectable':True}]
-        with patch.object(mobile,'android_devices',return_value=rows), patch.object(mobile,'run',side_effect=['Argus','Argus\nOK']), patch.object(mobile.time,'monotonic',side_effect=[0,300]):
-            with self.assertRaisesRegex(RuntimeError,'timed out'): mobile.boot_device('android','Argus')
+        with patch.object(mobile,'android_devices',return_value=rows), patch.object(mobile,'run',side_effect=['Saygo','Saygo\nOK']), patch.object(mobile.time,'monotonic',side_effect=[0,300]):
+            with self.assertRaisesRegex(RuntimeError,'timed out'): mobile.boot_device('android','Saygo')
 
     def test_session_persists_physical_id_separately_from_alias(self):
-        with tempfile.TemporaryDirectory() as tmp, patch.object(ds,'STATE_DIR',Path(tmp)), patch.object(ds,'attach',return_value=None), patch('argus.platforms.appium.AppiumPlatform') as factory:
+        with tempfile.TemporaryDirectory() as tmp, patch.object(ds,'STATE_DIR',Path(tmp)), patch.object(ds,'attach',return_value=None), patch('saygo.platforms.appium.AppiumPlatform') as factory:
             p=factory.return_value
             p._server_url='http://mac.example:4723'; p._os='ios'
             p._driver.session_id='SESSION_ID'; p._screen_width=100; p._screen_height=200
@@ -163,7 +163,7 @@ class MobileTests(unittest.TestCase):
             self.assertEqual(p.setup.call_args.args[0]['appium']['team_id'],'TEAM_PLACEHOLDER')
 
     def test_driver_install_failure_is_not_success(self):
-        from argus.devices import toolchain
+        from saygo.devices import toolchain
         with tempfile.TemporaryDirectory() as tmp, patch.object(toolchain,'APPIUM_HOME',Path(tmp)), patch.object(toolchain,'_run',side_effect=[Mock(stdout='{}',returncode=0),Mock(stderr='install failed',returncode=1)]):
             with self.assertRaisesRegex(RuntimeError,'install failed'):
                 toolchain.install_drivers('/node','/appium',ios=False)
@@ -172,9 +172,9 @@ class MobileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp); tools=root/'cmdline-tools/latest/bin'; tools.mkdir(parents=True)
             (tools/'sdkmanager').touch(); (tools/'avdmanager').touch()
-            avds=root/'avds'; avds.mkdir(); data=avds/'Argus.avd'; data.mkdir()
-            (avds/'Argus.ini').write_text('path='+str(data)+'\n')
+            avds=root/'avds'; avds.mkdir(); data=avds/'Saygo.avd'; data.mkdir()
+            (avds/'Saygo.ini').write_text('path='+str(data)+'\n')
             (data/'config.ini').write_text('image.sysdir.1=system-images/android-35/google_apis/x86_64/\n')
-            with patch.dict(os.environ,{'ANDROID_AVD_HOME':str(avds)}), patch.object(mobile,'sdk_root',return_value=root), patch.object(mobile,'ensure_java'), patch.object(mobile.platform,'system',return_value='Linux'), patch.object(mobile.platform,'machine',return_value='x86_64'), patch.object(mobile,'run',side_effect=['','','Argus']) as run:
-                self.assertFalse(mobile.install_android('Argus',35,True)['created'])
+            with patch.dict(os.environ,{'ANDROID_AVD_HOME':str(avds)}), patch.object(mobile,'sdk_root',return_value=root), patch.object(mobile,'ensure_java'), patch.object(mobile.platform,'system',return_value='Linux'), patch.object(mobile.platform,'machine',return_value='x86_64'), patch.object(mobile,'run',side_effect=['','','Saygo']) as run:
+                self.assertFalse(mobile.install_android('Saygo',35,True)['created'])
                 self.assertEqual(run.call_count,3)

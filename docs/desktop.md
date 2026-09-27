@@ -1,6 +1,6 @@
-# Argus Desktop (first development build)
+# Saygo Desktop (first development build)
 
-Argus Desktop uses **Qt 6 Widgets + PySide6 (Python)**. Qt is the UI framework;
+Saygo Desktop uses **Qt 6 Widgets + PySide6 (Python)**. Qt is the UI framework;
 Python is the implementation language. This directly reuses the existing control
 service and durable InteractiveRuntime. It does not depend on pyenv. Packaged users
 do not install Python, pip or a programming Agent.
@@ -21,7 +21,7 @@ References: [Qt for Python](https://doc.qt.io/qtforpython-6),
 
 ```sh
 python3 -m pip install '.[desktop]'
-argus-desktop
+saygo-desktop
 ```
 
 No pyenv is required. An isolated environment is optional for development. On
@@ -44,7 +44,7 @@ The latest device screenshot is available through the observation button.
 2. Choose session-only credentials or the OS credential store. Keys never enter
    `desktop.json`, task records or exported reports. If a secure keyring backend
    is unavailable, uncheck Remember and use a session-only key. Other provider
-   settings live under `ARGUS_HOME_DIR` or `~/.argus`.
+   settings live under `SAYGO_HOME_DIR` or `~/.saygo`.
 3. Connect a named browser/desktop/mobile session. The browser bridge button
    registers the development extension identity and prepares extension files;
    load that directory in Chrome and click Connect. This replaces an existing
@@ -75,9 +75,9 @@ python3 scripts/package_desktop.py
 ```
 
 Build on each target OS; do not rename a Linux executable to `.exe`. Outputs are
-in `dist/desktop/ArgusDesktop` (macOS also produces an `.app`). Distribute the whole
+in `dist/desktop/SaygoDesktop` (macOS also produces an `.app`). Distribute the whole
 folder, not just the executable. Qt, Python and extension assets are included.
-Windows uses a windowed `ArgusDesktop.exe` and a separate `ArgusNativeHost.exe`
+Windows uses a windowed `SaygoDesktop.exe` and a separate `SaygoNativeHost.exe`
 for Chrome native messaging over stdio. Keep both executables and `_internal`
 together. Opening the desktop app does not open a console window.
 
@@ -102,5 +102,5 @@ remain unverified. Windows users do not need WSL, Python or pyenv.
 macOS: the DMG packaging script and CI workflow are prepared, but no macOS build
 or runtime test has been performed yet. DMG support is not yet validated.
 The app can run on Linux, but Linux local-window automation is not implemented by
-the current Argus drivers; browser extension and supported mobile paths remain
+the current Saygo drivers; browser extension and supported mobile paths remain
 available. A live provider task needs a user-supplied model and connected test app.

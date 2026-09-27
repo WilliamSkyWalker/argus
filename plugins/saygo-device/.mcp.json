@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "saygo": {
+      "command": "python3",
+      "args": ["-m", "saygo.mcp.server", "--profile", "device"],
+      "env": {"SAYGO_MCP_PROFILE": "device", "PYTHONUNBUFFERED": "1"}
+    }
+  }
+}
