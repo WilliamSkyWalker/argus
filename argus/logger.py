@@ -56,10 +56,9 @@ def get_logger(name: str) -> logging.Logger:
     """Get a named logger under the 'argus' namespace."""
     logger = logging.getLogger(f"argus.{name}")
     if not logger.handlers:
-        handler = logging.StreamHandler(sys.stderr)
+        handler = logging.StreamHandler(sys.stderr) if sys.stderr is not None else logging.NullHandler()
         handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
         handler.addFilter(_CaseContextFilter())
-        handler.flush = lambda: sys.stderr.flush()  # force flush after each log
         logger.addHandler(handler)
         # level 不在子 logger 上设（保持 NOTSET 继承 "argus" 父级），
         # 否则 set_level("DEBUG") 永远压不过子级的 INFO，debug 日志全部不可达

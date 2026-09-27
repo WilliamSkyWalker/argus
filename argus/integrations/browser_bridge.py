@@ -186,15 +186,24 @@ def _serve_locked(directory, source, sink):
         atomic_json(status, {**info, "connected": False})
 
 
+def host_command(directory):
+    if getattr(sys, 'frozen', False):
+        executable = Path(sys.executable)
+        if sys.platform == 'win32':
+            executable = executable.with_name('ArgusNativeHost.exe')
+            if not executable.is_file():
+                raise FileNotFoundError('ArgusNativeHost.exe is missing; extract the complete desktop ZIP')
+        return [str(executable), '--native-host', '--directory', str(directory)]
+    return [sys.executable, str(Path(__file__).resolve()), 'host', '--directory', str(directory)]
+
+
 def install(directory, extension_id, browser):
     if not re.fullmatch("[a-p]{32}", extension_id):
         raise ValueError("extension ID must be the 32-letter ID from chrome://extensions")
     directory = Path(directory).expanduser().resolve()
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     script = str(Path(__file__).resolve())
-    command = ([sys.executable, '--native-host', '--directory', str(directory)]
-               if getattr(sys, 'frozen', False) else
-               [sys.executable, script, 'host', '--directory', str(directory)])
+    command = host_command(directory)
     if os.name == "nt":
         launcher = directory / "host.cmd"
         # cmd expands percent even inside quotes; reject paths that cannot be represented safely.

@@ -18,6 +18,19 @@ from argus.platforms import device_session as ds
 
 
 class BridgeTests(unittest.TestCase):
+    def test_frozen_windows_uses_separate_stdio_host(self):
+        from argus.integrations.browser_bridge import host_command
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp)/'ArgusDesktop.exe'
+            host = Path(tmp)/'ArgusNativeHost.exe'
+            with patch.object(sys, 'frozen', True, create=True), \
+                 patch.object(sys, 'platform', 'win32'), patch.object(sys, 'executable', str(exe)):
+                with self.assertRaisesRegex(FileNotFoundError, 'complete desktop ZIP'):
+                    host_command(tmp)
+                host.touch()
+                self.assertEqual(host_command(tmp),
+                                 [str(host), '--native-host', '--directory', tmp])
+
     def test_frame_unicode_partial_reads_and_limits(self):
         stream = io.BytesIO()
         write_frame(stream, {"text": "中文"})

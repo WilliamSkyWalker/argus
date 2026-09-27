@@ -31,6 +31,13 @@ Windows distribution is a native Windows build.
 
 ## User flow
 
+The main window is a conversation: recent tasks live in the left sidebar,
+messages and progress appear in the center, and the composer stays at the bottom.
+Open model settings and device connections from the sidebar. Enter sends a task;
+Shift+Enter inserts a newline. During human handoff, reply in the composer to
+continue the current task. Uncertain actions still require explicit review.
+The latest device screenshot is available through the observation button.
+
 1. Enter an OpenAI-compatible API base URL, vision model name and API Key. Test
    image input. HTTP is allowed only for local loopback endpoints; remote providers
    must use HTTPS. The client never automatically retries a model request.
@@ -70,8 +77,9 @@ python3 scripts/package_desktop.py
 Build on each target OS; do not rename a Linux executable to `.exe`. Outputs are
 in `dist/desktop/ArgusDesktop` (macOS also produces an `.app`). Distribute the whole
 folder, not just the executable. Qt, Python and extension assets are included.
-The Windows beta uses a console executable because Chrome native messaging needs
-stdio; a polished GUI installer should ship a separate host executable.
+Windows uses a windowed `ArgusDesktop.exe` and a separate `ArgusNativeHost.exe`
+for Chrome native messaging over stdio. Keep both executables and `_internal`
+together. Opening the desktop app does not open a console window.
 
 `package_desktop.py` creates a verified DMG with an Applications shortcut on macOS,
 a ZIP containing the executable and dependencies on Windows, and tar.gz on Linux.
@@ -86,8 +94,9 @@ and obligations still apply; see the official Qt documentation.
 
 Linux/WSL: Qt offscreen startup, screenshot rendering, core pause/recovery tests
 and local standalone packaging are checked during development.
-Windows x64: a native Python 3.13 build passed the seven desktop tests; the frozen
-EXE passed Qt offscreen startup and the browser native-messaging handshake. A
+Windows x64: a native Python 3.13 build passed ten desktop tests including chat
+interaction tests. The frozen GUI passed visible Qt startup; PE headers confirm
+a windowed GUI and a separate console host, which passed the native-messaging handshake. A
 portable ZIP was produced. Clean-machine installation and live task execution
 remain unverified. Windows users do not need WSL, Python or pyenv.
 macOS: the DMG packaging script and CI workflow are prepared, but no macOS build

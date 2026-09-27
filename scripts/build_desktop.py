@@ -12,7 +12,11 @@ command=[sys.executable,'-m','PyInstaller','--noconfirm','--clean','--onedir','-
          '--add-data',str(ROOT/'extensions/argus-browser')+os.pathsep+'argus/desktop/assets/extension',
          '--add-data',str(ROOT/'LICENSE')+os.pathsep+'.',
          str(ROOT/'argus/desktop/app.py')]
-# Windows GUI applications lack stdin/stdout required by Chrome native messaging.
-# Use a console executable for this beta; macOS produces an app bundle.
-if sys.platform=='darwin': command.insert(3,'--windowed')
+if sys.platform == 'win32':
+    command = [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean',
+               '--distpath', str(ROOT/'dist/desktop'),
+               '--workpath', str(ROOT/'build/desktop'),
+               str(ROOT/'scripts/desktop_windows.spec')]
+elif sys.platform=='darwin':
+    command.insert(3,'--windowed')
 subprocess.run(command,cwd=ROOT,check=True)

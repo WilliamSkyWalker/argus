@@ -1,5 +1,6 @@
 """Qt Widgets shell. Network and device operations run off the GUI thread."""
 import json
+from html import escape
 from pathlib import Path
 import sys
 import threading
@@ -30,11 +31,21 @@ def make_window():
     from PySide6.QtCore import QUrl
     from PySide6.QtWidgets import (QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,
         QTabWidget,QLineEdit,QPushButton,QLabel,QPlainTextEdit,QCheckBox,QComboBox,
-        QListWidget,QAbstractItemView,QSplitter,QFileDialog,QInputDialog,QMessageBox)
+        QListWidget,QListWidgetItem,QAbstractItemView,QSplitter,QFileDialog,QInputDialog,QMessageBox,
+        QDialog,QTextBrowser,QFrame)
     from argus.desktop.model import load_settings, load_key, save_settings, VisionModel
     from argus.desktop.runner import TaskLoop
     from argus.runtime import interactive
     from argus.devices import control, service
+
+    class Composer(QPlainTextEdit):
+        submitted = Signal()
+
+        def keyPressEvent(self, event):
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self.submitted.emit()
+            else:
+                super().keyPressEvent(event)
 
     class Worker(QThread):
         result = Signal(object)
@@ -51,19 +62,42 @@ def make_window():
     class Window(QMainWindow):
         def __init__(self):
             super().__init__()
-            self.setWindowTitle('Argus · 桌面任务助手'); self.resize(1180,800)
-            self.worker = None; self.task_id = None
+            self.setWindowTitle('Argus'); self.resize(1220,840); self.setMinimumSize(900,640)
+            self.worker = None; self.task_id = None; self.task_state = None
             self.pause_event = threading.Event(); self.stop_event = threading.Event()
-            self.buttons = []
-            self.tabs = QTabWidget(); self.setCentralWidget(self.tabs)
-            self.statusBar().showMessage('就绪 · 先配置模型，再连接目标')
+            self.buttons = []; self.dialogs = {}; self.last_transcript = ''
+            shell=QWidget(); self.setCentralWidget(shell)
+            body=QHBoxLayout(shell); body.setContentsMargins(0,0,0,0); body.setSpacing(0)
+            self.sidebar=QFrame(); self.sidebar.setObjectName('sidebar'); self.sidebar.setFixedWidth(230)
+            self.side=QVBoxLayout(self.sidebar); self.side.setContentsMargins(18,24,18,18); self.side.setSpacing(12)
+            brand=QLabel('◉  Argus'); brand.setObjectName('brand'); self.side.addWidget(brand)
+            self.button('＋  新对话',self.new_chat,self.side)
+            self.side.addWidget(QLabel('最近对话'))
+            self.tasks=QListWidget(); self.tasks.setObjectName('history'); self.side.addWidget(self.tasks,1)
+            self.tasks.itemClicked.connect(lambda item:self.load_task())
+            self.button('设备与连接',lambda:self.dialogs['设备连接'].show(),self.side)
+            self.button('模型设置',lambda:self.dialogs['模型设置'].show(),self.side)
+            body.addWidget(self.sidebar)
+            self.chat=QWidget(); body.addWidget(self.chat,1)
             self.settings_page(); self.devices_page(); self.task_page()
-            self.setStyleSheet('''QMainWindow,QWidget { background:#f5f7fb; color:#172b4d; font-size:14px; }
-                QLineEdit,QPlainTextEdit,QListWidget,QComboBox { background:white; border:1px solid #cbd5e1; border-radius:5px; padding:7px; }
-                QPushButton { background:#e3eaf5; border:0; border-radius:6px; padding:9px 15px; }
-                QPushButton:hover { background:#cbdaf1; } QPushButton:disabled { color:#94a3b8; }
-                QTabBar::tab { padding:14px 30px; } QTabBar::tab:selected { color:#2563eb; background:white; }
-                QLabel#title { font-size:24px; font-weight:600; padding:12px 0; }''')
+            self.setStyleSheet('''QMainWindow,QWidget { background:#ffffff; color:#242424; font-size:14px; font-family:"Segoe UI","Microsoft YaHei UI",sans-serif; }
+                QFrame#sidebar,QFrame#sidebar QLabel { background:#f7f7f8; }
+                QLabel#brand { font-size:25px; font-weight:700; padding-bottom:18px; }
+                QLabel#title { font-size:25px; font-weight:600; }
+                QLabel#muted { color:#777777; font-size:12px; }
+                QLineEdit,QPlainTextEdit,QComboBox { background:white; border:1px solid #dedede; border-radius:10px; padding:10px; selection-background-color:#d3e9df; }
+                QPushButton { background:#f2f2f2; border:0; border-radius:8px; padding:10px 12px; text-align:left; }
+                QPushButton:hover { background:#e7e7e7; } QPushButton:disabled { color:#aaaaaa; }
+                QPushButton#send { background:#202020; color:white; border-radius:18px; text-align:center; }
+                QPushButton#send:disabled { background:#b5b5b5; }
+                QListWidget { border:0; background:#f7f7f8; outline:0; }
+                QListWidget::item { padding:12px 6px; border-radius:6px; }
+                QListWidget::item:selected { background:#e7e7e9; color:#202020; }
+                QTextBrowser { border:0; background:white; padding:12px; }
+                QStatusBar { color:#777777; font-size:12px; border-top:1px solid #eeeeee; }
+                QFrame#composer { border:1px solid #dedede; border-radius:18px; }
+                QFrame#composer QPlainTextEdit { border:0; }
+            ''')
             try:
                 data = load_settings(); self.base.setText(data['base_url']); self.model.setText(data['model'])
                 self.remember.setChecked(data.get('remember',False)); self.key.setText(load_key(data))
@@ -72,10 +106,11 @@ def make_window():
             self.refresh_sessions(); self.refresh_tasks()
 
         def page(self, name, heading, description):
-            page=QWidget(); layout=QVBoxLayout(page); layout.setContentsMargins(24,20,24,20)
+            dialog=QDialog(self); dialog.setWindowTitle(name); dialog.resize(820,560)
+            self.dialogs[name]=dialog
+            layout=QVBoxLayout(dialog); layout.setContentsMargins(24,24,24,24); layout.setSpacing(18)
             title=QLabel(heading); title.setObjectName('title'); layout.addWidget(title)
             subtitle=QLabel(description); subtitle.setWordWrap(True); layout.addWidget(subtitle)
-            self.tabs.addTab(page,name)
             return layout
 
         def button(self, text, callback, layout):
@@ -163,57 +198,116 @@ def make_window():
             self.job(install)
 
         def task_page(self):
-            layout=self.page('任务工作台','描述任务，观察执行','首次运行请使用测试应用。暂停在当前调用返回后生效；已经派发的动作不会撤销或自动重放。')
-            self.goal=QPlainTextEdit(); self.goal.setPlaceholderText('例如：在浏览器里打开产品设置，检查通知选项是否开启。'); self.goal.setMaximumHeight(90); layout.addWidget(self.goal)
-            splitter=QSplitter(); layout.addWidget(splitter)
-            left=QWidget(); column=QVBoxLayout(left); splitter.addWidget(left)
-            column.addWidget(QLabel('绑定会话（可多选）'))
-            self.sessions=QListWidget(); self.sessions.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection); column.addWidget(self.sessions)
-            self.button('刷新会话',self.refresh_sessions,column)
-            self.button('创建并执行',self.start_task,column)
-            self.tasks=QComboBox(); column.addWidget(self.tasks)
-            self.button('刷新任务列表',self.refresh_tasks,column)
-            self.button('加载任务与最新观察',self.load_task,column)
-            self.button('继续执行',self.resume_task,column)
-            self.button('核对不确定动作',self.resolve_task,column)
-            self.button('导出记录',self.export_task,column)
-            self.pause_button=QPushButton('暂停 / 人工接管'); self.pause_button.clicked.connect(self.request_pause); column.addWidget(self.pause_button)
-            self.stop_button=QPushButton('停止任务'); self.stop_button.clicked.connect(self.request_stop); column.addWidget(self.stop_button)
-            right=QWidget(); output=QVBoxLayout(right); splitter.addWidget(right); splitter.setStretchFactor(1,3)
-            self.task_status=QLabel('尚未创建任务'); output.addWidget(self.task_status)
-            self.preview=QLabel('操作画面'); self.preview.setMinimumSize(400,260); self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter); output.addWidget(self.preview,2)
-            self.timeline=QPlainTextEdit(); self.timeline.setReadOnly(True); output.addWidget(self.timeline,1)
+            layout=QVBoxLayout(self.chat); layout.setContentsMargins(30,20,30,16); layout.setSpacing(12)
+            header=QHBoxLayout(); layout.addLayout(header)
+            title=QLabel('Argus'); title.setObjectName('title'); header.addWidget(title); header.addStretch()
+            self.button('操作画面',lambda:self.preview_dialog.show(),header)
+            self.button('导出对话',self.export_task,header)
+            self.task_status=QLabel('新对话'); self.task_status.setObjectName('muted'); layout.addWidget(self.task_status)
+            self.timeline=QTextBrowser(); self.timeline.setOpenExternalLinks(False); layout.addWidget(self.timeline,1)
+            self.preview_dialog=QDialog(self); self.preview_dialog.setWindowTitle('最新操作画面'); self.preview_dialog.resize(860,600)
+            preview_layout=QVBoxLayout(self.preview_dialog)
+            self.preview=QLabel('执行任务后，这里显示最新观察画面'); self.preview.setMinimumSize(400,260)
+            self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter); preview_layout.addWidget(self.preview)
+            actions=QHBoxLayout(); layout.addLayout(actions)
+            self.pause_button=QPushButton('暂停'); self.pause_button.clicked.connect(self.request_pause); actions.addWidget(self.pause_button)
+            self.stop_button=QPushButton('停止'); self.stop_button.clicked.connect(self.request_stop); actions.addWidget(self.stop_button)
+            self.resolve_button=self.button('核对操作结果',self.resolve_task,actions); actions.addStretch()
+            self.button('选择操作目标',lambda:self.targets_dialog.show(),actions)
+            self.targets_dialog=QDialog(self); self.targets_dialog.setWindowTitle('选择操作目标'); self.targets_dialog.resize(420,400)
+            targets=QVBoxLayout(self.targets_dialog); targets.addWidget(QLabel('选择本次任务可以操作的会话（可多选）'))
+            self.sessions=QListWidget(); self.sessions.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection); targets.addWidget(self.sessions)
+            self.button('刷新列表',self.refresh_sessions,targets)
+            self.button('完成',self.targets_dialog.accept,targets)
+            frame=QFrame(); frame.setObjectName('composer'); composer=QVBoxLayout(frame); layout.addWidget(frame)
+            self.goal=Composer(); self.goal.submitted.connect(self.send_message)
+            self.goal.setPlaceholderText('给 Argus 发送任务…'); self.goal.setFixedHeight(80); composer.addWidget(self.goal)
+            bottom=QHBoxLayout(); composer.addLayout(bottom)
+            self.target_label=QLabel('请先选择操作目标'); self.target_label.setObjectName('muted'); bottom.addWidget(self.target_label,1)
+            self.send_button=self.button('发送  ↑',self.send_message,bottom); self.send_button.setObjectName('send')
+            self.sessions.itemSelectionChanged.connect(self.update_target_label)
+            hint=QLabel('Enter 发送 · Shift + Enter 换行 · Argus 会根据截图操作你选择的设备'); hint.setObjectName('muted')
+            hint.setAlignment(Qt.AlignmentFlag.AlignCenter); layout.addWidget(hint)
+            self.welcome()
+
+        def welcome(self):
+            self.last_transcript=''
+            for button in (self.pause_button,self.stop_button,self.resolve_button):button.hide()
+            self.timeline.setHtml('<div style="text-align:center;margin-top:100px"><h1>今天想完成什么？</h1>'
+                '<p style="color:#777">把任务交给 Argus，一起观察每一步。</p>'
+                '<p style="color:#999">连接模型和设备后，在下方描述你的任务。</p></div>')
+
+        def new_chat(self):
+            if self.worker:return
+            if self.task_state and self.task_state['status'] not in ('succeeded','cancelled'):
+                QMessageBox.information(self,'任务尚未结束','请先停止当前任务，再开始新对话。'); return
+            self.task_id=None; self.task_state=None; self.goal.clear(); self.preview.clear()
+            self.task_status.setText('新对话'); self.welcome()
+
+        def update_target_label(self):
+            names=[item.text() for item in self.sessions.selectedItems()]
+            self.target_label.setText(' · '.join(names) if names else '请先选择操作目标')
 
         def refresh_sessions(self):
+            selected={item.text() for item in self.sessions.selectedItems()}
             self.sessions.clear()
             for row in control.sessions():
                 if not row.get('disconnected') and not row.get('error') and (row.get('platform')!='browser' or row.get('backend')=='extension'):
-                    self.sessions.addItem(row['session'])
+                    item=QListWidgetItem(row['session']); self.sessions.addItem(item); item.setSelected(row['session'] in selected)
+            self.update_target_label()
 
         def refresh_tasks(self):
             self.tasks.clear()
-            for row in reversed(interactive.call('list')['tasks']): self.tasks.addItem(row['id']+' · '+row['status'],row['id'])
+            for row in reversed(interactive.call('list')['tasks']):
+                state=interactive.call('status',row['id'])
+                if not state.get('desktop_goal'):continue
+                item=QListWidgetItem(state['desktop_goal'].replace('\n',' ')[:28])
+                item.setData(Qt.ItemDataRole.UserRole,row['id']); item.setToolTip(state['desktop_goal'])
+                self.tasks.addItem(item)
+                if row['id']==self.task_id:self.tasks.setCurrentItem(item)
+
+        def send_message(self):
+            if self.worker:return
+            if not self.goal.toPlainText().strip():return
+            if self.task_state and self.task_state['status'] in ('waiting_for_human','idle'):
+                self.resume_task(self.goal.toPlainText().strip()); return
+            if self.task_state and self.task_state['status']=='needs_review':
+                QMessageBox.information(self,'需要核对','请先点击“核对操作结果”，确认上一次动作是否完成。'); return
+            self.start_task()
 
         def start_task(self):
             settings,key=self.model_values(); goal=self.goal.toPlainText().strip()
             bindings={f'target_{i+1}':item.text() for i,item in enumerate(self.sessions.selectedItems())}
+            if not bindings:
+                self.targets_dialog.show(); self.statusBar().showMessage('选择至少一个操作目标，然后发送任务'); return
+            if not settings['model'] or not key:
+                self.dialogs['模型设置'].show(); self.statusBar().showMessage('请先填写模型和 API Key'); return
+            self.goal.clear()
             def start(emit):
                 loop=TaskLoop(VisionModel(settings,key)); state=loop.create(goal,bindings); emit(state)
                 return loop.run(state['id'],self.pause_event,self.stop_event,emit)
             self.job(start,loop=True)
 
         def load_task(self):
-            task_id=self.tasks.currentData()
+            if self.worker:return
+            item=self.tasks.currentItem()
+            task_id=item.data(Qt.ItemDataRole.UserRole) if item else None
             if task_id: self.job(lambda emit:interactive.call('recover',task_id))
 
-        def resume_task(self):
+        def resume_task(self, note=None):
             if not self.task_id: return
             settings,key=self.model_values(); task_id=self.task_id
-            note,ok=QInputDialog.getText(self,'继续任务','人工操作或核对说明：',text='已核对，可以继续')
-            if not ok or not note.strip(): return
+            if note is None:
+                note,ok=QInputDialog.getText(self,'继续任务','人工操作或核对说明：',text='已核对，可以继续')
+                if not ok or not note.strip(): return
+            self.goal.clear()
             def resume(emit):
                 loop=TaskLoop(VisionModel(settings,key)); state=loop.runtime.store.get(task_id)
                 if state['status']=='waiting_for_human': loop.runtime.resume_task(task_id,note)
+                else:
+                    with loop.runtime.store.guard(task_id):
+                        state=loop.runtime.store.get(task_id)
+                        loop.runtime.store.save(state,'desktop_user_message',{'note':note})
                 return loop.run(task_id,self.pause_event,self.stop_event,emit)
             self.job(resume,loop=True)
 
@@ -246,6 +340,7 @@ def make_window():
         def job(self, function, loop=False):
             if self.worker:return
             self.pause_event.clear(); self.stop_event.clear()
+            self.goal.setEnabled(False); self.tasks.setEnabled(False)
             for button in self.buttons:button.setEnabled(False)
             self.pause_button.setEnabled(loop); self.stop_button.setEnabled(loop)
             self.worker=Worker(function); self.worker.result.connect(self.show_result); self.worker.update.connect(self.show_result)
@@ -254,6 +349,7 @@ def make_window():
 
         def job_done(self):
             worker=self.worker; self.worker=None; worker.deleteLater()
+            self.goal.setEnabled(True); self.tasks.setEnabled(True)
             for button in self.buttons:button.setEnabled(True)
             self.pause_button.setEnabled(True);self.stop_button.setEnabled(True)
             self.refresh_sessions();self.refresh_tasks()
@@ -267,13 +363,19 @@ def make_window():
         def show_result(self,value):
             if not isinstance(value,dict):return
             if value.get('mode')=='interactive':
-                self.task_id=value['id']; self.goal.setPlainText(value.get('desktop_goal',''))
-                self.task_status.setText(f"{value['id']} · {value['status']} · 已记录 {value.get('cursor',0)} 步")
+                self.task_id=value['id']; self.task_state=value
+                self.pause_button.setVisible(value['status']=='idle')
+                self.stop_button.setVisible(value['status'] not in ('succeeded','cancelled'))
+                self.resolve_button.setVisible(value['status']=='needs_review')
+                statuses={'idle':'执行中' if self.worker else '可以继续','waiting_for_human':'等待你回复','needs_review':'需要核对操作结果','succeeded':'已完成','cancelled':'已停止'}
+                self.task_status.setText(f"{statuses.get(value['status'],value['status'])} · 已记录 {value.get('cursor',0)} 步")
                 observations=list(value.get('observations',{}).values())
                 if observations:
                     pix=QPixmap(observations[-1]['path']); self.preview.setPixmap(pix.scaled(self.preview.size(),Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
+                else:
+                    self.preview.setText('暂无当前操作画面')
                 rows=interactive.call('timeline',self.task_id)['timeline']
-                self.timeline.setPlainText('\n'.join(json.dumps(row,ensure_ascii=False) for row in rows[-60:]))
+                self.render_conversation(value,rows)
                 self.statusBar().showMessage(value.get('error') or value.get('human',{}).get('instructions','') if value.get('human') else value.get('error') or value['status'])
             else:
                 if 'pages' in value:
@@ -285,6 +387,29 @@ def make_window():
                     if index>=0:self.page_id.setCurrentIndex(index)
                 self.device_output.setPlainText(json.dumps(value,ensure_ascii=False,indent=2))
                 self.statusBar().showMessage(value.get('message') or value.get('error') or '操作完成')
+
+        def render_conversation(self,state,rows):
+            def bubble(role,text):
+                user=role=='你'
+                return ('<table width="100%" cellspacing="0" cellpadding="14"><tr>'
+                        + ('<td width="16%"></td>' if user else '')
+                        + '<td bgcolor="'+('#f4f4f4' if user else '#ffffff')+'">'
+                        + '<p style="color:#888;font-size:12px">'+role+'</p>'
+                        + '<p style="line-height:150%">'+escape(str(text)).replace('\n','<br>')+'</p></td></tr></table><br>')
+            content=bubble('你',state.get('desktop_goal',''))
+            for row in rows:
+                if row.get('note'):
+                    role='你' if row['kind'] in ('human_returned','desktop_user_message') else 'Argus'
+                    content+=bubble(role,row['note'])
+                elif row.get('error'):
+                    content+=bubble('Argus','操作未完成：'+str(row['error']))
+            if state.get('human'):
+                content+=bubble('Argus',state['human'].get('instructions','请核对后回复，继续任务。'))
+            if state.get('error'):content+=bubble('Argus',str(state['error']))
+            if content!=self.last_transcript:
+                self.last_transcript=content; self.timeline.setHtml(content)
+                self.timeline.verticalScrollBar().setValue(self.timeline.verticalScrollBar().maximum())
+            self.goal.setPlaceholderText('回复 Argus，补充说明并继续任务…' if state['status'] in ('waiting_for_human','idle') else '给 Argus 发送新任务…')
 
         def closeEvent(self,event):
             if self.worker:
