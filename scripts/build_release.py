@@ -29,7 +29,7 @@ def source_files():
             if path.is_file() and '__pycache__' not in path.parts and (path.suffix in allowed or path.name == 'LICENSE'):
                 yield path
     yield ROOT / 'docs/desktop.md'
-    for name in ('install_agent_plugin.py', 'build_release.py', 'build_desktop.py', 'package_desktop.py',
+    for name in ('install_agent_plugin.py', 'install_argus.py', 'build_release.py', 'build_desktop.py', 'package_desktop.py',
                  'desktop_windows.spec'):
         yield ROOT / 'scripts' / name
 

@@ -17,6 +17,7 @@ jobs:
           python-version: '3.11'
       - run: python -m pip install '.[mcp]'
       - run: python -m unittest discover -s tests/control_demo -p 'test_*install*.py' -v
+      - run: python -m unittest discover -s tests/control_demo -p test_updates.py -v
       - run: python -m unittest discover -s tests/extension_demo -p test_bridge.py -v
       - name: Check tag matches release
         if: startsWith(github.ref, 'refs/tags/')

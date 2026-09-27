@@ -25,7 +25,8 @@ class PluginInstallTests(unittest.TestCase):
             self.assertEqual(claude['mcpServers'], mcp['mcpServers'])
             server = mcp['mcpServers']['argus']
             self.assertEqual(server['command'], str(python))
-            self.assertEqual(server['args'], ['-I', '-m', 'argus.mcp.server', '--profile', 'device'])
+            self.assertEqual(server['args'], ['-I', str(root/'update.py'), '--root', str(root), '--serve', '--profile', 'device'])
+            self.assertTrue((root/'update.py').is_file())
             self.assertEqual((plugin / 'skills/device/SKILL.md').read_bytes(),
                              (ROOT / 'plugins/argus-device/skills/device/SKILL.md').read_bytes())
             self.assertNotIn('PYTHONPATH', server['env'])

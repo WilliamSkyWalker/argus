@@ -690,8 +690,12 @@ def device_sessions() -> dict:
     rows = sessions()
     excluded = [dict(row, reason="Playwright is CLI-only; not supported through MCP")
                 for row in rows if row.get('backend') == 'playwright']
-    return {"sessions": [row for row in rows if row.get('backend') != 'playwright'],
-            "unavailable_sessions": excluded}
+    result = {"sessions": [row for row in rows if row.get('backend') != 'playwright'],
+              "unavailable_sessions": excluded}
+    if os.environ.get('ARGUS_INSTALL_ROOT'):
+        from argus.updates import notice
+        result['updates'] = notice(os.environ['ARGUS_INSTALL_ROOT'])
+    return result
 
 
 @mcp.tool()

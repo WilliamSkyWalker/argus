@@ -1,4 +1,4 @@
-# Argus 0.4.0 — CLI / Agent integration beta
+# Argus 0.4.1 — CLI / Agent integration beta
 
 CLI 安装包已开放下载。支持 Claude Code、Codex、Qoder 和 QoderCN 的 MCP / Skill 集成，以及 Chrome / Edge 浏览器桥接。
 
@@ -11,24 +11,44 @@ CLI 安装包已开放下载。支持 Claude Code、Codex、Qoder 和 QoderCN �
 macOS / Linux / WSL:
 
 ```sh
-curl -fL https://github.com/WilliamSkyWalker/argus/releases/download/v0.4.0/install-argus-0.4.0.py -o install-argus-0.4.0.py && python3 install-argus-0.4.0.py
+curl -fL https://raw.githubusercontent.com/WilliamSkyWalker/argus/main/scripts/install_argus.py -o install-argus.py && python3 install-argus.py
 ```
 
 Windows PowerShell:
 
 ```powershell
-Invoke-WebRequest https://github.com/WilliamSkyWalker/argus/releases/download/v0.4.0/install-argus-0.4.0.py -OutFile install-argus-0.4.0.py -ErrorAction Stop; py -3 install-argus-0.4.0.py
+Invoke-WebRequest https://raw.githubusercontent.com/WilliamSkyWalker/argus/main/scripts/install_argus.py -OutFile install-argus.py -ErrorAction Stop; py -3 install-argus.py
 ```
+
+这条固定命令每次都会选择最新发布版（包含测试版），以后升级也用同一条命令。加 `--channel stable` 可仅选择稳定版。
 
 安装器会自动检测客户端、下载源码并校验 SHA256，然后安装隔离运行环境和集成。无需 Git 或 pyenv；依赖下载需要网络。WSL 用户请在 Agent CLI 所在的 WSL 环境中执行。
 
-也可以同时下载 `argus-0.4.0.zip`，放到安装器旁边：
+也可以同时下载 `argus-0.4.1.zip`，放到安装器旁边：
 
 ```sh
-python3 install-argus-0.4.0.py --archive argus-0.4.0.zip
+python3 install-argus-0.4.1.py --archive argus-0.4.1.zip
 ```
 
 Windows 请将 `python3` 换为 `py -3`。可用 `--client codex`、`--client claude`、`--client qoder`、`--client qodercn` 或 `--client all` 指定客户端；手机控制额外加 `--mobile`。
+
+## 更新提醒与自动更新
+
+- 默认每 24 小时最多检查一次，Agent 启动时后台检查，不阻塞连接。
+- 新版提醒显示在会话查询结果和客户端日志中。
+- 安装时加 `--auto-update --update-channel beta` 开启自动更新（当前为测试版频道）。
+- 下载包经过 SHA256 校验；新运行环境准备并检查成功后，在下一次空闲启动时启用。
+- 离线、下载失败或准备失败时继续使用旧版；旧运行环境保留。
+- 浏览器桥接、扩展或客户端 Skill 改变时提示使用完整安装器更新。
+- 0.4.0 用户需要运行一次 0.4.1 安装器，以获得更新功能。
+
+macOS / Linux / WSL 管理命令（Windows 将 `python3` 换为 `py -3`）：
+
+```sh
+python3 "$HOME/.local/share/argus/agent-plugin/update.py" --check
+python3 "$HOME/.local/share/argus/agent-plugin/update.py" --auto on --channel beta
+python3 "$HOME/.local/share/argus/agent-plugin/update.py" --auto off
+```
 
 ## 浏览器 / Browser
 
@@ -38,11 +58,11 @@ MCP 浏览器控制使用扩展后端，不使用 Playwright。无需为 Argus �
 
 ## Assets
 
-- `install-argus-0.4.0.py` — 推荐入口，带源码校验的安装器。
-- `argus-0.4.0.zip` — 配合安装器使用的源码包。
-- `argus-browser-0.4.0-development.zip` — 可选的浏览器开发版扩展。
+- `install-argus-0.4.1.py` — 推荐入口，带源码校验的安装器。
+- `argus-0.4.1.zip` — 配合安装器使用的源码包。
+- `argus-browser-0.4.1-development.zip` — 可选的浏览器开发版扩展。
 - `SHA256SUMS` / `release-manifest.json` — 校验值与版本元数据。
 
 This is a beta CLI distribution. Installer integrity, client configuration and native-host protocol checks have passed; clean-machine installation and platform-wide acceptance testing remain incomplete. Desktop installers are not included.
 
-[完整安装、更新与卸载说明](https://github.com/WilliamSkyWalker/argus/blob/v0.4.0/distribution/README.md)
+[完整安装、更新与卸载说明](https://github.com/WilliamSkyWalker/argus/blob/v0.4.1/distribution/README.md)

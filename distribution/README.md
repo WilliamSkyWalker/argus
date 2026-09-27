@@ -13,14 +13,16 @@ With Python 3.10+ available, run one command in a writable directory to download
 macOS / Linux / WSL:
 
 ```sh
-curl -fL https://github.com/WilliamSkyWalker/argus/releases/download/v0.4.0/install-argus-0.4.0.py -o install-argus-0.4.0.py && python3 install-argus-0.4.0.py
+curl -fL https://raw.githubusercontent.com/WilliamSkyWalker/argus/main/scripts/install_argus.py -o install-argus.py && python3 install-argus.py
 ```
 
 Windows PowerShell:
 
 ```powershell
-Invoke-WebRequest https://github.com/WilliamSkyWalker/argus/releases/download/v0.4.0/install-argus-0.4.0.py -OutFile install-argus-0.4.0.py -ErrorAction Stop; py -3 install-argus-0.4.0.py
+Invoke-WebRequest https://raw.githubusercontent.com/WilliamSkyWalker/argus/main/scripts/install_argus.py -OutFile install-argus.py -ErrorAction Stop; py -3 install-argus.py
 ```
+
+The fixed command selects the newest version on each run, including prereleases. Use `python3 install-argus.py --channel stable` to exclude betas, or `--check` to show the newest version without installing. Installer options such as `--auto-update` are forwarded.
 
 The installer auto-detects installed Claude, Codex, Qoder and QoderCN clients. Optional flags: `--client codex`,
 `--client claude`, `--client qoder`, `--client qodercn`, `--client all`,
@@ -32,7 +34,7 @@ The release installer verifies the downloaded source ZIP against its embedded
 SHA256 before extraction. For a locally downloaded archive:
 
 ```sh
-python3 install-argus-0.4.0.py --archive argus-0.4.0.zip
+python3 install-argus-0.4.1.py --archive argus-0.4.1.zip
 ```
 
 Python dependencies are fetched from PyPI; this is not an offline bundle or a
@@ -52,10 +54,47 @@ new MCP extension connections no longer require a manually supplied path.
 
 ## Update and uninstall
 
-The versioned installer always installs its named version. Re-running
-`install-argus-0.4.0.py` does not upgrade to a newer release, and Argus does not
-update itself in the background. Use the newer release's installation command
-when you choose to upgrade.
+Starting with 0.4.1, managed installations check GitHub releases in the background
+at most once per day when an Agent MCP session starts. Checks do not delay startup.
+New-version reminders appear in `device_sessions` results and client stderr logs.
+The default is **notify only**, with the stable release channel.
+
+To enable automatic updates, add these options to the installation command:
+
+```sh
+python3 install-argus-0.4.1.py --auto-update --update-channel beta
+```
+
+`beta` includes prereleases (Argus currently ships beta releases). Use `stable`
+for non-prerelease versions only. Existing 0.4.0 users must run the 0.4.1 installer
+once to obtain the update launcher.
+
+After installation, manage updates without downloading another installer:
+
+```sh
+python3 "$HOME/.local/share/argus/agent-plugin/update.py" --check
+python3 "$HOME/.local/share/argus/agent-plugin/update.py" --auto on --channel beta
+python3 "$HOME/.local/share/argus/agent-plugin/update.py" --apply
+python3 "$HOME/.local/share/argus/agent-plugin/update.py" --auto off
+```
+
+Windows PowerShell uses `py -3 "$HOME/.local/share/argus/agent-plugin/update.py"`
+with the same options. For a custom installation root, use its `update.py` and
+append `--root PATH`. Package/checkout users can also use `argus update` with these
+options; it manages the selected **managed installation**, not a source checkout
+or a global pip installation.
+
+Automatic updates download and verify the installer and source SHA256 from the
+GitHub release assets, then prepare and smoke-test a separate runtime. They switch
+at a later MCP startup only when other managed MCP servers are closed and no
+unfinished Runtime tasks exist. Existing processes keep their original runtime.
+Offline checks, failed downloads and failed preparation retain the working version.
+Old runtimes and `previous-runtime.json` are kept; there is no automatic cleanup.
+A changed browser bridge, extension or client Skill requires the full installer
+and any browser reload; the updater reports this instead of partially upgrading.
+
+The versioned installer itself still installs its named version. The desktop GUI
+and unmanaged installations are not automatically updated by this mechanism.
 
 Close active Argus tasks. Run the newer release installer using the same root,
 reload the unpacked extension in Chrome, reconnect it, then start a new Agent
@@ -65,7 +104,7 @@ Protocol mismatch instructs the user to update both sides; it is not reported as
 successful connection. Versions 0.3.x lack this handshake and need both updated.
 
 ```sh
-python3 install-argus-0.4.0.py --uninstall
+python3 install-argus-0.4.1.py --uninstall
 ```
 
 Uninstall removes native client plugins and this installation's browser host
@@ -87,7 +126,7 @@ included. `--prepare-only --client both --root /tmp/argus-package-check` builds
 client bundles without registering clients/hosts. Running from the checkout is
 also supported via `python3 scripts/install_agent_plugin.py`.
 
-Tag `v0.4.0` triggers artifact generation and a **draft** GitHub Release. Manual
+Tag `v0.4.1` triggers artifact generation and a **draft** GitHub Release. Manual
 workflow runs only generate artifacts. Review it before publishing. For the first
 Web Store upload, upload the `-store.zip`, obtain its ID, set `store_extension_id`
 in `release.json`, and rebuild the release installer (or use
@@ -121,7 +160,7 @@ explicit file is an error. Package installation paths are never searched for `.e
 To keep an existing configuration without copying credentials:
 
 ```sh
-python3 install-argus-0.4.0.py --config-file /absolute/path/to/private.env
+python3 install-argus-0.4.1.py --config-file /absolute/path/to/private.env
 ```
 
 The managed plugin stores only `ARGUS_CONFIG_FILE` and preserves it on upgrades;

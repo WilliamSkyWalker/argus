@@ -2,7 +2,7 @@
 """Install Argus for Claude, Codex, Qoder and QoderCN with scoped tool authorization.
 
 Run from a checkout, or download this script alone: it fetches a source archive
-without requiring Git. No dependency downloads take place during MCP startup.
+without requiring Git. Optional background updates prepare separate runtimes.
 """
 from __future__ import annotations
 
@@ -183,8 +183,10 @@ def prepare_runtime(source, root, extras):
         else:
             run([python, '-m', 'ensurepip', '--upgrade'])
             pip = [str(python), '-m', 'pip']
-        run([*pip, 'install', '--disable-pip-version-check', f'{source}[{extras}]'])
-        run([python, '-I', '-c', 'import argus, mcp, PIL; from argus.mcp import server'])
+        # Keep pip in the private runtime so future updates do not depend on
+        # ensurepip being supplied by the host Python (e.g. Debian installations).
+        run([*pip, 'install', '--disable-pip-version-check', 'pip', f'{source}[{extras}]'])
+        run([python, '-I', '-c', 'import argus, mcp, PIL, pip; from argus.mcp import server'])
         write_json(ready, {'source': str(source), 'extras': extras})
     return python
 
@@ -195,8 +197,11 @@ def prepare_plugin(source, root, python, version, config_file=None):
     shutil.copytree(source / 'plugins' / NAME, plugin, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     # Absolute interpreter path survives both clients copying the plugin into caches.
-    server = {'command': str(python), 'args': ['-I', '-m', 'argus.mcp.server', '--profile', 'device'],
-              'env': {'PYTHONUNBUFFERED': '1'}}
+    root.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source/'argus/updates.py', root/'update.py')
+    server = {'command': str(python),
+              'args': ['-I', str(root/'update.py'), '--root', str(root), '--serve', '--profile', 'device'],
+              'env': {'PYTHONUNBUFFERED': '1', 'ARGUS_INSTALL_ROOT': str(root)}}
     if config_file:
         server['env']['ARGUS_CONFIG_FILE'] = str(config_file)
         version = hashlib.sha256((version + str(config_file)).encode()).hexdigest()[:16]
@@ -250,6 +255,9 @@ def main(argv=None):
     parser.add_argument('--bridge-directory', help='Override native host directory (WSL path on WSL)')
     parser.add_argument('--config-file', type=Path, help='Reference an existing user .env file; never copy its secrets into the plugin')
     parser.add_argument('--uninstall', action='store_true', help='Remove plugin and bridge registration; preserve sessions and files')
+    parser.add_argument('--auto-update', action=argparse.BooleanOptionalAction, default=None,
+                        help='Automatically update compatible runtimes at the next idle client startup')
+    parser.add_argument('--update-channel', choices=['stable', 'beta'], default=None)
     args = parser.parse_args(argv)
     if args.extension_id and not re.fullmatch('[a-p]{32}', args.extension_id):
         parser.error('--extension-id must contain exactly 32 letters a-p')
@@ -311,7 +319,11 @@ def main(argv=None):
                       'clients': previous.get('clients', []) if not args.prepare_only else [],
                       'prepared_only': args.prepare_only, 'bridge': bridge,
                       'version': release['version'], 'extension_id': extension_id,
-                      'config_file': str(config_file) if config_file else None}
+                      'config_file': str(config_file) if config_file else None,
+                      'mobile': args.mobile, 'install_browser': args.install_browser}
+            spec = importlib.util.spec_from_file_location('argus_update_metadata', source/'argus/updates.py')
+            updater = importlib.util.module_from_spec(spec); spec.loader.exec_module(updater)
+            record['compatibility'] = updater.compatibility(source)
             if not args.prepare_only:
                 if args.browser != 'none':
                     command = [str(python), '-I', '-m', 'argus.integrations.browser_setup',
@@ -330,6 +342,12 @@ def main(argv=None):
             extension = Path(bridge['directory']) / 'extension' if bridge else root / 'browser-extension'
             shutil.copytree(source / 'extensions/argus-browser', extension, dirs_exist_ok=True)
             write_json(root / 'installation.json', record)
+            (root/'active-runtime.json').unlink(missing_ok=True)
+            (root/'update-state.json').unlink(missing_ok=True)
+            updates = json.loads((root/'updates.json').read_text()) if (root/'updates.json').exists() else {'automatic': False, 'channel': 'stable'}
+            if args.auto_update is not None: updates['automatic'] = args.auto_update
+            if args.update_channel: updates['channel'] = args.update_channel
+            write_json(root/'updates.json', updates)
             print(f'Prepared plugin: {market / "plugins" / NAME}')
             if not args.prepare_only:
                 print('Installed. Start a new client session and ask Argus to operate a test application.')

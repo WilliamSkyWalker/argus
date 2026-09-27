@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Argus Browser",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "minimum_chrome_version": "118",
   "description": "Connect your browser tabs to the local Argus visual engine.",
   "permissions": [

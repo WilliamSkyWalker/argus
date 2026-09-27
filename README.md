@@ -18,25 +18,29 @@ Argus is currently a **development/beta distribution**. Installable source bundl
 
 ## Programming Agent setup
 
-With Python 3.10+ and an installed Agent client, copy one command below. It downloads and runs the versioned installer; no Git or manual GitHub download is needed. Run it in a directory where you can save the installer.
+With Python 3.10+ and an installed Agent client, copy one command below. It finds the newest release, verifies and runs its installer; no Git or manual GitHub download is needed. Run it in a directory where you can save the installer.
 
 macOS / Linux / WSL:
 
 ```sh
-curl -fL https://github.com/WilliamSkyWalker/argus/releases/download/v0.4.0/install-argus-0.4.0.py -o install-argus-0.4.0.py && python3 install-argus-0.4.0.py
+curl -fL https://raw.githubusercontent.com/WilliamSkyWalker/argus/main/scripts/install_argus.py -o install-argus.py && python3 install-argus.py
 ```
 
 Windows PowerShell:
 
 ```powershell
-Invoke-WebRequest https://github.com/WilliamSkyWalker/argus/releases/download/v0.4.0/install-argus-0.4.0.py -OutFile install-argus-0.4.0.py -ErrorAction Stop; py -3 install-argus-0.4.0.py
+Invoke-WebRequest https://raw.githubusercontent.com/WilliamSkyWalker/argus/main/scripts/install_argus.py -OutFile install-argus.py -ErrorAction Stop; py -3 install-argus.py
 ```
 
 The installer automatically downloads and verifies the source archive, prepares an isolated runtime, detects supported clients, installs their integration and shared Skill, and sets up the Chrome/Edge native messaging host. It does not require pyenv.
 
-After downloading, rerun the script with `--client claude`, `codex`, `qoder`, `qodercn`, `both` (Claude + Codex), or `all` to select clients. Add `--mobile` for mobile dependencies. On native Windows use `py -3` in place of `python3`.
+The command always selects the newest release, including betas. Add `--channel stable` for stable releases only. Run the same command again to upgrade.
 
-From a checkout, developers can use `python3 scripts/install_agent_plugin.py`. Manual installer/source downloads remain available in [GitHub Releases](https://github.com/WilliamSkyWalker/argus/releases/tag/v0.4.0); use `--archive argus-0.4.0.zip` for a locally downloaded source archive.
+After downloading, rerun `install-argus.py` with `--client claude`, `codex`, `qoder`, `qodercn`, `both` (Claude + Codex), or `all` to select clients. Add `--mobile` for mobile dependencies. On native Windows use `py -3` in place of `python3`.
+
+From a checkout, developers can use `python3 scripts/install_agent_plugin.py`. Manual installer/source downloads remain available in [GitHub Releases](https://github.com/WilliamSkyWalker/argus/releases/tag/v0.4.1); use `--archive argus-0.4.1.zip` for a locally downloaded source archive.
+
+Managed installations check for updates in the background and report new releases. Automatic runtime updates are opt-in: add `--auto-update --update-channel beta` when running the installer. Prepared updates activate on a later idle Agent startup; browser/Skill changes prompt a full upgrade. See [update controls and limits](distribution/README.md#update-and-uninstall).
 
 For browser control, load the installer-provided extension directory through **Load unpacked** at `chrome://extensions` (or Edge's extension page), then click **Connect local bridge** in its popup. Restart the Agent client and describe a task, for example:
 
