@@ -12,6 +12,15 @@
 
 Saygo gives external programming agents a shared CLI/MCP operation layer: observe a screen, choose an action, execute it, and inspect the result. It also provides a standalone Qt desktop application where users configure their own vision-model API, plus a BDD QA runner for regression tests.
 
+## Platform support and roadmap
+
+Saygo aims to support device control and debugging across Windows, Windows WSL, and macOS, including physical Android and iOS devices, Android emulators, and iOS simulators.
+
+- **Available now:** Windows, Windows WSL, and Android.
+- **Planned:** complete macOS support and support for physical iOS devices and iOS simulators. Once the required Apple hardware is available, we will complete integration and testing to cover the full platform lineup above.
+
+See [platforms and validation limits](#platforms-and-validation-limits) for the current implementation and testing scope.
+
 ## Choose how to use it
 
 | User | Entry point | Model configuration |
@@ -239,9 +248,20 @@ For QA execution guards, model configuration, case conventions and module respon
 
 ## 中文说明
 
+### 平台支持与计划
+
+Saygo 致力于支持 Windows、Windows WSL 和 macOS 环境下的设备操控与调试，覆盖 Android、iOS 真机以及 Android 模拟器和 iOS 模拟器。
+
+- **当前已可用**：Windows、Windows WSL 和 Android。
+- **后续计划**：完善 macOS 支持，并完成 iOS 真机与模拟器的适配。待相关 Apple 设备到位后，将继续完成联调与实测，逐步覆盖上述全部平台和设备类型。
+
+具体实现与验证范围见[平台支持与验证范围](#platforms-and-validation-limits)。
+
+### 使用方式
+
 Saygo 为外部编程 Agent 提供手机、浏览器和桌面窗口的视觉操作能力：**观察 → 操作 → 新观察**，并保存跨端任务进度、执行事实和截图。
 
-- **命令行用户**：安装 Claude Code / Codex / Qoder / QoderCN 的集成，由现有 Agent 决策，无需给 Saygo 配模型 Key。当前改名版本请使用上方源码安装步骤；Saygo 品牌安装包发布后再使用单命令下载入口。安装后重启客户端。
+- **命令行用户**：安装 Claude Code / Codex / Qoder / QoderCN 的集成，由现有 Agent 决策，无需给 Saygo 配模型 Key。通过 `pipx install "saygo-agent-control[mcp]"` 从 PyPI 安装，再运行 `saygo setup --client codex`（或选择其他客户端）完成接入。安装后重启客户端。
 - **窗口桌面用户**：使用 Qt 桌面版，在界面配置自己的视觉模型 API、模型名和 Key。Windows 原生便携包无需 WSL、Python 或 pyenv。macOS DMG 的脚本和 CI 已就绪，但尚未完成 macOS 构建与实测。
 - **浏览器**：MCP 和桌面版使用 Chrome/Edge 扩展，保留现有页面和登录状态；MCP 不支持 Playwright。扩展暂通过开发者模式加载，未声称已上架商店。
 - **恢复与接管**：CLI/MCP 共用命名会话；`saygo task` 保存操作记录、支持人工接管和中断恢复。结果不确定的动作需核对，不自动重放。点击派发成功或画面稳定都不等于业务完成。

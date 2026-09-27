@@ -3,6 +3,15 @@
 (() => {
   const messages = {
   "zh": {
+    "platformLabel": "平台支持与计划",
+    "platformTitle": "从桌面到手机，持续扩展。",
+    "platformIntro": "面向 Windows、Windows WSL 和 macOS，覆盖 Android、iOS 真机与模拟器的设备操控与调试。",
+    "availableLabel": "当前已可用",
+    "availableTitle": "Windows · Windows WSL · Android",
+    "availableDetail": "已可在 Windows 原生环境、Windows WSL 和 Android 上使用 Saygo。",
+    "plannedLabel": "后续计划",
+    "plannedTitle": "macOS · iOS 真机与模拟器",
+    "plannedDetail": "待相关 Apple 设备到位后，将完善 macOS 支持，完成 iOS 真机与模拟器的适配和实测，逐步覆盖上述全部平台和设备类型。",
     "skip": "跳到主要内容",
     "navDemo": "实机演示",
     "navStart": "接入指南",
@@ -70,6 +79,15 @@
     "installNoteSource": "克隆源码后运行安装器，接入 AI 工具。"
   },
   "en": {
+    "platformLabel": "PLATFORM SUPPORT & ROADMAP",
+    "platformTitle": "From desktops to phones.",
+    "platformIntro": "Our goal is device control and debugging across Windows, Windows WSL, and macOS, with physical Android and iOS devices, Android emulators, and iOS simulators.",
+    "availableLabel": "AVAILABLE NOW",
+    "availableTitle": "Windows · Windows WSL · Android",
+    "availableDetail": "Saygo is available on native Windows, Windows WSL, and Android.",
+    "plannedLabel": "PLANNED",
+    "plannedTitle": "macOS · iOS devices & simulators",
+    "plannedDetail": "Once the required Apple hardware is available, we will complete macOS support and integrate and test physical iOS devices and simulators, working toward coverage of the full platform lineup above.",
     "skip": "Skip to main content",
     "navDemo": "Live demo",
     "navStart": "Get started",
