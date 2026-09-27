@@ -161,13 +161,14 @@ function Test-Cloaked([IntPtr]$hwnd) {
 }
 
 function Test-WindowUsable([IntPtr]$hwnd) {
-    if (([ArgusNative]::GetWindowLong($hwnd,-20) -band 0x08000080) -ne 0) { return $false }
+    # Exclude non-activating, tool and click-through shadow/overlay windows.
+    if (([ArgusNative]::GetWindowLong($hwnd,-20) -band 0x080000A0) -ne 0) { return $false }
     if (-not [ArgusNative]::IsWindowVisible($hwnd)) { return $false }
     if ([ArgusNative]::IsIconic($hwnd)) { return $false }
     if (Test-Cloaked $hwnd) { return $false }
     $rect = [ArgusNative+RECT]::new()
     if (-not [ArgusNative]::GetWindowRect($hwnd, [ref]$rect)) { return $false }
-    return (($rect.Right - $rect.Left) -gt 0 -and ($rect.Bottom - $rect.Top) -gt 0)
+    return (($rect.Right - $rect.Left) -gt 1 -and ($rect.Bottom - $rect.Top) -gt 1)
 }
 
 function Resolve-DesktopApp($request) {
@@ -224,8 +225,12 @@ function Resolve-DesktopApp($request) {
             $script:CandidatePids = @($script:CandidatePids + @(Get-Process -Name $processName -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }) | Select-Object -Unique)
         }
         $windows = @(Get-AppWindows $script:CandidatePids)
+        if ($request.window_id) {
+            $windows = @($windows | Where-Object { [string]$_.handle -eq [string]$request.window_id -and $_.visible })
+            if ($windows.Count -ne 1) { throw 'Selected window is unavailable or not an eligible window of the bound process; diagnose again.' }
+        }
         if ($newWindow) { $windows = @($windows | Where-Object { $_.handle -notin @($before | ForEach-Object { $_.handle }) }) }
-        $window = $windows | Sort-Object @{Expression={ $_.title_match };Descending=$true}, @{Expression={ $_.visible };Descending=$true}, @{Expression={ $_.area };Descending=$true} | Select-Object -First 1
+        $window = $windows | Sort-Object @{Expression={ $_.visible };Descending=$true}, @{Expression={ $_.title_match };Descending=$true}, @{Expression={ $_.area };Descending=$true} | Select-Object -First 1
         if ($window) { break }
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
@@ -245,22 +250,36 @@ function Resolve-DesktopApp($request) {
         new_window=$newWindow; launch=$launch }
 }
 
-function Get-AppWindows($processIds) {
+function Get-AppWindows($processIds, [bool]$includeExcluded = $false) {
     $script:AppWindowRows = [Collections.Generic.List[object]]::new()
     $script:AppWindowPids = @($processIds)
+    $script:IncludeExcludedWindows = $includeExcluded
     $callback = [ArgusNative+EnumWindowsProc] {
         param([IntPtr]$hwnd, [IntPtr]$unused)
         [uint32]$ownerId = 0
         [void][ArgusNative]::GetWindowThreadProcessId($hwnd, [ref]$ownerId)
         if ($ownerId -notin $script:AppWindowPids) { return $true }
-        if (([ArgusNative]::GetWindowLong($hwnd,-20) -band 0x08000080) -ne 0) { return $true }
+        $reasons = @()
+        $style = [ArgusNative]::GetWindowLong($hwnd,-20)
+        if (($style -band 0x08000080) -ne 0) { $reasons += 'tool_or_noactivate' }
+        if (($style -band 0x20) -ne 0) { $reasons += 'transparent_overlay' }
+        if (-not [ArgusNative]::IsWindowVisible($hwnd) -and -not [ArgusNative]::IsIconic($hwnd)) {
+            $reasons += 'hidden_non_minimized'
+        }
         $title = Get-WindowTitle $hwnd
-        if (-not $title -or (Test-Cloaked $hwnd)) { return $true }
+        if (-not $title) { $reasons += 'empty_title' }
+        if (Test-Cloaked $hwnd) { $reasons += 'cloaked' }
         $rect = [ArgusNative+RECT]::new()
         if (-not [ArgusNative]::GetWindowRect($hwnd,[ref]$rect)) { return $true }
+        # GDI+/GPU helpers can have a matching application title but only a
+        # 1x1 surface. Never restore or bind these as interactive windows.
+        if (($rect.Right-$rect.Left) -le 1 -or ($rect.Bottom-$rect.Top) -le 1) { $reasons += 'tiny_surface' }
+        if ($reasons.Count -and -not $script:IncludeExcludedWindows) { return $true }
         $area = [long]($rect.Right-$rect.Left)*($rect.Bottom-$rect.Top)
-        if ($area -le 0) { return $true }
         $script:AppWindowRows.Add(@{handle=$hwnd.ToInt64(); process_id=$ownerId; title=$title;
+            class_name=(Get-WindowClass $hwnd); excluded_reasons=$reasons;
+            bounds=@($rect.Left,$rect.Top,($rect.Right-$rect.Left),($rect.Bottom-$rect.Top));
+            owner=[ArgusNative]::GetWindow($hwnd,4).ToInt64();
             visible=[ArgusNative]::IsWindowVisible($hwnd); area=$area;
             title_match=($title.IndexOf($script:PreferredTitle,[StringComparison]::OrdinalIgnoreCase) -ge 0)})
         return $true
@@ -517,6 +536,18 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
             throw 'Observed window disappeared; refusing input.'
         }
         switch ($request.command) {
+            "diagnose" {
+                Write-Response @{id=$request.id; ok=$true; data=@{
+                    platform='windows'; process_id=$script:TargetProcessId;
+                    selected_window=[string]$script:Hwnd.ToInt64(); primary_window=[string]$script:PrimaryWindow.ToInt64();
+                    foreground_window=[string][ArgusNative]::GetForegroundWindow().ToInt64();
+                    capture_mode=$(if ($script:Foreground) {'foreground'} else {'background'});
+                    windows=@(Get-AppWindows @($script:TargetProcessId) $true);
+                    recovery_actions=@('reobserve','select_window');
+                    foreground_requires_explicit_authorization=$true;
+                    note='Window facts do not establish capture support or business success. Reobserve after recovery; never replay uncertain input.'
+                }}
+            }
             "setup" {
                 $script:Foreground = [bool]$request.foreground
                 $script:App = [string]$request.app

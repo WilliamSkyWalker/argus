@@ -13,6 +13,11 @@ public class PassiveCoverForm : PassiveForm {
   get { var p=base.CreateParams; p.ExStyle |= 0x08000080; return p; }
  }
 }
+public class ShadowForm : PassiveForm {
+ protected override System.Windows.Forms.CreateParams CreateParams {
+  get { var p=base.CreateParams; p.ExStyle |= 0x00080020; return p; }
+ }
+}
 public class FixtureNative {
  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -54,6 +59,12 @@ $cover.Text='Argus Foreground Cover'
 $cover.StartPosition='Manual'; $cover.Location=$form.Location
 $cover.Size=New-Object Drawing.Size(680,470);$cover.BackColor=[Drawing.Color]::Red;$cover.TopMost=$true
 $cover.Add_FormClosed({$form.Close()})
+$tiny=New-Object PassiveForm
+$tiny.FormBorderStyle='None';$tiny.Text='Argus Background Fixture GDI+ helper'
+$tiny.Size=New-Object Drawing.Size(1,1)
+$shadow=New-Object ShadowForm
+$shadow.FormBorderStyle='None';$shadow.Text='';$shadow.Size=New-Object Drawing.Size(700,500)
+$shadow.StartPosition='Manual';$shadow.Location=$form.Location
 $timer=New-Object Windows.Forms.Timer
 $timer.Interval=100
 $timer.Add_Tick({
@@ -67,5 +78,5 @@ $timer.Add_Tick({
     edit=@(( $ep.X - $form.Left ),( $ep.Y - $form.Top ));other=@(( $op.X - $form.Left ),( $op.Y - $form.Top ));button=@(( $bp.X - $form.Left ),( $bp.Y - $form.Top ));panel=@(( $pp.X - $form.Left ),( $pp.Y - $form.Top ))}
   [IO.File]::WriteAllText($StateFile,($data|ConvertTo-Json -Compress))
 })
-$form.Add_Shown({$cover.Show();$timer.Start()})
+$form.Add_Shown({$tiny.Show();$shadow.Show($form);$cover.Show();$timer.Start()})
 [Windows.Forms.Application]::Run($form)

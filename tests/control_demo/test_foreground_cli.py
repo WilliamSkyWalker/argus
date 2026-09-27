@@ -73,13 +73,14 @@ class ForegroundCLITests(unittest.TestCase):
         p.tap.assert_not_called()
 
     def test_tap_and_focus_return_screenshots_via_same_entry(self):
-        for command in (['focus'], ['tap', '4', '5', '--foreground']):
+        for command in (['focus'], ['tap', '4', '5', '--foreground'],
+                        ['act', '{"type":"tap","x":4,"y":5}', '--foreground', '--observe-after']):
             p = self.controller()
             with tempfile.TemporaryDirectory() as directory:
                 result, attach = self.run_command(command + ['--session', 'example', '--out', str(Path(directory) / 'view.png')], p)
             self.assertGreaterEqual(p.screenshot_raw.call_count, 1)
             self.assertEqual(attach.call_args.kwargs, {'serial': 'example', 'foreground': True})
-            self.assertEqual(result['width'], 20)
+            self.assertEqual(result.get('observation', result)['width'], 20)
 
     def test_capture_failure_after_send_reports_uncertain_submission(self):
         p = self.controller()

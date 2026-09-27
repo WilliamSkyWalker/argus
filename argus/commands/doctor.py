@@ -27,6 +27,7 @@ def diagnose(session=None, probe_action=None):
     if probe_action is not None and not session:
         raise ValueError("--probe-action requires --session")
     if session:
+        result["diagnostics"] = execute("diagnose", session)
         result["capabilities"] = execute("capabilities", session)
         shot = execute("screenshot", session)
         result["observation"] = shot

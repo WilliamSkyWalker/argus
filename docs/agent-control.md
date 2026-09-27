@@ -95,3 +95,31 @@ All device operations write local JSONL facts under `$ARGUS_HOME_DIR/operations`
 The isolated installation run used Pillow 12.3.0, Playwright 1.63.0 and MCP 2.2.0 with an existing host Chromium binary. It verifies Python dependency isolation and operation outside the checkout, not browser/system dependency installation on a fresh operating system. The wheel is installable but has not been published to a package index.
 
 The real phone registration → mailbox activation → desktop administration acceptance scenario is not certified by simulated tests. It requires designated test applications/accounts and a real-device run. `doctor` checks connection, capture and local image decoding; it reports input permission as untested unless you explicitly pass `--probe-action` with an action on a chosen harmless target; the resulting screenshot still requires visual verification. Platform support should remain experimental until the relevant real run is recorded.
+
+## Diagnose and recover a resource
+
+`device diagnose --session NAME` / MCP `device_command("diagnose", NAME)` returns
+window identity, same-process candidates (including excluded helpers and overlays),
+capture mode, capabilities, and recovery guidance. Capture failures include this
+structured evidence when the controller is available. This is diagnostic evidence,
+not proof of a business result or proof that every app window rejects capture.
+
+For durable tasks, both the desktop model and external agents use `diagnose(resource)`
+and `repair(resource, operation, note, window_id)` through `agent_task` (CLI:
+`argus task diagnose/repair`). `operation` is `reobserve` or `select_window`.
+Window selection is validated against the current bound process and eligible visible
+candidates. Repairs invalidate old screenshots, are journaled, and never replay input.
+The next step must obtain a new observation. Pending uncertain input still requires
+explicit reconciliation.
+
+The desktop model receives observation errors and diagnostics even when no screenshot
+can be captured. It chooses a recovery based on that evidence; unavailable images are
+never replaced by old frames. It cannot act on an unobserved resource or report done
+while observations are failing. Three consecutive observation failures or six diagnostic/
+recovery decisions trigger a bounded handoff. Login and foreground authorization remain
+human steps. No application names or song-specific recovery paths are encoded.
+
+Outside tasks, `device_observe` and `device_act` accept an explicit `window_id` and
+Windows `foreground` flag (CLI `--window-id`, `--foreground`). Foreground capture is
+opt-in; it is not inferred from `background=false` and is not automatically enabled
+after a background capture failure.

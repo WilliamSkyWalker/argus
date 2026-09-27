@@ -8,11 +8,15 @@ def register(sub):
     commands.add_parser("list")
     create = commands.add_parser("create")
     create.add_argument("bindings", nargs="?", type=json.loads, help='JSON mapping, e.g. {"phone":"test-phone","web":"mail"}')
-    for command in ("status", "events", "timeline", "observe", "submit", "recover", "resolve", "handoff", "resume", "finish", "cancel", "export"):
+    for command in ("status", "events", "timeline", "observe", "diagnose", "repair", "submit", "recover", "resolve", "handoff", "resume", "finish", "cancel", "export"):
         p = commands.add_parser(command)
         p.add_argument("task_id")
-        if command in {"observe", "submit"}:
+        if command in {"observe", "submit", "diagnose", "repair"}:
             p.add_argument("--resource", required=True)
+        if command == "repair":
+            p.add_argument("--operation", choices=["reobserve", "select_window"], required=True)
+            p.add_argument("--window-id")
+            p.add_argument("--note", required=True)
         if command == "submit":
             p.add_argument("--action", type=json.loads, required=True)
             p.add_argument("--observation-id", required=True)

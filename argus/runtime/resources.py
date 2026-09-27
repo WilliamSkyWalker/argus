@@ -72,7 +72,8 @@ class VisualResource:
             state = device_session.load_state(self.spec["session"])
             if not state or state.get("kind") != "desktop" or state.get("os") != kind or state.get("disconnected"):
                 raise PreconditionError("Desktop session missing, disconnected or platform mismatch")
-            self.platform = device_session.attach_desktop(state, serial=self.spec["session"])
+            extra = {"window_id": self.spec["window_id"]} if "window_id" in self.spec else {}
+            self.platform = device_session.attach_desktop(state, serial=self.spec["session"], **extra)
         elif kind in {"android", "ios", "browser"}:
             from ..platforms import device_session
             state = device_session.load_state(self.spec["session"])
@@ -105,6 +106,13 @@ class VisualResource:
         if hasattr(platform, "observation_metadata"):
             metadata.update(platform.observation_metadata())
         return png, metadata
+
+    def diagnose(self, error=None):
+        from argus.devices.diagnostics import collect
+        try:
+            return collect(self._attach(), error)
+        except Exception as exc:
+            return collect(None, error or exc)
 
     def wait(self, timeout=5):
         from argus.devices.observations import wait

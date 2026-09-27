@@ -183,6 +183,24 @@ class AgentServiceTests(unittest.TestCase):
         self.assertIn('dispatching',[e['kind'] for e in events])
         self.assertIn('after',[e['kind'] for e in events])
 
+    def test_capture_failure_returns_diagnostics_without_input(self):
+        with patch.object(self.device, 'screenshot_raw', side_effect=RuntimeError('capture failed')):
+            result = service.execute('screenshot', 'mail')
+        self.assertEqual(result['outcome'], 'not_dispatched')
+        self.assertIn('capture failed', result['diagnostics']['error'])
+        self.assertIn('reobserve', result['diagnostics']['recovery_actions'])
+        self.assertEqual(self.device.calls, [])
+
+    def test_mcp_explicit_target_and_mode_reach_shared_service(self):
+        from argus.mcp import server
+        with patch.object(server, '_device', return_value={'ok':False}) as execute:
+            server.device_observe('mail', foreground=True, window_id='23')
+            self.assertEqual(execute.call_args.kwargs['window_id'], '23')
+            self.assertTrue(execute.call_args.kwargs['foreground'])
+            server.device_act('mail', {'type':'tap','x':1,'y':2}, foreground=True, window_id='23')
+            self.assertEqual(execute.call_args.kwargs['window_id'], '23')
+            self.assertTrue(execute.call_args.kwargs['foreground'])
+
     def test_interactive_cross_resource_restart_and_no_replay(self):
         store=Store(self.root/'runtime')
         runtime=InteractiveRuntime(store)

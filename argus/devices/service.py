@@ -8,7 +8,7 @@ def _request(command, session=None, **options):
     defaults = dict(out=None, foreground=False, wait_s=0, backend=None, os="android",
                     prepare_only=False, replace=False, send_x=None, send_y=None,
                     force_stop=False, duration_ms=300, crop=None, observation_id=None,
-                    coordinate_space="screen", observe_after=False, timeout=5, mode="stable")
+                    coordinate_space="screen", observe_after=False, timeout=5, mode="stable", window_id=None)
     defaults.update(options)
     result = _execute(Namespace(device_command=command, serial=session, **defaults))
     if result is None:
@@ -36,7 +36,7 @@ def _execute(args):
     dispatched = False
     supported = {"start", "stop", "pages", "select-page", "close-page", "new-page", "open", "scroll",
                  "navigate", "screenshot", "focus", "tap", "swipe", "input", "type-send", "key", "launch",
-                 "capabilities", "wait", "act"}
+                 "capabilities", "diagnose", "wait", "act"}
     try:
         import math
         if not math.isfinite(args.wait_s) or not 0 <= args.wait_s <= 60:
@@ -96,12 +96,15 @@ def _execute(args):
         if state and state.get("handoff"):
             raise RuntimeError("Session waiting_for_human; resume before operating")
         foreground = getattr(args, "foreground", False)
+        if args.window_id is not None and (not state or state.get('os') != 'windows'):
+            raise ValueError('--window-id requires a connected Windows desktop session')
         if foreground and (not state or state.get("kind") != "desktop" or state.get("os") != "windows"):
             raise ValueError("--foreground requires a connected Windows desktop session")
         if cmd == "type-send" and not args.prepare_only and (args.send_x is None or args.send_y is None):
             raise ValueError("type-send requires --send-x and --send-y unless --prepare-only is set")
         if state and state.get("kind") == "desktop":
-            plat = ds.attach_desktop(state, serial=serial, foreground=foreground)
+            extra = {"window_id": args.window_id} if args.window_id is not None else {}
+            plat = ds.attach_desktop(state, serial=serial, foreground=foreground, **extra)
         elif state and state.get("kind") == "browser":
             plat = ds.attach_browser(serial)
         else:
@@ -110,6 +113,9 @@ def _execute(args):
                 raise RuntimeError("Session missing or expired; explicitly connect/start it before operating")
 
         from . import observations, actions
+        if cmd == "diagnose":
+            from .diagnostics import collect
+            return collect(plat)
         if cmd == "capabilities":
             return actions.capabilities(plat)
         if cmd == "wait":
@@ -129,8 +135,10 @@ def _execute(args):
             try:
                 result = actions.dispatch(plat, prepared)
             except Exception as exc:
+                from .diagnostics import collect
                 return {"ok": False, "error": str(exc), "error_type": type(exc).__name__,
-                        "outcome": "uncertain", "requires_observation": True}
+                        "outcome": "uncertain", "requires_observation": True,
+                        "diagnostics": collect(plat, exc)}
             _record(args.record, "dispatched", result)
             if args.observe_after:
                 result["wait"] = observations.wait(plat, "stable", args.timeout)
@@ -210,6 +218,8 @@ def _execute(args):
         error = {"ok": False, "error": str(exc), "error_type": type(exc).__name__,
                  "outcome": "uncertain" if dispatched else "not_dispatched",
                  "requires_observation": dispatched}
+        from .diagnostics import collect
+        error["diagnostics"] = collect(plat, exc)
         if cmd == "type-send":
             error["submission_attempted"] = submission_attempted
             error["requires_observation"] = dispatched

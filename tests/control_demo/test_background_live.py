@@ -77,6 +77,13 @@ class BackgroundLiveTests(unittest.TestCase):
                                   'process_name': 'powershell', 'process_id': before['pid']}}
                 runner.setup(config)
                 check()
+                evidence = runner.diagnose()
+                self.assertEqual(evidence['primary_window'], str(before['target']))
+                reasons = {reason for row in evidence['windows'] for reason in row['excluded_reasons']}
+                self.assertIn('tiny_surface', reasons)
+                self.assertIn('transparent_overlay', reasons)
+                self.assertEqual(evidence['capture_mode'], 'background')
+                check(clicks=0)
                 picture = Image.open(io.BytesIO(runner.screenshot_raw()))
                 self.assertEqual(picture.getpixel((400, 250))[:3], (173, 216, 230))
                 metadata = runner.observation_metadata()

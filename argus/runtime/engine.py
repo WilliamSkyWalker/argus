@@ -29,6 +29,7 @@ class Runtime:
     def _resource(self, state, name):
         if name not in self.resources:
             spec = copy.deepcopy(state["workflow"]["resources"][name])
+            spec.update(state.get("resource_overrides", {}).get(name, {}))
             binding = state.get("bindings", {}).get(name)
             if binding:
                 spec["page_id"] = binding["page_id"]

@@ -274,7 +274,7 @@ def _browser_attach(serial: str | None, state: dict, quiet: bool = False) -> "ob
         return None
 
 
-def attach_desktop(state, *, serial=None, foreground=False):
+def attach_desktop(state, *, serial=None, foreground=False, window_id=None):
     from . import create_platform
     kind = state["os"]
     if state.get("handoff"):
@@ -286,6 +286,8 @@ def attach_desktop(state, *, serial=None, foreground=False):
         if kind != "windows":
             raise ValueError("Foreground runner requires Windows")
         options.update(background=True, foreground=True)
+    if window_id is not None:
+        options["window_id"] = window_id
     if serial is not None and kind == "windows":
         def save_binding(binding):
             current = load_state(serial)

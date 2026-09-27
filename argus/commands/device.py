@@ -55,8 +55,9 @@ def register(sub):
     d_key = dev_sub.add_parser("key", help="Press key: enter/delete/back/home/recent/…")
     d_key.add_argument("key")
     _session_options(d_key)
-    for action_parser in (d_shot, d_tap, d_input, d_ts, d_key):
+    for action_parser in (d_shot, d_tap, d_input, d_ts, d_key, d_swipe):
         action_parser.add_argument("--foreground", action="store_true", help="Explicit Windows foreground input and screen capture for this command")
+        action_parser.add_argument("--window-id", help="Explicit eligible window within the bound Windows process")
     d_launch = dev_sub.add_parser("launch", help="Foreground/relaunch a package (Appium activate, no adb)")
     d_launch.add_argument("package")
     _session_options(d_launch)
@@ -72,9 +73,11 @@ def register(sub):
             page_parser.add_argument("url", help="HTTP(S) URL; returns a new page ID without selecting it")
         elif page_cmd != "pages":
             page_parser.add_argument("page_id")
-    for name in ("capabilities", "wait", "act"):
+    for name in ("capabilities", "diagnose", "wait", "act"):
         p = dev_sub.add_parser(name)
-        _session_options(p, screenshot=name != "capabilities")
+        _session_options(p, screenshot=name not in {"capabilities", "diagnose"})
+        p.add_argument("--foreground", action="store_true", help="Explicit Windows foreground input and screen capture for this command")
+        p.add_argument("--window-id", help="Explicit eligible window within the bound Windows process")
         if name == "wait":
             p.add_argument("--mode", choices=["stable", "change"], default="stable")
             p.add_argument("--timeout", type=float, default=5)

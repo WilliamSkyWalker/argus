@@ -76,7 +76,49 @@ class InteractiveRuntime(Runtime):
         with self._task(run_id) as state:
             if resource not in state["workflow"]["resources"]:
                 raise ValueError("Unknown task resource")
-            self._observe(state, resource)
+            try:
+                self._observe(state, resource)
+            except Exception as exc:
+                state['observations'].pop(resource, None)
+                self.store.save(state, 'observation_failed', {'resource': resource, 'error': str(exc)})
+                raise
+            return state
+
+    def diagnose(self, run_id, resource, error=None):
+        with self._task(run_id) as state:
+            if resource not in state["workflow"]["resources"]:
+                raise ValueError("Unknown task resource")
+            controller = self._resource(state, resource)
+            result = controller.diagnose(error)
+            state.setdefault("diagnostics", {})[resource] = result
+            self.store.save(state, "resource_diagnosed", {"resource": resource, "diagnostics": result})
+            return state
+
+    def repair_resource(self, run_id, resource, operation, note, window_id=None):
+        """Adjust observation targeting only; never repeat a business action."""
+        with self._task(run_id) as state:
+            if state['status'] != 'idle' or state.get('pending'):
+                raise ValueError('Resolve uncertain input before repairing a resource')
+            if resource not in state['workflow']['resources'] or not isinstance(note, str) or not note.strip():
+                raise ValueError('Repair requires a bound resource and an evidence-based note')
+            if operation not in {'reobserve', 'select_window'}:
+                raise ValueError('Unsupported recovery operation')
+            if operation == 'select_window':
+                evidence = self._resource(state, resource).diagnose()
+                candidates = [row for row in evidence.get('windows', [])
+                              if str(row['handle']) == str(window_id) and row.get('visible')
+                              and not row.get('excluded_reasons')
+                              and row.get('process_id') == evidence.get('process_id')]
+                if len(candidates) != 1:
+                    raise ValueError('Window is not an eligible candidate of the bound process; diagnose again')
+                state.setdefault('resource_overrides', {}).setdefault(resource, {})['window_id'] = str(window_id)
+            else:
+                state.get('resource_overrides', {}).pop(resource, None)
+            state['observations'].pop(resource, None)
+            state['error'] = None
+            self.store.save(state, 'resource_repair_requested', {
+                'resource': resource, 'operation': operation, 'window_id': window_id, 'note': note,
+                'business_success': None, 'requires_observation': True})
             return state
 
     def submit(self, run_id, resource, action, observation_id, request_id, note=None):
@@ -215,7 +257,7 @@ class InteractiveRuntime(Runtime):
         for event in self.store.events(run_id):
             data = event["data"]
             row = {key: event[key] for key in ("seq", "at", "kind")}
-            row.update({key: data[key] for key in ("step", "resource", "error", "note", "path", "outcome") if key in data})
+            row.update({key: data[key] for key in ("step", "resource", "error", "note", "path", "outcome", "operation", "window_id") if key in data})
             if event["kind"] == "action_dispatching":
                 row["action"] = data["action"].get("type")
             rows.append(row)
@@ -255,6 +297,10 @@ def call(command, task_id=None, **options):
         return {"events": runtime.store.events(task_id)}
     if command == "observe":
         return runtime.observe(task_id, options["resource"])
+    if command == "diagnose":
+        return runtime.diagnose(task_id, options["resource"])
+    if command == "repair":
+        return runtime.repair_resource(task_id, **options)
     if command == "submit":
         return runtime.submit(task_id, **options)
     if command == "recover":

@@ -109,6 +109,19 @@ class DesktopWinPlatform(DesktopPlatform):
     def teardown(self) -> None:
         self._pg = self._w32 = self._w32con = self._grab = None
 
+    def diagnose(self):
+        from .windows_runner import WindowsRunnerPlatform
+        reader = WindowsRunnerPlatform()
+        try:
+            reader.setup({'win': {'app': self._app, 'process_id': self._process_id,
+                                  'process_name': self.connection['process_name'],
+                                  'window_id': str(self._primary_hwnd)}})
+            evidence = reader.diagnose()
+            evidence.update(selected_window=str(self._hwnd), capture_mode='foreground')
+            return evidence
+        finally:
+            reader.teardown()
+
     def _set_dpi_aware(self) -> None:
         """把进程设为 Per-Monitor DPI aware，让截图/坐标/点击都落物理像素同一坐标系。
 
@@ -150,6 +163,8 @@ class DesktopWinPlatform(DesktopPlatform):
 
         def _cb(hwnd, _):
             nonlocal best, best_area
+            if w32.GetWindowLong(hwnd, -20) & 0x080000A0:
+                return
             if not w32.IsWindowVisible(hwnd):
                 return
             if getattr(self, "_process_id", None):
@@ -171,7 +186,7 @@ class DesktopWinPlatform(DesktopPlatform):
             except Exception:
                 return
             area = (r - l) * (b - t)
-            if area <= 0:          # 最小化窗口 rect 会是负/零
+            if r - l <= 1 or b - t <= 1:
                 return
             if area > best_area:
                 best, best_area = hwnd, area

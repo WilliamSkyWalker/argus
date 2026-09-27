@@ -701,7 +701,7 @@ def device_sessions() -> dict:
 @mcp.tool()
 def device_command(command: str, session: str, options: dict | None = None) -> dict:
     """Shared CLI commands: start, stop, pages, select-page, new-page, close-page,
-    open, navigate, capabilities, wait. Use device_connect for a new binding.
+    open, navigate, capabilities, diagnose, wait. Use device_connect for a new binding.
     Playwright is not supported through MCP; use a browser extension session.
     """
     return _device(command, session, **(options or {}))
@@ -749,21 +749,27 @@ def _image_result(result, observations):
 
 
 @mcp.tool()
-def device_observe(session: str, crop: list[int] | None = None):
-    """Return PNG image content plus observation metadata. Optional crop is image-pixel LTRB, magnified 2x."""
-    result = _device("screenshot", session, crop=crop)
+def device_observe(session: str, crop: list[int] | None = None, foreground: bool = False,
+                   window_id: str | None = None):
+    """Return PNG image content plus observation metadata. Optional crop is image-pixel LTRB, magnified 2x.
+    Windows foreground=true explicitly activates the target and captures its visible screen area.
+    window_id explicitly selects an eligible window of the bound process; diagnose lists candidates.
+    """
+    result = _device("screenshot", session, crop=crop, foreground=foreground, window_id=window_id)
     return _image_result(result, [result] if result.get("ok") else [])
 
 
 @mcp.tool()
 def device_act(session: str, action: dict, observation_id: str | None = None,
-               observe_after: bool = True, timeout: float = 5):
+               observe_after: bool = True, timeout: float = 5, foreground: bool = False,
+               window_id: str | None = None):
     """Dispatch one action, optionally wait for stability and return a new observation.
     coordinate_space: screen, percent, image, crop. Image/crop require observation_id.
     dispatched means input was sent; business_success remains unverified.
+    Windows foreground=true explicitly uses global input on the activated target.
     """
     result = _device("act", session, action=action, observation_id=observation_id,
-                     observe_after=observe_after, timeout=timeout)
+                     observe_after=observe_after, timeout=timeout, foreground=foreground, window_id=window_id)
     return _image_result(result, [result["observation"]] if result.get("observation") else [])
 
 
@@ -838,6 +844,8 @@ def agent_task(command: str, task_id: str | None = None, options: dict | None = 
     """Incremental durable task: create(bindings), observe(resource), submit(resource, action,
     observation_id, request_id, note), status, events, timeline, recover, resolve(outcome,note),
     handoff(instructions), resume(note), finish(note), cancel(note), export(out), list.
+    diagnose(resource) returns window/capture evidence without input. repair(resource, operation,
+    note, window_id) accepts reobserve/select_window, invalidates old observations and never replays input.
     Requests are never replayed automatically. needs_review requires evidence and explicit resolution.
     """
     from argus.runtime.interactive import call

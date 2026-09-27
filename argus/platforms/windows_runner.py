@@ -70,6 +70,7 @@ class WindowsRunnerPlatform(Platform):
             foreground=bool(win.get("foreground")),
             input_binding=win.get("input_binding"),
             process_name=win.get("process_name"), process_id=win.get("process_id"),
+            window_id=win.get("window_id"),
             new_window=win.get("new_window", False), new_window_args=win.get("new_window_args", []),
         )
         self.connection = result.get("connection", {})
@@ -142,6 +143,10 @@ class WindowsRunnerPlatform(Platform):
 
     def observation_metadata(self):
         return dict(self._window_metadata)
+
+    def diagnose(self):
+        """Read window evidence without capture, activation, or input."""
+        return self._call("diagnose")
 
     def expect_window(self, observation):
         self._expected_window = {key: observation[key] for key in
