@@ -52,6 +52,10 @@ python3 "$HOME/.local/share/argus/agent-plugin/update.py" --auto off
 
 ## 浏览器 / Browser
 
+**[下载 Chrome / Edge 浏览器插件 ZIP](https://github.com/WilliamSkyWalker/argus/releases/download/v0.4.1/argus-browser-0.4.1-development.zip)**
+
+解压 ZIP，打开 `chrome://extensions`（Edge 为 `edge://extensions`），开启开发者模式，点击“加载已解压的扩展”，选择包含 `manifest.json` 的解压目录。先运行上面的 CLI 安装命令准备本机桥接，再在扩展中点击 **Connect local bridge**。
+
 按安装器输出的路径，在 Chrome / Edge 扩展页面开启开发者模式，选择“加载已解压的扩展”，然后在扩展中点击 **Connect local bridge**。重启 Agent CLI 后开始使用。
 
 MCP 浏览器控制使用扩展后端，不使用 Playwright。无需为 Argus 配置模型 API Key，由外部 Agent 决策。扩展尚未发布到 Chrome Web Store。

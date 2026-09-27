@@ -18,7 +18,7 @@ class ExecutionTests(unittest.TestCase):
         for mode in ('sequential', 'grid'):
             with self.subTest(mode=mode):
                 agent = self.agent({'platform': 'browser'})
-                with patch.object(execution, 'Agent', return_value=agent), \
+                with patch.object(execution, '_create_agent', return_value=agent), \
                      patch.object(execution.time, 'sleep'), patch.dict(os.environ, {'PROBES_MODE': 'all'}):
                     if mode == 'sequential':
                         results = execution._run_sequential({'platform': 'browser'}, cases, None)
@@ -34,7 +34,7 @@ class ExecutionTests(unittest.TestCase):
         agent = self.agent({'platform': 'browser'})
         agent.run.side_effect = [RuntimeError('example failure'),
                                  {'result': 'pass', 'steps': 1, 'duration': 0, 'steps_detail': []}]
-        with patch.object(execution, 'Agent', return_value=agent):
+        with patch.object(execution, '_create_agent', return_value=agent):
             results = execution._run_concurrent({'platform': 'browser'}, ['first', 'second'], None, 1)
         self.assertEqual([(r['case'], r['result']) for r in results], [('first', 'error'), ('second', 'pass')])
         self.assertEqual(results[0]['steps_detail'], [])
@@ -43,7 +43,7 @@ class ExecutionTests(unittest.TestCase):
     def test_device_start_failure_preserves_surviving_account_and_case_order(self):
         agent = self.agent({'platform': 'android'})
         cases = ['**Platform**: ios\nSkip', '**Reset before**: none\nRun ${EMAIL}']
-        with patch.object(execution, 'Agent', side_effect=[RuntimeError('offline'), agent]), \
+        with patch.object(execution, '_create_agent', side_effect=[RuntimeError('offline'), agent]), \
              patch.object(execution, '_check_or_reconnect_device', return_value=True), \
              patch.object(execution, '_reset_android_state') as reset, \
              patch.dict(os.environ, {'PROBES_MODE': 'all'}):

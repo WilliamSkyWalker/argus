@@ -5,7 +5,6 @@ import time
 from pathlib import Path
 
 from argus.logger import get_logger
-from argus.qa.agent import Agent
 from argus.qa.cases import (
     _apply_account_placeholders,
     _extract_reset_mode,
@@ -19,6 +18,12 @@ from argus.qa.device_setup import _check_or_reconnect_device, _reset_android_sta
 
 
 log = get_logger("qa.execution")
+
+
+def _create_agent(**kwargs):
+    # Model SDKs are optional for CLI control, reporting and execution planning.
+    from argus.qa.agent import Agent
+    return Agent(**kwargs)
 
 
 def _skip_reason(case, platform):
@@ -111,7 +116,7 @@ def _run_sequential(cfg: dict, test_cases: list[str], url: str | None,
     placeholders substituted before being sent to Agent.run().
     """
     log.info("创建 Agent...")
-    agent = Agent(config=cfg)
+    agent = _create_agent(config=cfg)
     agent.probe_context = _probe_run_context(target_dir, account)
     log.info("Agent 创建完成")
 
@@ -180,7 +185,7 @@ def _run_dispatched_devices(cfg: dict, test_cases: list[str],
     # uiautomator2 推 apk 失败 都不该让整批 abort。残存 N-1 台仍能跑完，
     # 失败的设备/账号记 log，最终报告里能看到「跑了 X 台、Y 台 fail-to-start」。
     log.info("调度: 创建 %d 个 Agent (每台设备一个)...", n)
-    agents: list[Agent] = []
+    agents = []
     alive_devices: list[str] = []
     alive_accounts: list[dict] = []
     failed_devices: list[tuple[str, str]] = []
@@ -191,7 +196,7 @@ def _run_dispatched_devices(cfg: dict, test_cases: list[str],
                     if "pass" not in k.lower() and "secret" not in k.lower()}
         log.info("  Agent #%d device=%s account=%s", i + 1, serial, log_safe)
         try:
-            _agent = Agent(config=c)
+            _agent = _create_agent(config=c)
             # 每台设备绑自己的账号 —— probe 按它区分同一时间窗里的多台设备数据
             _agent.probe_context = _probe_run_context(target_dir, acct)
             agents.append(_agent)
@@ -388,7 +393,7 @@ def _run_concurrent(cfg: dict, test_cases: list[str], url: str | None,
     agents = []
     for i in range(concurrency):
         log.info("创建 Agent #%d...", i + 1)
-        agent = Agent(config=copy.deepcopy(cfg_no_cleanup))
+        agent = _create_agent(config=copy.deepcopy(cfg_no_cleanup))
         agents.append(agent)
     log.info("%d 个 Agent 创建完成", len(agents))
 

@@ -265,7 +265,20 @@ class AgentServiceTests(unittest.TestCase):
         import asyncio
         from argus.mcp import server
         result = asyncio.run(server.mcp.call_tool('device_observe', {'session':'mail'}))
-        self.assertEqual([block.type for block in result], ['text','image'])
+        # SDK 2 returns CallToolResult; SDK 1 returns content or (content, structured).
+        if hasattr(result, 'content'):
+            self.assertFalse(result.model_dump(by_alias=True).get('isError', False))
+            content = result.content
+        elif isinstance(result, tuple):
+            content = result[0]
+        else:
+            content = result
+        blocks = [block.model_dump(by_alias=True) for block in content]
+        self.assertEqual([block['type'] for block in blocks], ['text','image'])
+        self.assertTrue(json.loads(blocks[0]['text'])['ok'])
+        self.assertEqual(blocks[1]['mimeType'], 'image/png')
+        import base64
+        self.assertEqual(Image.open(io.BytesIO(base64.b64decode(blocks[1]['data']))).size, (200, 100))
 
     def test_mobile_input_failure_and_unknown_keys_propagate(self):
         from unittest.mock import Mock
