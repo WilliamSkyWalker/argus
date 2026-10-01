@@ -32,7 +32,7 @@ mcp = ["mcp>=1.2,<3"]
 qa = ["openai>=1"]
 desktop = ["PySide6-Essentials>=6.8,<7", "keyring>=25,<26"]
 windows = ["pyautogui>=0.9; sys_platform == 'win32'", "pywin32>=306; sys_platform == 'win32'"]
-mac = ["pyautogui>=0.9; sys_platform == 'darwin'", "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'", "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'"]
+mac = ["pyautogui>=0.9; sys_platform == 'darwin'", "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'", "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'", "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'"]
 
 [project.scripts]
 saygo = "saygo.cli:main"

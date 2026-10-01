@@ -227,3 +227,73 @@ the calling agent inspects their screenshots; `saygo run` uses the configured LL
 
 Validation note: the foreground replacement path remains pending live verification
 after its latest change. Background validation does not exercise global input.
+
+## macOS background mode
+
+Install the `mac` extra (including the ApplicationServices PyObjC binding), open
+the intended app manually, and keep its window on the current desktop. Connect
+with an explicit background session:
+
+```sh
+saygo device list --platform mac
+saygo device connect --platform mac --app 'Example App' --background --session mac-bg
+# If the app has multiple eligible windows, add --window-id from device list.
+saygo device capabilities --session mac-bg
+saygo device screenshot --session mac-bg
+saygo device act '{"type":"tap","x":50,"y":40,"coordinate_space":"percent"}' \
+  --session mac-bg --observation-id OBSERVATION_ID --observe-after
+```
+
+MCP uses `device_connect(platform="mac", session="mac-bg",
+options={"app":"Example App", "background":true})`. CLI, MCP and interactive
+tasks share the saved background flag, process and window identity. A new
+controller must reattach to that window; it cannot silently pick a replacement
+after the app or window closes. Use a new session to choose foreground mode.
+The desktop connection dialog also exposes the background option.
+
+Background capture never activates or launches an app. The model still decides
+from screenshots. A coordinate tap executes the native control's `AXPress`;
+right-click requires `AXShowMenu`. The driver performs only an app-scoped hit test
+and bounded native window/ancestor checks to execute the chosen coordinates; it
+does not return a UI tree, control text or semantic element locator to the model.
+Unsupported/custom-drawn controls fail without sending a global mouse event.
+
+Text is sent as process-directed Unicode key events, without using the clipboard.
+`input` and unmodified `press_key` require exactly one eligible application window
+and an existing focused control belonging to that window. This mode does not
+focus a text field by activating the application. Printable text is supported;
+use `press_key` for control keys. Shortcuts, dragging, double-click, hover,
+long-press and app/URL opening are deliberately unsupported. There is no global
+input or foreground fallback, including through legacy commands.
+
+Scrolling requires a native vertical scrollbar. `scroll_at` targets the area
+under its coordinates; `scroll_up/down` use the window centre. The capability
+reports `scroll_at_unit: native_steps`: positive amounts scroll up and negative
+amounts down, using native increment/decrement actions when available. For a
+scrollbar exposing a writable normalized value instead, each step changes that
+value by 0.05, clamped to [0,1]. It is not a pixel or wheel-notch guarantee.
+
+Screen Recording and Accessibility permissions must be granted to the process
+hosting Saygo. Locked/inactive consoles, minimized/hidden windows, windows on
+another desktop Space and ambiguous native window mappings are rejected. App
+callbacks can still activate themselves, and user input can race with automation;
+if the foreground app or pointer changes during an operation, Saygo reports an
+uncertain result and does not restore focus, replay input, or claim success.
+The existing desktop resource lock remains conservative and serializes Saygo
+desktop tasks. It does not lock out a human or other applications.
+
+Validation on an Intel Mac with macOS 12.7.6 and Python 3.14.8: the isolated native
+test panel accepted a background button action, Chinese/emoji input and deletion,
+and native scrolling, while frontmost PID, pointer and clipboard change count
+remained unchanged. Separate CLI processes and an MCP stdio session also passed
+connect, observe and observed-action checks against that panel (five live tests).
+This does not certify arbitrary apps, other macOS releases,
+minimized windows or other Spaces. Run the explicit GUI checks with:
+
+```sh
+SAYGO_TEST_MAC_BACKGROUND=1 python3 -m unittest discover -s tests/mac_demo -p test_background_live.py -v
+```
+
+The test creates and closes its own panel; it does not open user documents. Keep
+the console unlocked and avoid moving the pointer during the input assertions.
+Offline contracts are in `tests/control_demo/test_mac_background.py`.

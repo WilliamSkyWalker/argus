@@ -78,7 +78,9 @@ Saygo 为外部编程 Agent 提供跨手机、浏览器和桌面窗口的视觉�
 
 ## 视觉操作约束
 
-- **不喂 UI 树给 LLM**。树逻辑全删(无 snap-to-clickable / element_marker / dialog_dismisser / _compact_xml)。决策只靠截图。
+- macOS 显式后台模式见 `platforms/desktop_mac_background.py`。模型仍只看截图；驱动内部可对已选坐标做应用内 AX 命中、窗口身份校验和有限祖先查询，以执行原生控件动作，不向模型提供树、控件文本或语义定位。该路径禁止激活/启动 App、全局鼠标键盘、剪贴板和前台回退。原生按键定向到已绑定进程且须验证其已有焦点控件归属；不支持的动作明确失败。锁屏、非当前桌面或身份不明的窗口拒绝操作。实机验证范围和命令见 `docs/control.md` 的 macOS background mode；不能将独立测试面板的通过宣称为全应用兼容。
+
+- **不喂 UI 树给 LLM**。QA 感知与定位不使用树(无 snap-to-clickable / element_marker / dialog_dismisser / _compact_xml)。决策只靠截图；macOS 后台驱动内部的原生动作适配范围见上条。
 - **优先百分比坐标**：QA 模型使用 `x_pct/y_pct`（0–100），`brain._pct_to_px` 换算；统一服务还支持像素、图像与裁剪空间。元数据中的图像尺寸和映射不能省略，不能假设截图像素等于设备逻辑坐标。
 - 移动端视觉控制经 Appium（截图可用 mjpeg 帧流回退到 `get_screenshot_as_png`）。设备需可交互，锁屏或受保护页面可能无法截图。adb 用于发现和生命周期管理，不作为视觉控制的旁路。
 

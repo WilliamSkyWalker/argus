@@ -23,7 +23,7 @@ def metadata(platform, png, session=None):
     if hasattr(platform, "page_id"):
         result["page_id"] = platform.page_id
     state = ds.load_state(session) or {}
-    result["target"] = {key: state[key] for key in ("os", "kind", "app", "device_id", "session_id", "process_id") if key in state}
+    result["target"] = {key: state[key] for key in ("os", "kind", "app", "device_id", "session_id", "process_id", "background", "window_id") if key in state}
     return result
 
 

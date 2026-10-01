@@ -18,6 +18,9 @@ def create_platform(platform_name: str, config: dict) -> Platform:
         from .browser import BrowserPlatform
         return BrowserPlatform()
     elif platform_name in ("mac", "macos"):
+        if (config.get("mac") or {}).get("background"):
+            from .desktop_mac_background import DesktopMacBackgroundPlatform
+            return DesktopMacBackgroundPlatform()
         # macOS 桌面原生驱动（pyautogui，纯视觉，窗口级前台方案）。
         from .desktop_mac import DesktopMacPlatform
         return DesktopMacPlatform()

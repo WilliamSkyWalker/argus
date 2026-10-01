@@ -83,7 +83,8 @@ All device operations write local JSONL facts under `$SAYGO_HOME_DIR/operations`
 | Installed wheel outside checkout | Clean Python 3.12 virtual environment without system site packages; `browser,mcp` extras, CLI/doctor/MCP startup and live Chromium integration passed; no Appium, Selenium or OpenAI installed |
 | Android / iOS physical devices | Existing adapters; new complete task path requires device validation |
 | Windows via WSL PowerShell runner | Isolated live background fixture: input, reconnect, window ID/process/bounds rejection; foreground, cursor and clipboard preserved. Foreground integration not run |
-| Native Windows / macOS desktop | Window identity checks implemented; native adapters require host validation |
+| Native Windows desktop | Window identity checks implemented; native adapter requires host validation |
+| macOS background desktop | Five live tests on macOS 12.7.6: isolated native panel button, Unicode input/delete, scroll, CLI reconnect and MCP stdio actions passed with frontmost PID, pointer and clipboard unchanged. Existing current-desktop windows only; arbitrary app workflows remain unverified. See [background limits](control.md#macos-background-mode) |
 | Browser extension / Selenium | Existing adapter tests; advanced actions vary by backend |
 
 The isolated installation run used Pillow 12.3.0, Playwright 1.63.0 and MCP 2.2.0 with an existing host Chromium binary. It verifies Python dependency isolation and operation outside the checkout, not browser/system dependency installation on a fresh operating system. The package is published on PyPI; the release pipeline checks wheel installation and plugin preparation on Linux, Windows and macOS.

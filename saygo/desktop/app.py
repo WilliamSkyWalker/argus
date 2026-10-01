@@ -159,7 +159,7 @@ def make_window():
             self.platform=QComboBox(); self.platform.addItems(['browser','desktop','android','ios'])
             self.session=QLineEdit('desktop-web'); self.target=QLineEdit(); self.target.setPlaceholderText('桌面：窗口标题或 App 名；手机：设备 ID；浏览器：留空')
             self.page_id=QComboBox(); self.page_id.addItem('先连接浏览器，再选择网页',None)
-            self.background=QCheckBox('Windows 使用后台窗口输入（不支持的动作会报错）')
+            self.background=QCheckBox('Windows / macOS 后台输入（macOS 需已打开窗口；不支持的动作会报错）')
             form.addRow('平台',self.platform); form.addRow('会话名称',self.session); form.addRow('目标',self.target); form.addRow('浏览器页面',self.page_id); form.addRow('',self.background)
             row=QHBoxLayout(); layout.addLayout(row)
             self.button('扫描设备 / 窗口',lambda:self.job(lambda emit:control.discover('all')),row)

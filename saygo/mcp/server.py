@@ -711,6 +711,8 @@ def device_command(command: str, session: str, options: dict | None = None) -> d
 def device_connect(platform: str, session: str, options: dict | None = None) -> dict:
     """Bind Android/iOS, browser, or a desktop window. Browsers default to extension;
     Playwright is not supported through MCP. Extension needs bridge_directory.
+    macOS options: app, background=true, optional window_id. Background mode
+    requires an existing window on the current desktop and never activates it.
     """
     from argparse import Namespace
     from saygo.devices.control import connect

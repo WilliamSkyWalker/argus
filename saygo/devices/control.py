@@ -29,7 +29,9 @@ def sessions():
             rows.append({"session":path.stem,"platform":kind,
                          "backend":state.get("browser_backend"),"device":state.get("device_id"),
                          "app":state.get("app"),"page_id":state.get("page_id"),
-                         "disconnected":state.get("disconnected",False)})
+                         "disconnected":state.get("disconnected",False),
+                         **({"background": state["background"], "window_id": state.get("window_id")}
+                            if "background" in state else {})})
         except (OSError,ValueError) as exc:
             rows.append({"session":path.stem,"error":str(exc)})
     return rows
@@ -47,8 +49,10 @@ def desktop_windows():
         return [{"platform":"windows","app":d["MainWindowTitle"],"process":d["ProcessName"],"pid":d["Id"]} for d in data]
     import Quartz
     windows=Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly,Quartz.kCGNullWindowID)
-    return [{"platform":"mac","app":w.get(Quartz.kCGWindowOwnerName),"title":w.get(Quartz.kCGWindowName,""),"pid":w.get(Quartz.kCGWindowOwnerPID)}
-            for w in windows if w.get(Quartz.kCGWindowLayer)==0 and w.get(Quartz.kCGWindowOwnerName)]
+    return [{"platform":"mac","app":w.get(Quartz.kCGWindowOwnerName),"title":w.get(Quartz.kCGWindowName,""),
+             "pid":w.get(Quartz.kCGWindowOwnerPID), "window_id":str(w[Quartz.kCGWindowNumber]),
+             "bounds":dict(w.get(Quartz.kCGWindowBounds) or {})}
+            for w in windows if w.get(Quartz.kCGWindowLayer) in (0, 3) and w.get(Quartz.kCGWindowOwnerName)]
 
 
 def discover(which):
@@ -72,8 +76,8 @@ def _connect(args):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}",serial):
         raise ValueError("session must contain letters, digits, dot, dash or underscore")
     kind=desktop_platform(args.platform)
-    if getattr(args,"background",False) and kind != "windows":
-        raise ValueError("--background currently requires Windows")
+    if getattr(args,"background",False) and kind not in {"windows", "mac"}:
+        raise ValueError("--background requires Windows or macOS")
     if kind in {"android","ios"}:
         return mobile.connect(kind,args.device,serial,args.server_url,args.team_id)
     old=ds.load_state(serial)
@@ -87,12 +91,16 @@ def _connect(args):
             return {"connected":False,"session":serial,**old["handoff"]}
         state={"kind":"desktop","os":kind,"app":args.app}
         if old and not getattr(args,"new_window",False):
-            state.update({key:old[key] for key in ("process_id","process_name","launch","background") if key in old})
+            state.update({key:old[key] for key in ("process_id","process_name","launch","background","window_id") if key in old})
         if getattr(args,"new_window",False) and (not getattr(args,"launch",None) or not getattr(args,"new_window_args",None)):
             raise ValueError("--new-window requires --launch and explicit --new-window-arg values supported by the app")
         for key in ("launch", "process_name", "new_window", "new_window_args", "background"):
             value=getattr(args,key,None)
             if value: state[key]=value
+        if getattr(args, "window_id", None) is not None:
+            if kind != "mac" or not state.get("background"):
+                raise ValueError("Connection --window-id requires macOS --background")
+            state["window_id"] = args.window_id
         if kind != "windows" and any(state.get(k) for k in ("launch", "process_name", "new_window")):
             raise ValueError("Explicit desktop lifecycle options currently require Windows")
         from saygo.platforms.desktop import DesktopHandoffRequired
@@ -109,6 +117,8 @@ def _connect(args):
             if not isinstance(connection,dict): connection={}
             for key in ("process_id", "process_name", "launch"):
                 if connection.get(key): state[key]=connection[key]
+            if kind == "mac" and state.get("background"):
+                state["window_id"] = connection["window_id"]
             # New-window intent is one-shot, never repeated by screenshots/actions.
             state.pop("new_window",None); state.pop("new_window_args",None)
             ds.save_state(serial,state)
@@ -199,7 +209,8 @@ def register(sub):
     p.add_argument("--server-url")
     p.add_argument("--team-id")
     p.add_argument("--app")
-    p.add_argument("--background",action="store_true",help="Windows background window messages and capture; never use global input")
+    p.add_argument("--background",action="store_true",help="Windows/macOS background capture and directed input; never fall back to global input")
+    p.add_argument("--window-id",help="Bind a specific existing macOS background window")
     p.add_argument("--process",dest="process_name",help="Windows executable process name")
     p.add_argument("--launch",help="Windows executable; launched only if no matching process exists")
     p.add_argument("--new-window",action="store_true",help="Explicitly request another window")

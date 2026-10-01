@@ -202,7 +202,7 @@ Execution facts, errors, before/after captures and Agent notes are recorded sepa
 | Chrome / Edge | Extension + native messaging for MCP and the desktop GUI; store installation and fresh-machine setup still require acceptance tests. |
 | Managed test browser | Playwright/CDP through CLI/Runtime; Selenium remains available for QA. Playwright is rejected by MCP. |
 | Windows desktop | Native driver or PowerShell/Win32 runner; WSL is optional. Experimental background control depends on application controls and rejects unsupported shortcuts. |
-| macOS desktop | Window capture and foreground input; requires Screen Recording and Accessibility permissions. Native packaging and full task execution remain unverified. |
+| macOS desktop | Foreground control plus explicit experimental `--background` mode using native control actions and directed Unicode keys. Background button/input/scroll tests passed on an isolated macOS 12.7.6 panel; see [limits](docs/control.md#macos-background-mode). Native packaging and full application tasks remain unverified. |
 | Remote desktop | Experimental RDP prototype; not a stable supported deployment path. |
 
 Windows native desktop tests, frozen EXE startup and native-host handshake passed. Linux Qt startup and packaging passed. These checks do **not** establish clean-machine installation, a live model-driven task or the full phone registration → email activation → desktop confirmation acceptance scenario. Detailed evidence boundaries: [desktop](docs/desktop.md), [Agent control](docs/agent-control.md), [mobile](docs/mobile.md), [distribution](distribution/README.md).

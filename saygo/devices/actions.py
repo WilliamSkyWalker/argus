@@ -9,10 +9,15 @@ OPTIONAL = {"hover", "double_click", "right_click", "long_press", "scroll_at", "
 
 def capabilities(platform):
     actions = BASE | {name for name in OPTIONAL if callable(getattr(type(platform), name, None))}
+    if callable(getattr(type(platform), "supported_actions", None)):
+        actions = set(platform.supported_actions())
     if callable(getattr(type(platform), "list_pages", None)):
         actions |= {"select_page", "close_page", "new_page", "go_back", "go_forward"}
-    return {"actions": sorted(actions), "coordinate_spaces": ["screen", "percent", "image", "crop"],
-            "business_verification": "external_agent", "scroll_at_unit": "wheel_notches"}
+    result = {"actions": sorted(actions), "coordinate_spaces": ["screen", "percent", "image", "crop"],
+              "business_verification": "external_agent", "scroll_at_unit": "wheel_notches"}
+    if callable(getattr(type(platform), "capability_details", None)):
+        result.update(platform.capability_details())
+    return result
 
 
 def number(value, name, low, high):
@@ -66,6 +71,8 @@ def prepare(platform, action, observation=None):
         action["duration"] = number(action.get("duration", 1), "duration", .1, 30)
     if kind == "scroll_at":
         action["amount"] = number(action.get("amount"), "amount", -100, 100)
+    if callable(getattr(type(platform), "validate_action", None)):
+        platform.validate_action(action)
     if observation:
         import time
         if time.time() - observation.get("at", time.time()) > 30:
