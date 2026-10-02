@@ -97,6 +97,19 @@ class ExtensionBrowserPlatform(Platform):
     def tap(self, x, y):
         self._call("tap", x=x, y=y)
 
+    def hover(self, x, y):
+        """Move the browser pointer without pressing a button."""
+        self._call("hover", x=x, y=y)
+
+    def double_click(self, x, y):
+        self._call("double_click", x=x, y=y)
+
+    def right_click(self, x, y):
+        self._call("right_click", x=x, y=y)
+
+    def long_press(self, x, y, duration=1):
+        self._call("long_press", x=x, y=y, duration=duration)
+
     def input_text(self, text):
         self._call("input", text=text)
 

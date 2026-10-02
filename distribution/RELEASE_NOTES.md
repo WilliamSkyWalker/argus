@@ -1,4 +1,10 @@
-# Saygo 0.4.7 — Scroll the intended browser pane
+# Saygo 0.4.8 — Browser pointer actions
+
+- Add hover, double-click, right-click and configurable long-press actions to the connected browser extension backend.
+- Check mouse action coordinates against the active browser viewport before dispatch.
+- Reload the browser extension after updating the runtime files.
+
+## Previous release: Saygo 0.4.7 — Scroll the intended browser pane
 
 - Add `scroll_at` to the browser extension backend and the shared CLI/MCP action interface.
 - Target a viewport coordinate or an observation-mapped percentage/image/crop coordinate. Positive amounts scroll up; negative amounts scroll down; one unit requests 100 CSS pixels.

@@ -183,7 +183,7 @@ async function execute(operation, args = {}) {
   if (operation === "metadata") {
     return (await pages()).find(p => p.page_id === args.page_id);
   }
-  const allowed = ["screenshot", "size", "tap", "input", "key", "swipe", "scroll", "scroll_at", "navigate", "back", "forward"];
+  const allowed = ["screenshot", "size", "tap", "hover", "double_click", "right_click", "long_press", "input", "key", "swipe", "scroll", "scroll_at", "navigate", "back", "forward"];
   if (!allowed.includes(operation)) throw new Error("Unsupported operation");
   await attach(tabId);
   // Control can be released while attach is pending.
@@ -212,10 +212,34 @@ async function execute(operation, args = {}) {
     if (![x,y].every(Number.isFinite) || x < 0 || y < 0) throw new Error("Invalid coordinates");
     return {x,y};
   };
+  const inputPoint = async (x,y) => {
+    const p = point(x,y);
+    const {cssVisualViewport:v} = await cdp(tabId,"Page.getLayoutMetrics");
+    if (p.x >= v.clientWidth || p.y >= v.clientHeight) throw new Error("Input coordinates outside viewport");
+    return p;
+  };
   if (operation === "tap") {
-    const p = point(args.x,args.y);
+    const p = await inputPoint(args.x,args.y);
     await cdp(tabId,"Input.dispatchMouseEvent",{type:"mousePressed",button:"left",clickCount:1,...p});
     await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseReleased",button:"left",clickCount:1,...p});
+  } else if (operation === "hover") {
+    const p = await inputPoint(args.x,args.y);
+    await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseMoved",...p});
+  } else if (operation === "double_click" || operation === "right_click") {
+    const p = await inputPoint(args.x,args.y);
+    const button = operation === "right_click" ? "right" : "left";
+    const clickCount = operation === "double_click" ? 2 : 1;
+    await cdp(tabId,"Input.dispatchMouseEvent",{type:"mousePressed",button,clickCount,...p});
+    await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseReleased",button,clickCount,...p});
+  } else if (operation === "long_press") {
+    const p = await inputPoint(args.x,args.y);
+    if (!Number.isFinite(args.duration) || args.duration < .1 || args.duration > 30) throw new Error("Invalid long-press duration");
+    await cdp(tabId,"Input.dispatchMouseEvent",{type:"mousePressed",button:"left",clickCount:1,...p});
+    try {
+      await new Promise(resolve => setTimeout(resolve,args.duration*1000));
+    } finally {
+      await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseReleased",button:"left",clickCount:1,...p});
+    }
   } else if (operation === "input") {
     if (typeof args.text !== "string") throw new Error("Invalid text");
     await cdp(tabId,"Input.insertText",{text:args.text});

@@ -95,6 +95,11 @@ chaining can move an ancestor. `scroll_up`/`scroll_down` still target the viewpo
 center, while `swipe` is a mouse drag. Updated runtime and extension files are
 required for `scroll_at`; reload the extension after updating it.
 
+The extension backend also supports the pointer actions `hover`, `double_click`,
+`right_click` and `long_press` through `device_act`. `hover` moves the pointer
+without clicking, which lets hover menus open before a separate observation.
+Long press holds the primary button for the requested duration.
+
 ## Runtime and human handoff
 
 Use this resource in an existing workflow:
