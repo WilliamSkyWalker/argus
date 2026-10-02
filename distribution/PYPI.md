@@ -37,16 +37,20 @@ The production PyPI Trusted Publisher is configured. Use these settings when con
 | Workflow | `python-package.yml` |
 | Environment | `pypi` (or `testpypi`) |
 
-Create the matching GitHub environments. For production, configure a required
-reviewer in the `pypi` environment. Trusted Publishing uses GitHub OIDC rather than
-committed credentials or a long-lived API token.
+Create the matching GitHub environments. For unattended tag releases, leave
+required reviewers disabled in the `pypi` environment. Adding a reviewer makes
+each production upload wait for approval. Trusted Publishing uses GitHub OIDC
+rather than committed credentials or a long-lived API token.
 
-Run the **Python package** workflow with `publish: none` first. Select `testpypi`
-to upload to the test index. For production, select the matching `v0.4.8` tag and
-`publish: pypi`. Build and all three smoke jobs must pass before upload. Only a
-manual dispatch can publish; pull requests only build and test. The public PyPI
-project endpoint may return 404 before first publication; this does not guarantee
-that PyPI will permit the chosen name.
+Push a version tag matching `distribution/release.json` (for example `v0.4.9`)
+to publish automatically. The **Build release** workflow publishes the GitHub
+release after its checks; **Python package** uploads to PyPI only after its build
+and Linux, Windows and macOS installation checks pass. Ordinary branch pushes
+do not publish packages.
+
+For manual validation, run **Python package** with `publish: none`. Manual
+`testpypi` and `pypi` publishing remain available; production publishing must
+select the matching version tag. Pull requests only build and test.
 
 After publication, verify from outside the checkout:
 
