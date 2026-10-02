@@ -40,6 +40,22 @@ class UpdateTests(unittest.TestCase):
             self.assertEqual(fetch.call_count, 1)
         self.assertEqual(u.current(self.root)['python'], sys.executable)
 
+    def test_each_mcp_start_checks_despite_fresh_cache(self):
+        u.write(self.root/'update-state.json', {'checked_at': time.time(), 'available': False})
+        with patch.object(u.subprocess, 'Popen') as spawn, patch.object(u, 'run_server', return_value=0):
+            for _ in range(2):
+                self.assertEqual(u.serve(self.root, []), 0)
+            self.assertEqual(spawn.call_count, 2)
+            for call in spawn.call_args_list:
+                self.assertIn('--background', call.args[0])
+
+    def test_startup_background_check_fetches_despite_fresh_cache(self):
+        u.write(self.root/'update-state.json', {'checked_at': time.time(), 'available': False})
+        with patch.object(u, 'fetch', return_value=json.dumps([self.release('0.5.0')]).encode()) as fetch:
+            self.assertEqual(u.main(['--root', str(self.root), '--background']), 0)
+            fetch.assert_called_once_with(u.API)
+        self.assertEqual(u.notice(self.root)['available'], 'v0.5.0')
+
     def test_asset_digest_and_origin_are_required(self):
         release = self.release('0.5.0'); name = 'install-saygo-0.5.0.py'
         release['assets'] = [{'name': name, 'browser_download_url': u.DOWNLOAD+'v0.5.0/'+name, 'digest': 'sha256:'+'0'*64}]

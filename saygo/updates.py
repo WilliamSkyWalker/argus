@@ -261,13 +261,12 @@ def serve(root, args):
                         and version(pending['version']) > version(current(root)['version'])):
                     activate(root, pending)
                     write(root/'update-state.json', {'checked_at': time.time(), 'current': pending['version'], 'available': False})
-                state = read(root/'update-state.json')
-                if time.time() - state.get('checked_at', 0) >= INTERVAL:
-                    options = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {'start_new_session': True}
-                    with (root/'update.log').open('ab') as log:
-                        subprocess.Popen([current(root)['python'], '-I', str(root/'update.py'),
-                                          '--root', str(root), '--background'],
-                                         stdin=subprocess.DEVNULL, stdout=log, stderr=log, **options)
+                # Check on every MCP startup without delaying device connections.
+                options = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {'start_new_session': True}
+                with (root/'update.log').open('ab') as log:
+                    subprocess.Popen([current(root)['python'], '-I', str(root/'update.py'),
+                                      '--root', str(root), '--background'],
+                                     stdin=subprocess.DEVNULL, stdout=log, stderr=log, **options)
             except Exception as exc:
                 state = read(root/'update-state.json'); state['error'] = str(exc)
                 write(root/'update-state.json', state)
@@ -305,7 +304,7 @@ def main(argv=None):
     if args.background:
         with lock(root/'download.lock'):
             try:
-                state = check(root)
+                state = check(root, force=True)
                 if read(root/'updates.json').get('automatic'):
                     apply(root, state, stage_only=True)
             except Exception as exc:
