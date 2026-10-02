@@ -34,6 +34,25 @@ def source_files():
         yield ROOT / 'scripts' / name
 
 
+def build_extensions(out):
+    """Extension releases use their own manifest version, independently of Python."""
+    out = Path(out).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    extension_root = ROOT/'extensions/saygo-browser'
+    extension = {p.relative_to(extension_root).as_posix(): p.read_bytes()
+                 for p in source_files() if p.is_relative_to(extension_root)}
+    manifest = json.loads(extension['manifest.json'])
+    version = manifest['version']
+    if not re.fullmatch(r'\d+\.\d+\.\d+', version):
+        raise ValueError('Extension version must be X.Y.Z')
+    products = [f'saygo-browser-{version}-development.zip', f'saygo-browser-{version}-store.zip']
+    archive(out/products[0], extension)
+    manifest.pop('key', None)
+    extension['manifest.json'] = (json.dumps(manifest, indent=2)+'\n').encode()
+    archive(out/products[1], extension)
+    return version, products
+
+
 def build(out, store_id=None):
     release = json.loads((ROOT / 'distribution/release.json').read_text())
     version = release['version']
@@ -57,18 +76,10 @@ def build(out, store_id=None):
         raise ValueError('Installer release placeholder missing')
     installer = out/f'install-saygo-{version}.py'
     installer.write_text(script.replace('RELEASE = None', 'RELEASE = ' + repr(coordinates)))
-    extension_root = ROOT/'extensions/saygo-browser'
-    extension = {p.relative_to(extension_root).as_posix():p.read_bytes() for p in source_files() if p.is_relative_to(extension_root)}
-    manifest = json.loads(extension['manifest.json'])
-    if manifest['version'] != version:
-        raise ValueError('Extension version differs from release version')
-    archive(out/f'saygo-browser-{version}-development.zip', extension)
-    manifest.pop('key', None)  # The Web Store supplies the production identity.
-    extension['manifest.json'] = (json.dumps(manifest, indent=2)+'\n').encode()
-    archive(out/f'saygo-browser-{version}-store.zip', extension)
-    products = [prefix+'.zip', installer.name, f'saygo-browser-{version}-development.zip', f'saygo-browser-{version}-store.zip']
+    extension_version, extension_products = build_extensions(out)
+    products = [prefix+'.zip', installer.name, *extension_products]
     (out/'SHA256SUMS').write_text(''.join(hashlib.sha256((out/name).read_bytes()).hexdigest()+'  '+name+'\n' for name in products))
-    (out/'release-manifest.json').write_text(json.dumps({**release, 'source':coordinates, 'artifacts':products},indent=2)+'\n')
+    (out/'release-manifest.json').write_text(json.dumps({**release, 'extension_version':extension_version, 'source':coordinates, 'artifacts':products},indent=2)+'\n')
     return out
 
 
@@ -76,5 +87,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', default='dist/release')
     parser.add_argument('--store-extension-id')
+    parser.add_argument('--extension-only', action='store_true', help='Build only extension ZIPs, using the extension manifest version')
     args = parser.parse_args()
-    print(build(args.out, args.store_extension_id))
+    if args.extension_only:
+        extension_version, products = build_extensions(args.out)
+        out = Path(args.out)
+        (out/'SHA256SUMS').write_text(''.join(hashlib.sha256((out/name).read_bytes()).hexdigest()+'  '+name+'\n' for name in products))
+        print(out.resolve())
+    else:
+        print(build(args.out, args.store_extension_id))

@@ -71,8 +71,8 @@ new MCP extension connections no longer require a manually supplied path.
 
 ## Update and uninstall
 
-Starting with 0.4.1, managed installations check GitHub releases in the background
-at most once per day when an Agent MCP session starts. Checks do not delay startup.
+Starting with 0.4.6, managed installations check GitHub releases in the background
+on every Agent MCP server startup, regardless of the previous check time. Checks do not delay startup.
 New-version reminders appear in `device_sessions` results and client stderr logs.
 The default is **notify only**, with the stable release channel.
 
@@ -131,6 +131,14 @@ remain reusable. Another installation's host registration is never deleted.
 Use the same `--root` if a custom root was used for installation.
 
 ## Maintainer build and store upload
+
+Browser extension versions come from `extensions/saygo-browser/manifest.json`
+and are independent of the Python package version. Only change the extension
+version when its files change. Build an extension-only upload with
+`python3 scripts/build_release.py --extension-only --out dist/browser-store`.
+The first store item ID is `ehomcchjfomfkcmbeinlcmpbaamdhfbo`; its review/publication
+is still pending. Existing development installations are not migrated automatically.
+
 
 ```sh
 python3 scripts/build_release.py --out dist/release

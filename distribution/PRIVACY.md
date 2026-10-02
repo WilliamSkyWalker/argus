@@ -1,5 +1,7 @@
 # Saygo Browser privacy policy
 
+Last updated: October 2, 2026. Applies to the Saygo Browser extension and its local bridge.
+
 Saygo Browser is a local bridge for user-directed programming Agents. Connecting
 it makes website tabs in the current browser profile available to the local Saygo
 runtime, including tabs opened later. You can disconnect with Release in the popup.
@@ -26,3 +28,18 @@ can delete those records from your Saygo data directory when no longer needed.
 
 Questions: https://github.com/WilliamSkyWalker/saygo/issues (do not include secrets
 or private screenshots in public issues).
+
+## Purpose and limited use
+
+Saygo uses the information described above only to provide user-directed browser
+operation, observation and debugging. Saygo does not use it for advertising,
+resale, creditworthiness or lending decisions. The developer does not receive
+these browser records through a developer-operated collection endpoint and does
+not inspect them unless you deliberately provide information for support.
+Saygo Browser's use and transfer of information adheres to the Chrome Web Store
+User Data Policy, including the Limited Use requirements.
+
+The extension journal is held in memory with bounded retention and cleared on
+release/disconnection or extension restart. Local runtime records persist until
+you delete them. Records already sent to your Agent or AI provider follow that
+service's retention settings. Do not attach private page data to public issues.

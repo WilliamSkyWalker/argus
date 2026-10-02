@@ -38,7 +38,9 @@ class ReleaseTests(unittest.TestCase):
             archive.write_bytes(archive.read_bytes()+b'corrupted')
             with self.assertRaisesRegex(ValueError, 'SHA256 mismatch'):
                 installer.source_root(None, work, str(archive))
-            with zipfile.ZipFile(out/f'saygo-browser-{version}-development.zip') as dev, zipfile.ZipFile(out/f'saygo-browser-{version}-store.zip') as store:
+            extension_version = json.loads((ROOT/'extensions/saygo-browser/manifest.json').read_text())['version']
+            self.assertEqual(json.loads((out/'release-manifest.json').read_text())['extension_version'], extension_version)
+            with zipfile.ZipFile(out/f'saygo-browser-{extension_version}-development.zip') as dev, zipfile.ZipFile(out/f'saygo-browser-{extension_version}-store.zip') as store:
                 import base64
                 manifest = json.loads(dev.read('manifest.json'))
                 key = base64.b64decode(manifest['key'])

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Saygo Browser",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "minimum_chrome_version": "118",
   "description": "Connect your browser tabs to the local Saygo visual engine.",
   "permissions": [
@@ -24,5 +24,6 @@
     "32": "icons/32.png",
     "48": "icons/48.png",
     "128": "icons/128.png"
-  }
+  },
+  "homepage_url": "https://saygo.work/"
 }
