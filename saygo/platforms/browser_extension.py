@@ -63,6 +63,9 @@ class ExtensionBrowserPlatform(Platform):
     def observation_metadata(self):
         return dict(self._call("metadata"), pages=self.list_pages())
 
+    def diagnose(self):
+        return self._call("diagnose")
+
     def network(self, command="read", **query):
         if command not in {"start", "stop", "clear", "read"}:
             raise ValueError("Unknown network command")

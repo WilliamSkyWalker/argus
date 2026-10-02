@@ -1,10 +1,10 @@
-# Chrome Web Store submission — Saygo Browser 0.4.9
+# Chrome Web Store submission — Saygo Browser 0.4.10
 
 Status: package uploaded by publisher; store review not submitted. Isolated
 Chromium/native-host validation passed for input, independently targeted left/right
 scrolling, screenshots and release. Screenshots use a fictional local test page.
 Store ID: ehomcchjfomfkcmbeinlcmpbaamdhfbo. Runtime minimum for targeted scrolling:
-Saygo 0.4.9, native bridge protocol 1. Extension and runtime versions are independent.
+Saygo 0.4.10, native bridge protocol 1. Extension and runtime versions are independent.
 
 ## Store listing
 
@@ -66,7 +66,7 @@ No Saygo account, login credentials or payment are required. Please use a clean
 browser profile with test pages, not a profile containing private accounts.
 
 1. Install Python 3.10+, pipx and a supported Agent CLI (Codex, Claude Code, Qoder or QoderCN). Install the extension from the review package.
-2. Run: pipx install 'saygo-agent-control[mcp]>=0.4.9'
+2. Run: pipx install 'saygo-agent-control[mcp]>=0.4.10'
 3. Run: saygo setup --client codex --extension-id ehomcchjfomfkcmbeinlcmpbaamdhfbo
    Use --client claude/qoder/qodercn if appropriate. On WSL, run setup in WSL; it prepares the native host on Windows. On macOS/Linux, run setup on the browser's host OS. Do not load the development extension when testing the store ID.
 4. Open https://example.com/ in the test browser, open Saygo Browser, and click Connect local bridge. Verify Connected and the test tab title in the popup. Chrome may display a debugger indicator.

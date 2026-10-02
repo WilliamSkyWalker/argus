@@ -1,6 +1,6 @@
 {
   "name": "saygo-device",
-  "version": "0.4.9",
+  "version": "0.4.10",
   "description": "Operate phones, browser pages and desktop windows with shared sessions and durable tasks.",
   "author": {"name": "saygo"},
   "skills": "./skills/",

@@ -34,7 +34,11 @@ const PROTOCOL = 1;
 let negotiated = false;
 let connectionError = "Disconnected";
 let inputPending = false;
-const READ_OPERATIONS = new Set(["pages", "metadata", "size", "screenshot", "network_read"]);
+// A timeout does not cancel Chrome's screenshot or its temporary viewport state.
+// Keep ownership until Chrome actually completes the outstanding operation.
+const viewportPending = new Map();
+const captureHistory = new Map();
+const READ_OPERATIONS = new Set(["pages", "metadata", "diagnose", "size", "screenshot", "network_read"]);
 const attached = new Set();
 const attaching = new Map();
 let generation = 0;
@@ -92,6 +96,19 @@ async function attach(tabId) {
 }
 async function cdp(tabId, method, params = {}) {
   return chrome.debugger.sendCommand({tabId}, method, params);
+}
+async function captureState(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  const window = await chrome.windows.get(tab.windowId);
+  return {tab_active:tab.active, tab_discarded:tab.discarded, tab_status:tab.status,
+    window_id:tab.windowId, window_state:window.state, window_focused:window.focused};
+}
+function captureStatus(trace) {
+  if (!trace) return null;
+  return {operation:trace.operation, stage:trace.stage, timed_out:trace.expired, pending:!trace.finished,
+    elapsed_ms:(trace.finished || Date.now())-trace.started,
+    stage_elapsed_ms:(trace.finished || Date.now())-trace.stageStarted,
+    before:trace.before || null, error:trace.error || null};
 }
 async function detachAll() {
   network.reset(); networkPaused.clear();
@@ -156,21 +173,43 @@ async function connect() {
 // remain available, including after a timed-out input. Never replay old input.
 async function runRequest(operation, args = {}) {
   const input = !READ_OPERATIONS.has(operation);
+  const viewport = operation === "screenshot" || operation === "size";
+  const pending = viewportPending.get(args.page_id);
+  if (viewport && pending) {
+    throw new Error(`Previous browser capture is still pending: ${JSON.stringify(captureStatus(pending))}; connection retained`);
+  }
   if (input && inputPending) throw new Error("Previous browser input is still pending; observe before continuing");
   if (input) inputPending = true;
-  const trace = {stage: "target"};
-  const work = execute(operation, args, trace).finally(() => { if (input) inputPending = false; });
+  const trace = {operation, stage: "target", expired:false, started:Date.now(), stageStarted:Date.now()};
+  if (viewport) {
+    viewportPending.set(args.page_id, trace);
+    // Observation also asks for size; that must not erase screenshot evidence.
+    if (operation === "screenshot") captureHistory.set(args.page_id, trace);
+  }
+  const work = execute(operation, args, trace).catch(error => {
+    trace.error = String(error.message || error);
+    throw error;
+  }).finally(() => {
+    trace.finished = Date.now();
+    if (input) inputPending = false;
+    if (viewportPending.get(args.page_id) === trace) viewportPending.delete(args.page_id);
+  });
   const duration = operation === "long_press" && Number.isFinite(args.duration) && args.duration > 0 && args.duration <= 30 ? args.duration : 0;
   let timer;
   try {
     return await Promise.race([work, new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`Browser request timed out at ${trace.stage}; outcome unknown; connection retained`)), (20 + duration) * 1000);
+      timer = setTimeout(() => {
+        trace.expired = true;
+        const detail = viewport ? `; capture=${JSON.stringify(captureStatus(trace))}` : "";
+        reject(new Error(`Browser request timed out at ${trace.stage}; outcome unknown; connection retained${detail}`));
+      }, (20 + duration) * 1000);
     })]);
   } finally { clearTimeout(timer); }
 }
 async function execute(operation, args = {}, trace = {}) {
   const command = (tabId, method, params) => {
     trace.stage = method;
+    trace.stageStarted = Date.now();
     return cdp(tabId, method, params);
   };
   if (operation === "pages") return pages();
@@ -182,6 +221,11 @@ async function execute(operation, args = {}, trace = {}) {
     return {page_id:`${data.epoch}:${tab.id}`};
   }
   const tabId = await target(args.page_id);
+  if (operation === "diagnose") {
+    return {capture_mode:"cdp_surface", ...await captureState(tabId),
+      last_capture:captureStatus(captureHistory.get(args.page_id)),
+      connection_retained:!!port && negotiated, debugger_attached:attached.has(tabId)};
+  }
   if (operation.startsWith('network_')) {
     if (operation === 'network_start') await startNetwork(tabId, true);
     else if (operation === 'network_stop') {
@@ -212,11 +256,21 @@ async function execute(operation, args = {}, trace = {}) {
   // Control can be released while attach is pending.
   await target(args.page_id);
   if (operation === "size" || operation === "screenshot") {
-    await chrome.tabs.update(tabId, {active:true});
-    // Activating a tab and showing Chrome's debugger banner can resize its viewport.
+    const checkCapture = () => {
+      if (trace.expired) throw new Error("Capture request expired; late result discarded; connection retained");
+    };
+    checkCapture();
+    trace.stage = "capture state";
+    trace.stageStarted = Date.now();
+    trace.before = await captureState(tabId);
+    checkCapture();
+    // Showing Chrome's debugger banner can resize its viewport. Observation must
+    // not activate tabs, focus windows or restore a minimized window.
     await new Promise(resolve => setTimeout(resolve, 200));
     for (let attempt = 0; attempt < 3; attempt++) {
+      checkCapture();
       const metrics = await command(tabId, "Page.getLayoutMetrics");
+      checkCapture();
       const view = metrics.cssVisualViewport;
       const size = [Math.round(view.clientWidth), Math.round(view.clientHeight)];
       if (operation === "size") return size;
@@ -224,7 +278,9 @@ async function execute(operation, args = {}, trace = {}) {
         format:"png", captureBeyondViewport:false,
         clip:{x:view.pageX, y:view.pageY, width:view.clientWidth, height:view.clientHeight, scale:1}
       });
+      checkCapture();
       const after = (await command(tabId, "Page.getLayoutMetrics")).cssVisualViewport;
+      checkCapture();
       if (after.clientWidth === view.clientWidth && after.clientHeight === view.clientHeight &&
           after.pageX === view.pageX && after.pageY === view.pageY) return {data:shot.data, size};
     }
@@ -322,6 +378,9 @@ chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
   if (port && webURL(tab.pendingUrl || tab.url) && (change.url || change.status)) void autoNetwork(tabId);
 });
 chrome.tabs.onRemoved.addListener(tabId => {
+  for (const key of captureHistory.keys()) {
+    if (Number(key.split(':').at(-1)) === tabId) captureHistory.delete(key);
+  }
   network.tabs.delete(tabId); networkPaused.delete(tabId);
   attached.delete(tabId);
   void updateBlocked(blocked => blocked.filter(id => id !== tabId));

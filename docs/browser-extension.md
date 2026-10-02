@@ -84,6 +84,32 @@ The first connection auto-selects only when exactly one website tab is available
 select explicitly. Page identity includes a browser-session UUID, so restarting
 Chrome cannot silently redirect a saved task to a reused numeric tab ID.
 
+## Background screenshots and timeouts
+
+Screenshot and size requests do not activate tabs, focus windows, or restore
+minimized windows. Explicit page selection still brings the selected page forward.
+Screenshots use `Page.captureScreenshot` with the existing PNG surface and viewport
+clip settings. No alternate capture source or automatic reconnect is used.
+
+Only one viewport request per page may remain outstanding. A request timeout does
+not cancel Chrome's underlying command: later requests for that page report the
+pending capture instead of piling up more screenshots. Other pages and read-only
+diagnostics remain available. When Chrome completes the original command, the
+pending guard is released; its expired image is discarded and it cannot start
+another capture. A command that never completes remains visible as pending;
+the extension does not detach the debugger to clear it.
+
+`saygo device diagnose --session daily-web` reports the current window state,
+focus, tab activity, debugger attachment, and last screenshot stage/timing. Update
+both the runtime and extension to use these diagnostics. Screenshot timeout errors
+also include the recorded state without needing a new runtime.
+
+Native Messaging connections keep the extension worker alive; active debugger
+sessions also do so on Chrome 118 and later. See the
+[Chrome lifecycle documentation](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle).
+This worker lifetime guarantee does not guarantee a screenshot frame or protect
+against browser/process exits. No heartbeat-triggered shutdown is used.
+
 ## Scroll a specific pane
 
 Use `device_act` with `{"type":"scroll_at","x":30,"y":60,"coordinate_space":"percent","amount":-3}`

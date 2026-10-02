@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Screenshot freshness fixture</title>
+<style>body { margin: 0; font: 48px monospace; }</style>
+<h2>Background capture test</h2>
+<div id="clock"></div>
+<script>
+// A changing image distinguishes fresh captures from cached frames.
+setInterval(() => {
+  const now = Date.now();
+  document.getElementById('clock').textContent = now;
+  document.body.style.background = `rgb(${Math.floor(now / 100) % 256},90,140)`;
+}, 100);
+</script>

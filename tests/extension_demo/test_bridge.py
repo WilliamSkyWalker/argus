@@ -18,6 +18,14 @@ from saygo.platforms import device_session as ds
 
 
 class BridgeTests(unittest.TestCase):
+    def test_capture_diagnostics_forward_without_screenshot_or_input(self):
+        p = ExtensionBrowserPlatform()
+        evidence = {'window_state': 'minimized', 'connection_retained': True,
+                    'last_capture': {'pending': True, 'stage': 'Page.captureScreenshot'}}
+        with patch.object(p, '_call', return_value=evidence) as call:
+            self.assertEqual(p.diagnose(), evidence)
+            call.assert_called_once_with('diagnose')
+
     def test_stopping_extension_session_never_terminates_browser(self):
         with patch.object(ds, 'clear_state') as clear, patch('os.kill') as kill:
             ds._browser_stop('web', {'browser_backend': 'extension', 'pid': 123})
