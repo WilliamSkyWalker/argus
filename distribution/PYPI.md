@@ -1,6 +1,6 @@
 # Python package release
 
-Package: `saygo-agent-control`. CLI: `saygo`. Version: `0.4.6` (beta software).
+Package: `saygo-agent-control`. CLI: `saygo`. Version: `0.4.7` (beta software).
 Version 0.4.4 is published on PyPI. Its wheel passed installation and plugin preparation
 checks on Linux, Windows and macOS before upload.
 
@@ -10,7 +10,7 @@ checks on Linux, Windows and macOS before upload.
 python -m pip install build twine
 python -m build --outdir dist/python
 python -m twine check --strict dist/python/*
-python scripts/check_python_package.py dist/python/saygo_agent_control-0.4.6-py3-none-any.whl
+python scripts/check_python_package.py dist/python/saygo_agent_control-0.4.7-py3-none-any.whl
 ```
 
 The default build produces an sdist and builds the wheel from that sdist, checking
@@ -42,7 +42,7 @@ reviewer in the `pypi` environment. Trusted Publishing uses GitHub OIDC rather t
 committed credentials or a long-lived API token.
 
 Run the **Python package** workflow with `publish: none` first. Select `testpypi`
-to upload to the test index. For production, select the matching `v0.4.6` tag and
+to upload to the test index. For production, select the matching `v0.4.7` tag and
 `publish: pypi`. Build and all three smoke jobs must pass before upload. Only a
 manual dispatch can publish; pull requests only build and test. The public PyPI
 project endpoint may return 404 before first publication; this does not guarantee

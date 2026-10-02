@@ -19,6 +19,10 @@ jobs:
       - run: python -m unittest discover -s tests/control_demo -p 'test_*install*.py' -v
       - run: python -m unittest discover -s tests/control_demo -p test_updates.py -v
       - run: python -m unittest discover -s tests/extension_demo -p test_bridge.py -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test tests/extension_demo/test_*.mjs
       - name: Check tag matches release
         if: startsWith(github.ref, 'refs/tags/')
         env:

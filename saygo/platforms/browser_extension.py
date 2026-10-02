@@ -112,6 +112,10 @@ class ExtensionBrowserPlatform(Platform):
     def scroll_down(self):
         self._call("scroll", direction="down")
 
+    def scroll_at(self, x, y, amount):
+        """Scroll at viewport CSS coordinates; positive wheel notches scroll up."""
+        self._call("scroll_at", x=x, y=y, amount=amount)
+
     def open_target(self, target):
         self._call("navigate", url=target)
 

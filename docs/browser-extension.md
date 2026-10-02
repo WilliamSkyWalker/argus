@@ -84,6 +84,17 @@ The first connection auto-selects only when exactly one website tab is available
 select explicitly. Page identity includes a browser-session UUID, so restarting
 Chrome cannot silently redirect a saved task to a reused numeric tab ID.
 
+## Scroll a specific pane
+
+Use `device_act` with `{"type":"scroll_at","x":30,"y":60,"coordinate_space":"percent","amount":-3}`
+and a fresh observation ID to send the wheel event inside the intended pane.
+Positive amounts scroll up; negative amounts scroll down. One unit requests
+100 CSS pixels. The browser determines the responding scroll container and actual
+movement; observe again to verify. At a container boundary, normal browser scroll
+chaining can move an ancestor. `scroll_up`/`scroll_down` still target the viewport
+center, while `swipe` is a mouse drag. Updated runtime and extension files are
+required for `scroll_at`; reload the extension after updating it.
+
 ## Runtime and human handoff
 
 Use this resource in an existing workflow:

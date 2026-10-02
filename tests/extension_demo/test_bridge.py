@@ -18,6 +18,16 @@ from saygo.platforms import device_session as ds
 
 
 class BridgeTests(unittest.TestCase):
+    def test_scroll_at_capability_and_percent_coordinates(self):
+        from saygo.devices.actions import capabilities, prepare, dispatch
+        p = ExtensionBrowserPlatform()
+        self.assertIn('scroll_at', capabilities(p)['actions'])
+        with patch.object(p, '_call', return_value=[1000, 800]) as call:
+            action = prepare(p, {'type': 'scroll_at', 'x': 25, 'y': 50,
+                                 'coordinate_space': 'percent', 'amount': -3})
+            dispatch(p, action)
+            call.assert_called_with('scroll_at', x=250, y=400, amount=-3)
+
     def test_frozen_windows_uses_separate_stdio_host(self):
         from saygo.integrations.browser_bridge import host_command
         with tempfile.TemporaryDirectory() as tmp:

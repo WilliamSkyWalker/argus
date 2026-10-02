@@ -183,7 +183,7 @@ async function execute(operation, args = {}) {
   if (operation === "metadata") {
     return (await pages()).find(p => p.page_id === args.page_id);
   }
-  const allowed = ["screenshot", "size", "tap", "input", "key", "swipe", "scroll", "navigate", "back", "forward"];
+  const allowed = ["screenshot", "size", "tap", "input", "key", "swipe", "scroll", "scroll_at", "navigate", "back", "forward"];
   if (!allowed.includes(operation)) throw new Error("Unsupported operation");
   await attach(tabId);
   // Control can be released while attach is pending.
@@ -233,6 +233,12 @@ async function execute(operation, args = {}) {
     const v = metrics.cssVisualViewport;
     await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseWheel",x:v.clientWidth/2,y:v.clientHeight/2,
       deltaX:0,deltaY:args.direction === "up" ? -300 : 300});
+  } else if (operation === "scroll_at") {
+    const p = point(args.x,args.y);
+    if (!Number.isFinite(args.amount) || Math.abs(args.amount) > 100) throw new Error("Invalid scroll amount");
+    const {cssVisualViewport:v} = await cdp(tabId,"Page.getLayoutMetrics");
+    if (p.x >= v.clientWidth || p.y >= v.clientHeight) throw new Error("Scroll coordinates outside viewport");
+    await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseWheel",...p,deltaX:0,deltaY:-args.amount*100});
   } else if (operation === "swipe") {
     const a = point(args.x1,args.y1), b = point(args.x2,args.y2);
     await cdp(tabId,"Input.dispatchMouseEvent",{type:"mousePressed",button:"left",clickCount:1,...a});
