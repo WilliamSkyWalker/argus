@@ -89,7 +89,7 @@ Chrome cannot silently redirect a saved task to a reused numeric tab ID.
 Use `device_act` with `{"type":"scroll_at","x":30,"y":60,"coordinate_space":"percent","amount":-3}`
 and a fresh observation ID to send the wheel event inside the intended pane.
 Positive amounts scroll up; negative amounts scroll down. One unit requests
-100 CSS pixels. The browser determines the responding scroll container and actual
+100 CSS pixels, delivered as a mouse scroll gesture at the chosen point. The browser determines the responding scroll container and actual
 movement; observe again to verify. At a container boundary, normal browser scroll
 chaining can move an ancestor. `scroll_up`/`scroll_down` still target the viewport
 center, while `swipe` is a mouse drag. Updated runtime and extension files are
@@ -129,6 +129,13 @@ not proof of a real payment.
 - CLI process exit only disconnects the Python adapter. It does not close Chrome.
   `device stop` removes the saved binding; use the extension popup to revoke
   browser access for all clients.
+- Request timeouts, invalid responses and handshake errors must not close the
+  extension's native port. Only the user-facing release button actively closes
+  that port. Browser exit or an external transport failure can still end it.
+  Late responses are ignored by request ID; timed-out input is never replayed.
+  Queries and screenshots remain available while input is pending. A second
+  input is rejected until the underlying input finishes. Closing the last
+  browser tab through the extension is rejected; close it manually instead.
 - Runtime locks alias bindings to the same bridge directory. Standalone device
   commands are not governed by Runtime locks; do not operate them concurrently
   with a running workflow. Human changes can still occur between observation and

@@ -415,7 +415,7 @@ def main(argv=None):
                 run([python, '-m', 'playwright', 'install', 'chromium'])
             market = prepare_plugin(source, root, python, fingerprint(source, extra_string), config_file)
             release = json.loads((source / 'distribution/release.json').read_text())
-            extension_id = args.extension_id or release.get('store_extension_id') or release['development_extension_id']
+            extension_id = args.extension_id or previous.get('extension_id') or release.get('store_extension_id') or release['development_extension_id']
             bridge = previous.get('bridge') if not args.prepare_only else None
             record = {'python': str(python), 'marketplace': str(market),
                       'clients': previous.get('clients', []) if not args.prepare_only else [],

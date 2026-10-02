@@ -15,6 +15,9 @@ def capabilities(platform):
         actions |= {"select_page", "close_page", "new_page", "go_back", "go_forward"}
     result = {"actions": sorted(actions), "coordinate_spaces": ["screen", "percent", "image", "crop"],
               "business_verification": "external_agent", "scroll_at_unit": "wheel_notches"}
+    if getattr(platform, 'platform_name', None) == 'browser' and 'scroll_at' in actions:
+        result.update(scroll_at_pixels_per_unit=100, scroll_at_positive_direction='up',
+                      scroll_at_fractional=True)
     if callable(getattr(type(platform), "capability_details", None)):
         result.update(platform.capability_details())
     return result

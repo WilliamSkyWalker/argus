@@ -18,7 +18,9 @@ import uuid
 HOST = "com.saygo.browser"
 MAX_FRAME = 1024 * 1024
 PROTOCOL = 1
-VERSION = "0.4.3"
+VERSION = "0.4.9"
+RESPONSE_TIMEOUT = 30
+MAX_RESPONSE_BYTES = 32 * MAX_FRAME
 
 
 def atomic_json(path, value):
@@ -75,7 +77,9 @@ class Client:
         response = self.directory / (rid + ".response")
         atomic_json(request, {"id": rid, "epoch": status["epoch"], "operation": operation,
                               "arguments": arguments, "deadline": time.time() + min(self.timeout - 1, 25)})
-        end = time.monotonic() + self.timeout
+        duration = arguments.get('duration', 0) if operation == 'long_press' else 0
+        extra = duration if isinstance(duration, (int, float)) and 0 < duration <= 30 else 0
+        end = time.monotonic() + self.timeout + extra
         try:
             while time.monotonic() < end:
                 if response.exists():
@@ -120,11 +124,14 @@ def _serve_locked(directory, source, sink):
     epoch = uuid.uuid4().hex
 
     def reader():
-        try:
-            while True:
+        while True:
+            try:
                 incoming.put(read_frame(source))
-        except (EOFError, ValueError, OSError) as exc:
-            incoming.put(exc)
+            except ValueError as exc:
+                incoming.put(exc)
+            except (EOFError, OSError) as exc:
+                incoming.put(exc)
+                return
 
     threading.Thread(target=reader, daemon=True).start()
     status = directory / "status.json"
@@ -132,18 +139,26 @@ def _serve_locked(directory, source, sink):
     atomic_json(status, info)
     try:
         write_frame(sink, {'type':'hello', 'protocol':PROTOCOL, 'version':VERSION})
-        try:
-            hello = incoming.get(timeout=10)
-        except queue.Empty:
-            raise RuntimeError('Extension handshake timed out; update/reload the extension')
-        if not isinstance(hello, dict) or hello.get('type') != 'hello' or hello.get('protocol') != PROTOCOL:
-            raise RuntimeError('Extension protocol mismatch; update/reload the extension and local host')
+        while True:
+            try:
+                hello = incoming.get(timeout=10)
+            except queue.Empty:
+                info['error'] = 'Waiting for extension handshake'
+                atomic_json(status, info)
+                continue
+            if isinstance(hello, (EOFError, OSError)):
+                return
+            if isinstance(hello, dict) and hello.get('type') == 'hello' and hello.get('protocol') == PROTOCOL:
+                break
+            info['error'] = 'Extension protocol mismatch; update the extension and local host'
+            atomic_json(status, info)
+        info.pop('error', None)
         info.update(connected=True, extension_version=hello.get('version'))
         atomic_json(status, info)
         while True:
             if not incoming.empty():
                 item = incoming.get_nowait()
-                if isinstance(item, Exception):
+                if isinstance(item, (EOFError, OSError)):
                     return
             for path in sorted(directory.glob("*.request")):
                 if not re.fullmatch(r"[a-f0-9]{32}\.request", path.name):
@@ -160,25 +175,41 @@ def _serve_locked(directory, source, sink):
                         raise ValueError("request expired before dispatch")
                     write_frame(sink, request)
                     chunks = []
-                    end = time.monotonic() + 30
+                    duration = request.get('arguments', {}).get('duration', 0) if request['operation'] == 'long_press' else 0
+                    extra = duration if isinstance(duration, (int, float)) and 0 < duration <= 30 else 0
+                    end = time.monotonic() + RESPONSE_TIMEOUT + extra
                     while True:
-                        item = incoming.get(timeout=max(.001, end - time.monotonic()))
+                        remaining = end - time.monotonic()
+                        if remaining <= 0:
+                            raise queue.Empty
+                        item = incoming.get(timeout=remaining)
+                        if isinstance(item, (EOFError, OSError)):
+                            atomic_json(response, {"error": "extension disconnected; action outcome may be unknown"})
+                            return
                         if isinstance(item, Exception):
-                            raise RuntimeError("extension disconnected; action outcome may be unknown")
+                            raise ValueError(str(item))
                         if item.get("id") != request["id"]:
-                            raise RuntimeError("unexpected extension response")
+                            # A timed-out request can finish later. Never let its
+                            # chunks satisfy a new request or extend its timeout.
+                            continue
                         chunks.append(item["chunk"])
-                        if sum(map(len, chunks)) > 32 * MAX_FRAME:
+                        if sum(map(len, chunks)) > MAX_RESPONSE_BYTES:
                             raise RuntimeError("extension response exceeds 32 MiB")
                         if item.get("last"):
                             atomic_json(response, json.loads("".join(chunks)))
                             break
-                except (OSError, ValueError, KeyError) as exc:
+                except (OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError) as exc:
                     path.unlink(missing_ok=True)
                     atomic_json(response, {"error": str(exc)})
-                except (queue.Empty, RuntimeError) as exc:
-                    atomic_json(response, {"error": str(exc) or "extension timeout; outcome unknown"})
-                    return  # terminate transport; no subsequent dispatch after ambiguity
+                except queue.Empty:
+                    error = "extension timeout; outcome unknown"
+                    atomic_json(response, {"error": error})
+                    info['last_timeout'] = {'request_id': request['id'],
+                                            'operation': request['operation'],
+                                            'error': error, 'at': time.time()}
+                    atomic_json(status, info)
+                    # Report uncertainty without replaying input or closing the
+                    # transport. The caller must observe before another action.
             time.sleep(.05)
     except RuntimeError as exc:
         info['error'] = str(exc)

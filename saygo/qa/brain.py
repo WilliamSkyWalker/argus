@@ -569,6 +569,7 @@ class Brain:
                 f"{retry_section}"
                 f"## 坐标\n所有点击/滑动坐标用**百分比** x_pct/y_pct(0-100)，"
                 f"相对当前截图的宽/高，不用像素。\n\n"
+                f"输入坐标空间 screen_size=[{w},{h}]；浏览器以 CSS 像素计，可据此估算滚动区域高度。\n\n"
                 f"## 测试用例\n{test_case}\n"
                 f"{mode_section}\n"
                 f"{step_progress_section}"
@@ -940,4 +941,3 @@ class Brain:
     def reset(self):
         self.history.clear()
         self.history_images.clear()
-

@@ -13,6 +13,20 @@ spec.loader.exec_module(installer)
 
 
 class PluginInstallTests(unittest.TestCase):
+    def test_upgrade_preserves_extension_id_unless_explicitly_overridden(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = 'a' * 32
+            override = 'b' * 32
+            installer.write_json(root / 'installation.json',
+                                 {'prepared_only': True, 'extension_id': original})
+            with patch.object(installer, 'prepare_runtime', return_value=root / 'python'):
+                args = ['--client', 'codex', '--prepare-only', '--root', str(root), '--source', str(ROOT)]
+                installer.main(args)
+                self.assertEqual(json.loads((root / 'installation.json').read_text())['extension_id'], original)
+                installer.main(args + ['--extension-id', override])
+                self.assertEqual(json.loads((root / 'installation.json').read_text())['extension_id'], override)
+
     def test_both_clients_use_same_isolated_runtime_and_skill(self):
         with tempfile.TemporaryDirectory(prefix='saygo plugin ') as tmp:
             root = Path(tmp)

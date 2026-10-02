@@ -29,9 +29,9 @@ test('wheel targets left and right panes with both directions and fractional amo
   const b = browser();
   await b.run({x:250,y:400,amount:-3});
   await b.run({x:750,y:400,amount:1.5});
-  assert.deepEqual(b.events.map(e => [e.target.tabId,e.method,e.params.type,e.params.x,e.params.y,e.params.deltaX,e.params.deltaY]), [
-    [1,'Input.dispatchMouseEvent','mouseWheel',250,400,0,300],
-    [1,'Input.dispatchMouseEvent','mouseWheel',750,400,0,-150]
+  assert.deepEqual(b.events.map(e => [e.target.tabId,e.method,e.params.gestureSourceType,e.params.x,e.params.y,e.params.xDistance,e.params.yDistance]), [
+    [1,'Input.synthesizeScrollGesture','mouse',250,400,0,-300],
+    [1,'Input.synthesizeScrollGesture','mouse',750,400,0,150]
   ]);
 });
 

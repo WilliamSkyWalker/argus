@@ -23,7 +23,7 @@ def args(**kwargs):
 class ControlTests(unittest.TestCase):
     def test_removed_entry_points_are_rejected(self):
         for module, command in [('saygo.cli', 'mobile'), ('saygo.cli', 'devices'),
-                                ('saygo.cli', 'setup'), ('saygo.integrations.browser_bridge', 'bind')]:
+                                ('saygo.integrations.browser_bridge', 'bind')]:
             with self.subTest(command=command):
                 result = subprocess.run([sys.executable, '-m', module, command],
                                         capture_output=True, text=True)

@@ -10,6 +10,43 @@ from saygo.desktop.runner import TaskLoop, decision
 
 
 class DesktopTests(unittest.TestCase):
+    def test_scroll_decisions_receive_units_and_before_after_images(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'image.png'
+            path.write_bytes(b'current-image')
+            caps = {'actions': ['scroll_at'], 'scroll_at_pixels_per_unit': 100}
+            state = {'id': 'test', 'desktop_goal': 'Find an item', 'status': 'idle',
+                     'workflow': {'resources': {'web': {}}},
+                     'observations': {'web': {'id': 'obs', 'path': str(path),
+                                              'screen_size': [1000, 800], 'capabilities': caps}}}
+            rt = Mock()
+            rt.store.get.return_value = state
+            rt.observe.return_value = state
+            rt.submit.return_value = state
+            rt.timeline.return_value = {'timeline': []}
+            provider = Mock()
+            calls = []
+
+            def complete(system, context, images):
+                context = json.loads(context)
+                calls.append((context, images))
+                self.assertEqual(context['observations']['web']['screen_size'], [1000, 800])
+                self.assertEqual(context['observations']['web']['capabilities'], caps)
+                if len(calls) <= 2:
+                    amount = -3 if len(calls) == 1 else -.6
+                    return json.dumps({'kind': 'act', 'resource': 'web', 'note': 'Inspect the list',
+                                       'action': {'type': 'scroll_at', 'x': 35, 'y': 60,
+                                                  'coordinate_space': 'percent', 'amount': amount}})
+                return json.dumps({'kind': 'done', 'note': 'Target visible'})
+
+            provider.complete.side_effect = complete
+            TaskLoop(provider, rt).run('test', threading.Event(), threading.Event(), lambda state: None)
+            self.assertIsNone(calls[0][0]['previous_scroll'])
+            self.assertEqual(len(calls[0][1]), 1)
+            self.assertEqual(calls[1][0]['previous_scroll']['action']['amount'], -3)
+            self.assertEqual([name for name, _ in calls[1][1]], ['web before previous scroll', 'web'])
+            self.assertEqual([call.args[2]['amount'] for call in rt.submit.call_args_list], [-3, -.6])
+
     def test_settings_never_persist_secret(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ,{'SAYGO_HOME_DIR':tmp}):
             model.save_settings({'base_url':'https://example.com/v1','model':'vision'},'private-token',False)

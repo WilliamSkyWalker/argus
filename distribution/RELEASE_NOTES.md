@@ -1,28 +1,31 @@
-# Saygo 0.4.8 — Browser pointer actions
+# Saygo 0.4.9 — Reliable browser scrolling and persistent connections
 
-- Add hover, double-click, right-click and configurable long-press actions to the connected browser extension backend.
-- Check mouse action coordinates against the active browser viewport before dispatch.
-- Reload the browser extension after updating the runtime files.
-
-## Previous release: Saygo 0.4.7 — Scroll the intended browser pane
-
-- Add `scroll_at` to the browser extension backend and the shared CLI/MCP action interface.
-- Target a viewport coordinate or an observation-mapped percentage/image/crop coordinate. Positive amounts scroll up; negative amounts scroll down; one unit requests 100 CSS pixels.
-- Validate wheel amounts and viewport bounds before sending input. Existing centered scrolling and mouse dragging keep their behavior.
+- Keep the browser bridge open after request timeouts, malformed or oversized responses, and handshake errors. Return errors without automatically replaying input; ignore late responses by request ID.
+- Allow queries and screenshots while an earlier input is pending. Reject overlapping input until the underlying call finishes, and include the stalled operation in timeout diagnostics.
+- Use complete mouse scroll gestures for viewport and targeted pane scrolling. This avoids the raw wheel acknowledgement stall observed during live browser testing.
+- Protect the last browser tab from automated closing, and prevent stopping an extension session from terminating Chrome through stale process metadata.
+- Preserve the installed extension ID during upgrades unless explicitly overridden.
+- Account for long-press duration in extension, bridge and client timeouts.
+- Teach external agents and built-in models to start around half a pane, retain overlap, reduce to 10–20% near a target, and adjust after observing the result. Expose browser scroll units in capabilities and observations; provide before/after scroll images to the desktop model.
+- Enable configurable targeted scrolling through the built-in QA and desktop action paths.
 
 ## Upgrade
 
 ```sh
-pipx upgrade saygo-agent-control
+pipx upgrade saygo-agent-control --index-url https://pypi.org/simple --pip-args="--no-cache-dir"
 saygo setup --client codex
 ```
 
-The attached versioned installer can also update a managed installation. Restart the agent client after setup.
+Restart the agent client after setup. The attached versioned installer can also update managed installations.
 
-This feature changes browser extension code: replace the loaded extension files with the attached development extension ZIP, preserving the folder, then Reload Saygo Browser from chrome://extensions or edge://extensions and click Connect local bridge. Keep the loaded directory. Both the runtime and extension must be updated to use scroll_at.
+Replace the contents of the currently loaded browser extension folder with the development extension ZIP. Manually reload Saygo Browser in chrome://extensions or edge://extensions, then click Connect local bridge. Keep the loaded folder. Update both runtime and extension to obtain all fixes.
 
-Choose a point inside the intended pane, then call device_act with a fresh observation ID and an action such as {"type":"scroll_at","x":35,"y":60,"coordinate_space":"percent","amount":-3}. Observe afterwards to verify movement. At a pane boundary, the browser may scroll an ancestor.
+The extension's release button remains the explicit disconnect control. Browser exit, extension reload or an external transport failure can still end a connection.
 
-Validation covers coordinate conversion, capability exposure, both scroll directions, fractional amounts, and rejection of invalid input. Live verification of the BOSS page is pending extension reload.
+## Validation
 
-Desktop installers and Chrome Web Store publication are not included.
+Control, runtime, desktop and bridge tests cover request recovery, late responses, long-press budgets, extension ID preservation, scroll capabilities and model context. Extension tests cover handshake errors, pending input, last-tab protection, scroll direction and fractional amounts. Optional GUI and hardware tests are not claimed as executed.
+
+Live Windows Chrome/WSL verification confirmed targeted list scrolling down and back up, successful command responses and an intact connection. This does not establish equivalent behavior on every browser or operating system.
+
+Desktop binaries and Chrome Web Store publication are not included.

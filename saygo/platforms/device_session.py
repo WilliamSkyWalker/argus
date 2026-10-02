@@ -431,6 +431,11 @@ def _browser_start(serial: str | None, backend: str | None = None) -> "object":
 
 
 def _browser_stop(serial: str | None, state: dict) -> bool:
+    if state.get("browser_backend") == "extension":
+        # The user owns Chrome and the extension connection, even if stale
+        # session metadata happens to contain a process ID.
+        clear_state(serial)
+        return True
     import signal
     pid = state.get("pid")
     if pid:

@@ -121,6 +121,9 @@ class Platform(ABC):
 
         if action_type == "tap":
             self.tap(clamp(action["x"], w), clamp(action["y"], h))
+        elif action_type == "scroll_at":
+            from saygo.devices.actions import prepare, dispatch
+            dispatch(self, prepare(self, action))
         elif action_type == "swipe":
             self.swipe(
                 clamp(action["x1"], w), clamp(action["y1"], h),

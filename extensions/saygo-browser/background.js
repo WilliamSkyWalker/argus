@@ -33,7 +33,8 @@ let port = null;
 const PROTOCOL = 1;
 let negotiated = false;
 let connectionError = "Disconnected";
-let chain = Promise.resolve();
+let inputPending = false;
+const READ_OPERATIONS = new Set(["pages", "metadata", "size", "screenshot", "network_read"]);
 const attached = new Set();
 const attaching = new Map();
 let generation = 0;
@@ -126,13 +127,13 @@ async function connect() {
     }
     if (!negotiated) { reject(new Error('Local host needs an update: no compatible handshake.')); return; }
     const ticket = generation;
-    chain = chain.then(async () => {
+    void (async () => {
       let response;
       try {
         await ready;
         if (port !== current || ticket !== generation) throw new Error("Control was released");
         if (Date.now() / 1000 >= request.deadline) throw new Error("Request expired before dispatch");
-        response = {result: await execute(request.operation, request.arguments)};
+        response = {result: await runRequest(request.operation, request.arguments)};
       } catch (error) { response = {error: String(error.message || error)}; }
       const text = JSON.stringify(response);
       // Native host receives <= 1 MiB per frame, including Unicode JSON overhead.
@@ -140,20 +141,38 @@ async function connect() {
         if (port !== current) return;
         current.postMessage({id: request.id, chunk: text.slice(i, i + 100000), last: i + 100000 >= text.length});
       }
-    }).catch(error => { connectionError = String(error); });
+    })().catch(error => { connectionError = String(error); });
   });
   try { await handshake; }
   catch (error) {
     connectionError = String(error.message || error);
-    if (port === current) { port = null; negotiated = false; generation++; }
-    current.disconnect();
-    await detachAll();
+    // A failed handshake reports an error but never closes the user-owned port.
     throw error;
   } finally { clearTimeout(timer); }
   // Default capture covers every controllable existing tab, without a second prompt.
   await Promise.all((await pages()).map(p => autoNetwork(Number(p.page_id.split(':').at(-1)))));
 }
-async function execute(operation, args = {}) {
+// Input stays serialized while an underlying browser call is unresolved. Reads
+// remain available, including after a timed-out input. Never replay old input.
+async function runRequest(operation, args = {}) {
+  const input = !READ_OPERATIONS.has(operation);
+  if (input && inputPending) throw new Error("Previous browser input is still pending; observe before continuing");
+  if (input) inputPending = true;
+  const trace = {stage: "target"};
+  const work = execute(operation, args, trace).finally(() => { if (input) inputPending = false; });
+  const duration = operation === "long_press" && Number.isFinite(args.duration) && args.duration > 0 && args.duration <= 30 ? args.duration : 0;
+  let timer;
+  try {
+    return await Promise.race([work, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Browser request timed out at ${trace.stage}; outcome unknown; connection retained`)), (20 + duration) * 1000);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+async function execute(operation, args = {}, trace = {}) {
+  const command = (tabId, method, params) => {
+    trace.stage = method;
+    return cdp(tabId, method, params);
+  };
   if (operation === "pages") return pages();
   if (operation === "new_page") {
     if (!port) throw new Error("Browser is disconnected");
@@ -169,7 +188,7 @@ async function execute(operation, args = {}) {
       networkPaused.add(tabId);
       await networkStarting.get(tabId);
       network.end(tabId);
-      if (attached.has(tabId)) await cdp(tabId,'Network.disable');
+      if (attached.has(tabId)) await command(tabId,'Network.disable');
     } else if (operation === 'network_clear') network.clear(tabId);
     else if (operation !== 'network_read') throw new Error('Unsupported network operation');
     return network.read(tabId, operation === 'network_read' ? args : {limit:1});
@@ -179,12 +198,16 @@ async function execute(operation, args = {}) {
     await chrome.windows.update(tab.windowId, {focused:true});
     return {};
   }
-  if (operation === "close") { await chrome.tabs.remove(tabId); return {}; }
+  if (operation === "close") {
+    if ((await chrome.tabs.query({})).length <= 1) throw new Error("Close the last browser tab manually");
+    await chrome.tabs.remove(tabId); return {};
+  }
   if (operation === "metadata") {
     return (await pages()).find(p => p.page_id === args.page_id);
   }
   const allowed = ["screenshot", "size", "tap", "hover", "double_click", "right_click", "long_press", "input", "key", "swipe", "scroll", "scroll_at", "navigate", "back", "forward"];
   if (!allowed.includes(operation)) throw new Error("Unsupported operation");
+  trace.stage = "attach";
   await attach(tabId);
   // Control can be released while attach is pending.
   await target(args.page_id);
@@ -193,15 +216,15 @@ async function execute(operation, args = {}) {
     // Activating a tab and showing Chrome's debugger banner can resize its viewport.
     await new Promise(resolve => setTimeout(resolve, 200));
     for (let attempt = 0; attempt < 3; attempt++) {
-      const metrics = await cdp(tabId, "Page.getLayoutMetrics");
+      const metrics = await command(tabId, "Page.getLayoutMetrics");
       const view = metrics.cssVisualViewport;
       const size = [Math.round(view.clientWidth), Math.round(view.clientHeight)];
       if (operation === "size") return size;
-      const shot = await cdp(tabId, "Page.captureScreenshot", {
+      const shot = await command(tabId, "Page.captureScreenshot", {
         format:"png", captureBeyondViewport:false,
         clip:{x:view.pageX, y:view.pageY, width:view.clientWidth, height:view.clientHeight, scale:1}
       });
-      const after = (await cdp(tabId, "Page.getLayoutMetrics")).cssVisualViewport;
+      const after = (await command(tabId, "Page.getLayoutMetrics")).cssVisualViewport;
       if (after.clientWidth === view.clientWidth && after.clientHeight === view.clientHeight &&
           after.pageX === view.pageX && after.pageY === view.pageY) return {data:shot.data, size};
     }
@@ -214,35 +237,35 @@ async function execute(operation, args = {}) {
   };
   const inputPoint = async (x,y) => {
     const p = point(x,y);
-    const {cssVisualViewport:v} = await cdp(tabId,"Page.getLayoutMetrics");
+    const {cssVisualViewport:v} = await command(tabId,"Page.getLayoutMetrics");
     if (p.x >= v.clientWidth || p.y >= v.clientHeight) throw new Error("Input coordinates outside viewport");
     return p;
   };
   if (operation === "tap") {
     const p = await inputPoint(args.x,args.y);
-    await cdp(tabId,"Input.dispatchMouseEvent",{type:"mousePressed",button:"left",clickCount:1,...p});
-    await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseReleased",button:"left",clickCount:1,...p});
+    await command(tabId,"Input.dispatchMouseEvent",{type:"mousePressed",button:"left",clickCount:1,...p});
+    await command(tabId,"Input.dispatchMouseEvent",{type:"mouseReleased",button:"left",clickCount:1,...p});
   } else if (operation === "hover") {
     const p = await inputPoint(args.x,args.y);
-    await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseMoved",...p});
+    await command(tabId,"Input.dispatchMouseEvent",{type:"mouseMoved",...p});
   } else if (operation === "double_click" || operation === "right_click") {
     const p = await inputPoint(args.x,args.y);
     const button = operation === "right_click" ? "right" : "left";
     const clickCount = operation === "double_click" ? 2 : 1;
-    await cdp(tabId,"Input.dispatchMouseEvent",{type:"mousePressed",button,clickCount,...p});
-    await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseReleased",button,clickCount,...p});
+    await command(tabId,"Input.dispatchMouseEvent",{type:"mousePressed",button,clickCount,...p});
+    await command(tabId,"Input.dispatchMouseEvent",{type:"mouseReleased",button,clickCount,...p});
   } else if (operation === "long_press") {
     const p = await inputPoint(args.x,args.y);
     if (!Number.isFinite(args.duration) || args.duration < .1 || args.duration > 30) throw new Error("Invalid long-press duration");
-    await cdp(tabId,"Input.dispatchMouseEvent",{type:"mousePressed",button:"left",clickCount:1,...p});
+    await command(tabId,"Input.dispatchMouseEvent",{type:"mousePressed",button:"left",clickCount:1,...p});
     try {
       await new Promise(resolve => setTimeout(resolve,args.duration*1000));
     } finally {
-      await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseReleased",button:"left",clickCount:1,...p});
+      await command(tabId,"Input.dispatchMouseEvent",{type:"mouseReleased",button:"left",clickCount:1,...p});
     }
   } else if (operation === "input") {
     if (typeof args.text !== "string") throw new Error("Invalid text");
-    await cdp(tabId,"Input.insertText",{text:args.text});
+    await command(tabId,"Input.insertText",{text:args.text});
   } else if (operation === "key") {
     const keys = {enter:["Enter",13],tab:["Tab",9],escape:["Escape",27],space:[" ",32],
       delete:["Backspace",8],backspace:["Backspace",8],arrow_up:["ArrowUp",38],arrow_down:["ArrowDown",40]};
@@ -250,26 +273,30 @@ async function execute(operation, args = {}) {
     const key = select ? ["a",65] : keys[args.key.toLowerCase()];
     if (!key) throw new Error("Unsupported key");
     const modifiers = select ? (/Mac/.test(navigator.platform) ? 4 : 2) : 0;
-    await cdp(tabId,"Input.dispatchKeyEvent",{type:"rawKeyDown",key:key[0],windowsVirtualKeyCode:key[1],modifiers});
-    await cdp(tabId,"Input.dispatchKeyEvent",{type:"keyUp",key:key[0],windowsVirtualKeyCode:key[1],modifiers});
+    await command(tabId,"Input.dispatchKeyEvent",{type:"rawKeyDown",key:key[0],windowsVirtualKeyCode:key[1],modifiers});
+    await command(tabId,"Input.dispatchKeyEvent",{type:"keyUp",key:key[0],windowsVirtualKeyCode:key[1],modifiers});
   } else if (operation === "scroll") {
-    const metrics = await cdp(tabId,"Page.getLayoutMetrics");
+    const metrics = await command(tabId,"Page.getLayoutMetrics");
     const v = metrics.cssVisualViewport;
-    await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseWheel",x:v.clientWidth/2,y:v.clientHeight/2,
-      deltaX:0,deltaY:args.direction === "up" ? -300 : 300});
+    await command(tabId,"Input.synthesizeScrollGesture",{x:v.clientWidth/2,y:v.clientHeight/2,
+      xDistance:0,yDistance:args.direction === "up" ? 300 : -300,
+      gestureSourceType:"mouse",preventFling:true,speed:1000});
   } else if (operation === "scroll_at") {
     const p = point(args.x,args.y);
     if (!Number.isFinite(args.amount) || Math.abs(args.amount) > 100) throw new Error("Invalid scroll amount");
-    const {cssVisualViewport:v} = await cdp(tabId,"Page.getLayoutMetrics");
+    const {cssVisualViewport:v} = await command(tabId,"Page.getLayoutMetrics");
     if (p.x >= v.clientWidth || p.y >= v.clientHeight) throw new Error("Scroll coordinates outside viewport");
-    await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseWheel",...p,deltaX:0,deltaY:-args.amount*100});
+    // Use the complete scroll gesture, whose reply marks gesture completion.
+    // A raw mouseWheel can scroll while its CDP acknowledgement stays pending.
+    await command(tabId,"Input.synthesizeScrollGesture",{...p,xDistance:0,yDistance:args.amount*100,
+      gestureSourceType:"mouse",preventFling:true,speed:1000});
   } else if (operation === "swipe") {
     const a = point(args.x1,args.y1), b = point(args.x2,args.y2);
-    await cdp(tabId,"Input.dispatchMouseEvent",{type:"mousePressed",button:"left",clickCount:1,...a});
+    await command(tabId,"Input.dispatchMouseEvent",{type:"mousePressed",button:"left",clickCount:1,...a});
     try {
-      for(let i=1;i<=10;i++) await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseMoved",button:"left",buttons:1,
+      for(let i=1;i<=10;i++) await command(tabId,"Input.dispatchMouseEvent",{type:"mouseMoved",button:"left",buttons:1,
         x:a.x+(b.x-a.x)*i/10,y:a.y+(b.y-a.y)*i/10});
-    } finally { await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseReleased",button:"left",clickCount:1,...b}); }
+    } finally { await command(tabId,"Input.dispatchMouseEvent",{type:"mouseReleased",button:"left",clickCount:1,...b}); }
   } else if (operation === "navigate") {
     if (!webURL(args.url)) throw new Error("Only HTTP(S) navigation is allowed");
     await chrome.tabs.update(tabId,{url:args.url});

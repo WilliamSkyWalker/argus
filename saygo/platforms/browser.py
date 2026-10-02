@@ -12,6 +12,7 @@ from saygo.vision.grid import draw_coordinate_grid, img_to_png_bytes
 from ..logger import get_logger
 from .base import Platform
 from .selenium_grid import cleanup_grid_sessions
+from saygo.devices.scrolling import SCROLL_GUIDANCE
 
 log = get_logger("browser")
 
@@ -22,6 +23,7 @@ BROWSER_PROMPT_SEGMENT = """你正在操作一个 PC 端浏览器来执行测试
 - swipe: {"x1_pct": .., "y1_pct": .., "x2_pct": .., "y2_pct": ..}  — 拖拽(百分比)
 - scroll_up  — 向上滚动页面
 - scroll_down  — 向下滚动页面
+- scroll_at: {"x_pct": 0-100, "y_pct": 0-100, "amount": number} — 在指定区域滚动，可调幅度
 - input: {"text": "string"}  — 输入文字（在当前焦点元素）
 - press_key: {"key": "enter|delete|tab|space|escape"}  — 按键
 - open_url: {"url": "https://..."}  — 导航到URL
@@ -36,7 +38,7 @@ BROWSER_PROMPT_SEGMENT = """你正在操作一个 PC 端浏览器来执行测试
 - 网页加载需要时间，如果看到空白页面或加载中状态，使用 wait 等待
 - 表单输入：先 tap 输入框使其获得焦点，再用 input 输入文字
 - 需要清除输入框已有内容时，可先全选 (press_key "select_all") 再输入新内容
-- 坐标相对于浏览器视口，左上角为 (0,0)"""
+- 坐标相对于浏览器视口，左上角为 (0,0)""" + "\n\n" + SCROLL_GUIDANCE
 
 _IS_MAC = platform.system() == "Darwin"
 

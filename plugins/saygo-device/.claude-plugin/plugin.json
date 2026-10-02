@@ -1,6 +1,6 @@
 {
   "name": "saygo-device",
-  "version": "0.2.0",
+  "version": "0.4.9",
   "description": "Visual control for phones, browser pages and desktop windows, with shared CLI/MCP sessions, durable interactive tasks and human handoff. No LLM key needed.",
   "author": {
     "name": "saygo",

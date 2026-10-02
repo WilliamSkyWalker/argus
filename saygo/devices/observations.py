@@ -12,6 +12,7 @@ from saygo.platforms import device_session as ds
 
 
 def metadata(platform, png, session=None):
+    from .actions import capabilities
     with Image.open(io.BytesIO(png)) as im:
         size = list(im.size)
     result = dict(session=session or "default", width=size[0], height=size[1],
@@ -24,6 +25,7 @@ def metadata(platform, png, session=None):
         result["page_id"] = platform.page_id
     state = ds.load_state(session) or {}
     result["target"] = {key: state[key] for key in ("os", "kind", "app", "device_id", "session_id", "process_id", "background", "window_id") if key in state}
+    result['capabilities'] = capabilities(platform)
     return result
 
 

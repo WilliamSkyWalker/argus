@@ -767,6 +767,9 @@ def device_act(session: str, action: dict, observation_id: str | None = None,
                window_id: str | None = None):
     """Dispatch one action, optionally wait for stability and return a new observation.
     coordinate_space: screen, percent, image, crop. Image/crop require observation_id.
+    scroll_at(x,y,amount): target the pane; browser 1 unit requests 100 CSS px,
+    positive up, negative down. Start at half the pane height, reduce to 10-20%
+    near the target, and adjust from each new screenshot. Check backend capabilities.
     dispatched means input was sent; business_success remains unverified.
     Windows foreground=true explicitly uses global input on the activated target.
     """

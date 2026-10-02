@@ -37,6 +37,15 @@ saygo device act '{"type":"tap","x":50,"y":40,"coordinate_space":"percent"}' \
 
 Actions use `tap`, `swipe`, `input`, `press_key`, `open_url`, `open_app`, `scroll_up`, `scroll_down` and backend-dependent `double_click`, `right_click`, `hover`, `hotkey`, `long_press`, `scroll_at`. Query capabilities. `swipe` implements a drag on pointer backends. `hotkey` uses `keys: ["ctrl","a"]`; `long_press` uses seconds in `duration`; `scroll_at` uses `x`, `y`, and signed `amount` in wheel notches (positive up). Unsupported actions return errors.
 
+For visual list navigation, target the intended pane and start with half its visible
+height. Preserve overlap, reduce to 10–20% near a target, and stop when it is visible.
+Compare a landmark in fresh screenshots after every scroll to adjust the next amount.
+No movement calls for checking the pane, loading state and boundary before retrying.
+Browser capabilities declare 100 CSS pixels per unit and allow fractions; other
+backends can use native steps. Observations carry screen dimensions and capabilities.
+The desktop model receives the previous scroll screenshot alongside the current one;
+the model chooses each amount rather than an automatic retry loop.
+
 `saygo device wait --session mail --mode stable --timeout 5` waits for stability; `--mode change` waits for change. A timeout returns `condition_met: false, timed_out: true`. Screenshot calls remain subject to the backend's own I/O timeout. A stable frame is not business success. Action results expose `business_success: null` and require external verification.
 
 Visual revalidation compares decoded pixel changes, permitting small changes such as a distant caret; it additionally checks a small region around each pointer target. Changes to that region, page identity, URL or dimensions require re-observation. Desktop observations also include window ID, process ID and window bounds; supported desktop adapters recheck these before input and reject a changed target. Native foreground adapters check the foreground target too. These checks cannot prevent unrelated programs or people from changing focus during input. Pixel comparison is a heuristic, not proof that the business target is unchanged. All visual observations expire for action submission after 30 seconds.
