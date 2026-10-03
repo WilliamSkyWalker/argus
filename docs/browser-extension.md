@@ -96,7 +96,9 @@ not cancel Chrome's underlying command: later requests for that page report the
 pending capture instead of piling up more screenshots. Other pages and read-only
 diagnostics remain available. When Chrome completes the original command, the
 pending guard is released; its expired image is discarded and it cannot start
-another capture. A command that never completes remains visible as pending;
+another capture. Navigation (including same-URL reload), tab closure, debugger
+detachment, or manual release during capture also invalidates the outstanding
+image. A command that never completes remains visible as pending;
 the extension does not detach the debugger to clear it.
 
 `saygo device diagnose --session daily-web` reports the current window state,

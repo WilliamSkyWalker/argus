@@ -38,6 +38,7 @@ let inputPending = false;
 // Keep ownership until Chrome actually completes the outstanding operation.
 const viewportPending = new Map();
 const captureHistory = new Map();
+const captureDocuments = new Map();
 const READ_OPERATIONS = new Set(["pages", "metadata", "diagnose", "size", "screenshot", "network_read"]);
 const attached = new Set();
 const attaching = new Map();
@@ -256,8 +257,13 @@ async function execute(operation, args = {}, trace = {}) {
   // Control can be released while attach is pending.
   await target(args.page_id);
   if (operation === "size" || operation === "screenshot") {
+    const ticket = generation;
+    if (!captureDocuments.has(tabId)) captureDocuments.set(tabId, {});
+    const document = captureDocuments.get(tabId);
     const checkCapture = () => {
       if (trace.expired) throw new Error("Capture request expired; late result discarded; connection retained");
+      if (ticket !== generation || !port || !negotiated) throw new Error("Control was released during capture; image discarded");
+      if (captureDocuments.get(tabId) !== document) throw new Error("Page changed or closed during capture; image discarded");
     };
     checkCapture();
     trace.stage = "capture state";
@@ -361,6 +367,7 @@ async function execute(operation, args = {}, trace = {}) {
   return {};
 }
 chrome.debugger.onDetach.addListener(({tabId}, reason) => {
+  captureDocuments.delete(tabId);
   attached.delete(tabId);
   network.end(tabId, reason);
   // Chrome's "Cancel" control must not be undone by automatic reattachment.
@@ -375,9 +382,13 @@ chrome.tabs.onCreated.addListener(tab => {
   if (port && webURL(tab.pendingUrl || tab.url)) void autoNetwork(tab.id);
 });
 chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+  if (captureDocuments.has(tabId) && (change.url || change.status === "loading")) {
+    captureDocuments.set(tabId, {});
+  }
   if (port && webURL(tab.pendingUrl || tab.url) && (change.url || change.status)) void autoNetwork(tabId);
 });
 chrome.tabs.onRemoved.addListener(tabId => {
+  captureDocuments.delete(tabId);
   for (const key of captureHistory.keys()) {
     if (Number(key.split(':').at(-1)) === tabId) captureHistory.delete(key);
   }

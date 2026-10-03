@@ -60,3 +60,65 @@ matrix. This does not prove its underlying cause has been fixed. The timeout
 tests use deliberately unresolved mock commands; they validate request handling,
 not recovery from a real Chrome renderer hang. Lock-screen, OS suspend, long-term
 idle, other Chrome versions, and other operating systems remain unverified.
+
+## Automated regression gates
+
+The shared `.github/workflows/checks.yml` is required by both release workflows.
+Pull requests affecting any tests or workflow files trigger the package workflow.
+It runs all offline control, runtime, desktop, CLI, mobile, browser and bridge
+suites in separate processes and state directories, plus all extension JavaScript
+suites. Hardware-only tests remain explicit opt-ins; they are not counted as
+executed simply because discovery succeeded.
+
+```sh
+python -m pip install '.[mcp,browser,desktop,qa,selenium,mobile]'
+python scripts/check_core_tests.py
+node --test tests/extension_demo/test_*.mjs
+```
+
+A separate Linux job runs the real extension/native host in headed Chromium under
+Xvfb and Openbox. It checks foreground, background, covered, minimized and inactive
+tab captures with exact fixture colors; window/tab state must stay unchanged.
+It also checks a 35-second idle interval, 12 consecutive captures, actual scroll
+movement in independent panes, fractional fine adjustments, reverse direction,
+and top/bottom boundaries. Browser integration failures block publication.
+
+```sh
+python -m playwright install --with-deps chromium
+# Install xvfb, openbox and x11-utils with the system package manager.
+xvfb-run -a -s '-screen 0 1600x1000x24' python scripts/check_browser_tests.py
+```
+
+Use an isolated virtual display. The live runner requires a functioning window
+manager and fails if it cannot start; it does not silently downgrade a minimized
+window check to a normal-window check. Fixture JavaScript and scroll offsets are
+only test setup/oracles, never production perception. Multi-hour endurance tests
+are deliberately excluded. Native Windows/macOS background browser behavior and
+lock-screen/suspend still require dedicated platform environments.
+
+The deterministic capture tests also cover navigation (including same-URL reload),
+closing a tab, manual release while a capture is pending, simultaneous clients,
+viewport changes, and cleanup of transient tabs. Simulated time advances the
+extension's real deadline values; tests do not rely on 30–50 ms wall-clock races.
+Navigation, closure and release must discard the outstanding image rather than
+returning an observation from an obsolete page/control state.
+
+Adaptive scroll tests validate model input images, capabilities, and dispatched
+amounts using a scripted model. They do not establish that every real model will
+choose an appropriate amplitude; that remains a separate model evaluation.
+
+### Current regression finding
+
+The expanded Linux headed run (Chrome for Testing 153.0.8010.12, Xvfb/Openbox)
+reproduces `Page.captureScreenshot` timeouts when the extension target is minimized,
+including after the short idle interval. The bridge remains connected. The same
+run passes the other window/tab states, scroll assertions and capture burst.
+Disabling Playwright viewport emulation did not resolve the failure. Removing the
+clip in a disposable extension copy also did not resolve it; production capture
+parameters have not been changed on that basis.
+
+These minimized-window checks remain failing assertions, not skipped or expected
+failures. With this gate enabled, they block a new release until resolved. This is
+separate from the earlier successful Windows sample and must not be reported as
+cross-platform success. The capture invalidation bugs exposed by deterministic
+navigation/reload/closure/release tests have been corrected in this checkout.

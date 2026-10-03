@@ -21,7 +21,11 @@ class DesktopTests(unittest.TestCase):
                                               'screen_size': [1000, 800], 'capabilities': caps}}}
             rt = Mock()
             rt.store.get.return_value = state
-            rt.observe.return_value = state
+            frames = iter([b'frame-before', b'frame-after', b'frame-final'])
+            def observe(*args):
+                path.write_bytes(next(frames))
+                return state
+            rt.observe.side_effect = observe
             rt.submit.return_value = state
             rt.timeline.return_value = {'timeline': []}
             provider = Mock()
@@ -44,6 +48,10 @@ class DesktopTests(unittest.TestCase):
             self.assertIsNone(calls[0][0]['previous_scroll'])
             self.assertEqual(len(calls[0][1]), 1)
             self.assertEqual(calls[1][0]['previous_scroll']['action']['amount'], -3)
+            self.assertEqual([value for _,value in calls[1][1]], [b'frame-before',b'frame-after'])
+            self.assertEqual([value for _,value in calls[2][1]], [b'frame-after',b'frame-final'])
+            submitted = [call.args[2] for call in rt.submit.call_args_list]
+            self.assertEqual([action['amount'] for action in submitted], [-3,-.6])
             self.assertEqual([name for name, _ in calls[1][1]], ['web before previous scroll', 'web'])
             self.assertEqual([call.args[2]['amount'] for call in rt.submit.call_args_list], [-3, -.6])
 

@@ -2,10 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
+import {Clock} from './clock.mjs';
 
 const source = await readFile(new URL('../../extensions/saygo-browser/background.js', import.meta.url), 'utf8');
 function browser(tabs = [{id:1,url:'https://example.test'}]) {
   let disconnected = 0;
+  const clock=new Clock();
   const removed = [];
   const listeners = {};
   const listener = {addListener() {}};
@@ -15,7 +17,7 @@ function browser(tabs = [{id:1,url:'https://example.test'}]) {
     postMessage() {}, disconnect() { disconnected++; }
   };
   const context = vm.createContext({
-    setTimeout:(fn, ms) => setTimeout(fn, Math.min(ms, 30)), clearTimeout,
+    setTimeout:clock.setTimeout,clearTimeout:clock.clearTimeout,Date:clock.Date,
     NetworkJournal:class {},
     chrome:{
       storage:{session:{get:async () => ({epoch:'test',blocked:[]}),set:async () => {}}},
@@ -26,14 +28,16 @@ function browser(tabs = [{id:1,url:'https://example.test'}]) {
     }
   });
   vm.runInContext(source.replace("import {NetworkJournal} from './network.js';", ''), context);
-  return {context, removed, listeners, disconnected:() => disconnected,
+  return {clock, context, removed, listeners, disconnected:() => disconnected,
     connected:() => vm.runInContext('port !== null', context),
     activate:() => vm.runInContext('port = {}; negotiated = true;', context)};
 }
 
 test('handshake timeout keeps the native port open', async () => {
   const b = browser();
-  await assert.rejects(b.context.connect(), /handshake timed out/);
+  const rejection=assert.rejects(b.context.connect(), /handshake timed out/);
+  await b.clock.advance(10000);
+  await rejection;
   assert.equal(b.disconnected(), 0);
   assert.equal(b.connected(), true);
 });
@@ -57,7 +61,9 @@ test('timed-out input allows reads, rejects overlapping input, and is not replay
     if (operation === 'scroll_at') await new Promise(resolve => { finish = resolve; });
     return operation;
   };
-  await assert.rejects(b.context.runRequest('scroll_at'), /outcome unknown/);
+  const rejection=assert.rejects(b.context.runRequest('scroll_at'), /outcome unknown/);
+  await b.clock.advance(20000);
+  await rejection;
   assert.equal(await b.context.runRequest('screenshot'), 'screenshot');
   assert.equal(await b.context.runRequest('pages'), 'pages');
   await assert.rejects(b.context.runRequest('tap'), /still pending/);

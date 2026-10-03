@@ -16,18 +16,21 @@ on:
       - 'plugins/**'
       - 'extensions/**'
       - 'distribution/**'
-      - 'tests/control_demo/**'
+      - 'tests/**'
       - 'pyproject.toml'
       - 'setup.py'
       - 'MANIFEST.in'
-      - '.github/workflows/python-package.yml'
+      - '.github/workflows/**'
 permissions:
   contents: read
 concurrency:
   group: python-package-${{ github.ref }}-${{ inputs.publish || 'pypi' }}
   cancel-in-progress: false
 jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
   build:
+    needs: checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -6,7 +6,10 @@ on:
 permissions:
   contents: read
 jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
   package:
+    needs: checks
     runs-on: ubuntu-latest
     permissions:
       contents: write

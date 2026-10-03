@@ -1,0 +1,33 @@
+name: Core and browser regression checks
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install '.[mcp,browser,desktop,qa,selenium,mobile]'
+      - run: python scripts/check_core_tests.py
+      - run: node --test tests/extension_demo/test_*.mjs
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install '.[mcp,browser]'
+      - run: python -m playwright install --with-deps chromium
+      - run: sudo apt-get install -y xvfb openbox x11-utils
+      - name: Real extension, native host, background capture and scrolling
+        run: xvfb-run -a -s "-screen 0 1600x1000x24" python scripts/check_browser_tests.py

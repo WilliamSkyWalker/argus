@@ -29,6 +29,14 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps({'echo': payload.decode()}).encode())
 
     def do_GET(self):
+        if self.path in ('/scroll', '/capture'):
+            name = 'scroll_fixture.html' if self.path == '/scroll' else 'capture_fixture.html'
+            body = Path(__file__).with_name(name).read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == '/ws':
             key = self.headers['Sec-WebSocket-Key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
             self.send_response(101)
@@ -77,10 +85,10 @@ class ExtensionLive(unittest.TestCase):
             threading.Thread(target=server.serve_forever,daemon=True).start()
             self.addCleanup(server.server_close)
             self.addCleanup(server.shutdown)
-            extension=Path("extensions/saygo-browser").resolve()
+            extension=Path(os.environ.get("SAYGO_TEST_EXTENSION", "extensions/saygo-browser")).resolve()
             env={**os.environ,"HOME":tmp,"XDG_CONFIG_HOME":str(root/".config")}
             context=pw.chromium.launch_persistent_context(str(root/"profile"),
-                executable_path=os.environ["SAYGO_TEST_CHROME"],headless=True,
+                no_viewport=True, executable_path=os.environ["SAYGO_TEST_CHROME"],headless=os.environ.get("SAYGO_TEST_HEADED") != "1",
                 env=env,args=["--no-sandbox",f"--disable-extensions-except={extension}",f"--load-extension={extension}"])
             try:
                 worker=context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker")
@@ -235,9 +243,113 @@ class ExtensionLive(unittest.TestCase):
                     self.assertEqual(created_state["status"],"succeeded",created_state.get("error"))
                     new_id=created_state["outputs"]["create"]["created_page_id"]
                     platform.close_page(new_id)
+                self.check_capture_and_scroll(context, page, ui, platform, url, root)
                 send("release")
                 with self.assertRaises(RuntimeError): platform.tap(1,1)
                 self.assertEqual(send("status")["pages"],[])
                 self.assertFalse(page.is_closed())
             finally:
                 context.close()
+
+    def check_capture_and_scroll(self, context, page, ui, platform, url, root):
+        """Chrome APIs arrange isolated fixtures; all captures/input use the bridge."""
+        from PIL import Image
+        page.goto(url+'/capture')
+        # Stop the fixture's animation for exact pixel assertions. This JavaScript
+        # only configures the owned test page; production perception remains visual.
+        page.evaluate('clearInterval(window.captureFixtureTimer)')
+        tab = int(platform.page_id.split(':')[-1])
+        original = ui.evaluate('id => chrome.tabs.get(id)', tab)
+        window = original['windowId']
+        cover = ui.evaluate("url => chrome.windows.create({url, focused:true, width:900, height:700})",url+'/cover')
+        cover_id = cover['id']
+        inactive = None
+        modes = ['foreground', 'background', 'covered', 'minimized', 'inactive'] if os.environ.get('SAYGO_TEST_HEADED') == '1' else ['inactive']
+        bridge_before = json.loads((root/'bridge/status.json').read_text())
+        try:
+            for index, mode in enumerate(modes):
+                with self.subTest(capture_mode=mode):
+                    ui.evaluate('id => chrome.windows.update(id,{state:"normal"})',window)
+                    ui.evaluate('id => chrome.tabs.update(id,{active:true})',tab)
+                    if mode == 'foreground':
+                        ui.evaluate('id => chrome.windows.update(id,{focused:true})',window)
+                    elif mode == 'background':
+                        ui.evaluate('id => chrome.windows.update(id,{left:0,top:0,width:700,height:650})',window)
+                        ui.evaluate('id => chrome.windows.update(id,{state:"normal"})',cover_id)
+                        ui.evaluate('id => chrome.windows.update(id,{left:800,top:0,width:700,height:650,focused:true})',cover_id)
+                    elif mode == 'covered':
+                        ui.evaluate('id => chrome.windows.update(id,{state:"maximized",focused:true})',cover_id)
+                    elif mode == 'minimized':
+                        ui.evaluate('id => chrome.windows.update(id,{state:"minimized"})',window)
+                        ui.evaluate('id => chrome.windows.update(id,{focused:true})',cover_id)
+                    else:
+                        inactive=ui.evaluate('o => chrome.tabs.create(o)',{'windowId':window,'url':url+'/inactive','active':True})
+                    page.wait_for_timeout(250)
+                    before=platform.diagnose()
+                    if mode=='minimized': self.assertEqual(before['window_state'],'minimized')
+                    if mode=='inactive': self.assertFalse(before['tab_active'])
+                    elif mode=='foreground': self.assertTrue(before['window_focused'])
+                    else: self.assertFalse(before['window_focused'])
+                    for color in [(31+index,70,130),(61+index,110,180)]:
+                        page.evaluate('rgb => document.body.style.background=`rgb(${rgb.join(",")})`',color)
+                        image=Image.open(io.BytesIO(platform.screenshot_raw())).convert('RGB')
+                        self.assertEqual(image.getpixel((5,image.height-5)),color)
+                    after=platform.diagnose()
+                    for key in ('window_id','window_state','window_focused','tab_active'):
+                        self.assertEqual(after[key],before[key],(mode,key))
+                    self.assertTrue(after['connection_retained'])
+                    self.assertFalse(after['last_capture']['pending'])
+                    if inactive:
+                        ui.evaluate('id => chrome.tabs.remove(id)',inactive['id']);inactive=None
+            # Cross the worker's ordinary idle interval without screenshot requests.
+            # This is a 35-second check, not a multi-hour endurance test.
+            with self.subTest(capture_mode='short_idle'):
+                if os.environ.get('SAYGO_TEST_HEADED') == '1':
+                    ui.evaluate('id => chrome.windows.update(id,{state:"minimized"})',window)
+                time.sleep(35)
+                self.assertTrue(platform.diagnose()['connection_retained'])
+                page.evaluate('document.body.style.background="rgb(12,34,56)"')
+                image=Image.open(io.BytesIO(platform.screenshot_raw())).convert('RGB')
+                self.assertEqual(image.getpixel((5,image.height-5)),(12,34,56))
+                bridge_after=json.loads((root/'bridge/status.json').read_text())
+                self.assertEqual(bridge_after['epoch'],bridge_before['epoch'])
+                self.assertTrue(bridge_after['connected'])
+            ui.evaluate('id => chrome.windows.update(id,{state:"normal"})',window)
+            ui.evaluate('id => chrome.tabs.update(id,{active:true})',tab)
+            platform.select_page(platform.page_id)
+            page.goto(url+'/scroll')
+            # Scroll offsets are a test oracle for this fixture only.
+            offsets=lambda:page.evaluate('[left.scrollTop,right.scrollTop,window.scrollY]')
+            def scroll(amount,x=150):
+                platform.scroll_at(x,200,amount)
+                platform.screenshot_raw()  # Observation between every action.
+                return offsets()
+            with self.subTest(scroll='direction_amplitude_and_pane'):
+                self.assertEqual(offsets(),[0,0,0])
+                down=scroll(-2)
+                self.assertAlmostEqual(down[0],200,delta=3)
+                self.assertEqual(down[1:],[0,0])
+                fine=scroll(-.5)
+                self.assertAlmostEqual(fine[0]-down[0],50,delta=3)
+                back=scroll(.5)
+                self.assertAlmostEqual(back[0],down[0],delta=3)
+                right=scroll(-1,450)
+                self.assertAlmostEqual(right[1],100,delta=3)
+                self.assertAlmostEqual(right[0],back[0],delta=3)
+            with self.subTest(scroll='boundaries'):
+                bottom=scroll(-100)
+                self.assertEqual(bottom[0],2600)
+                self.assertEqual(scroll(-1),bottom)
+                top=scroll(100)
+                self.assertEqual(top[0],0)
+                self.assertEqual(scroll(1),top)
+                self.assertEqual(top[2],0)
+            with self.subTest(capture='short_burst'):
+                for _ in range(12):
+                    self.assertTrue(platform.screenshot_raw().startswith(b'\x89PNG'))
+                    self.assertFalse(platform.diagnose()['last_capture']['pending'])
+                self.assertEqual(json.loads((root/'bridge/status.json').read_text())['epoch'],bridge_before['epoch'])
+        finally:
+            if inactive: ui.evaluate('id => chrome.tabs.remove(id)',inactive['id'])
+            ui.evaluate('id => chrome.windows.remove(id)',cover_id)
+            ui.evaluate('id => chrome.windows.update(id,{state:"normal"})',window)

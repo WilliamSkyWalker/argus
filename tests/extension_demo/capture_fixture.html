@@ -6,7 +6,7 @@
 <div id="clock"></div>
 <script>
 // A changing image distinguishes fresh captures from cached frames.
-setInterval(() => {
+window.captureFixtureTimer = setInterval(() => {
   const now = Date.now();
   document.getElementById('clock').textContent = now;
   document.body.style.background = `rgb(${Math.floor(now / 100) % 256},90,140)`;

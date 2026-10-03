@@ -231,3 +231,49 @@ class BridgeTests(unittest.TestCase):
         p._page_id="epoch:1"
         with patch.object(p,"_call",return_value={"data":base64.b64encode(raw.getvalue()).decode(),"size":[100,50]}):
             self.assertEqual(Image.open(io.BytesIO(p.screenshot_raw())).size,(100,50))
+
+class ConcurrentClientTests(unittest.TestCase):
+    def test_parallel_clients_receive_only_their_own_responses(self):
+        from concurrent.futures import ThreadPoolExecutor
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = subprocess.Popen([sys.executable, '-m', 'saygo.integrations.browser_bridge',
+                                     'host', '--directory', tmp],
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            worker = None
+            errors = []
+            seen = []
+            try:
+                read_frame(proc.stdout)
+                write_frame(proc.stdin, {'type':'hello','protocol':1,'version':'test'})
+                status=Path(tmp)/'status.json'
+                deadline=time.monotonic()+5
+                while time.monotonic()<deadline:
+                    if status.exists() and json.loads(status.read_text()).get('connected'): break
+                    time.sleep(.01)
+                self.assertTrue(json.loads(status.read_text())['connected'])
+                def extension():
+                    try:
+                        for _ in range(8):
+                            request=read_frame(proc.stdout)
+                            seen.append(request['id'])
+                            value=request['arguments']['marker']
+                            body=json.dumps({'result':{'marker':value}})
+                            for part,last in [(body[:5],False),(body[5:],True)]:
+                                write_frame(proc.stdin,{'id':request['id'],'chunk':part,'last':last})
+                    except Exception as error: errors.append(error)
+                worker=threading.Thread(target=extension,daemon=True);worker.start()
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    results=list(pool.map(lambda i:Client(tmp,timeout=5).call('metadata',marker=i),range(8)))
+                self.assertEqual(results,[{'marker':i} for i in range(8)])
+                self.assertEqual(len(set(seen)),8)
+                self.assertTrue(json.loads(status.read_text())['connected'])
+                self.assertFalse(list(Path(tmp).glob('*.request')))
+                self.assertFalse(list(Path(tmp).glob('*.response')))
+                worker.join(2);self.assertFalse(worker.is_alive());self.assertFalse(errors)
+            finally:
+                proc.stdin.close()
+                try: proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill();proc.wait()
+                if worker:worker.join(2)
+                proc.stdout.close();proc.stderr.close()
