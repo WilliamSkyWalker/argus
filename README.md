@@ -39,7 +39,7 @@ Install [saygo-agent-control](https://pypi.org/project/saygo-agent-control/) wit
 
 ```sh
 pipx install 'saygo-agent-control[mcp]'
-saygo setup --client codex
+saygo setup --client codex --extension-id ehomcchjfomfkcmbeinlcmpbaamdhfbo
 # Or: saygo setup --client claude / both / qoder / qodercn / all
 ```
 
@@ -48,7 +48,7 @@ uses the version bundled with the installed package, prepares an isolated runtim
 and registers the plugin and browser bridge. No repository clone is needed.
 Use `saygo setup --help` for mobile, browser, update and uninstall options.
 Dependencies still require network access. Update with `pipx upgrade saygo-agent-control`
-then rerun `saygo setup`; remove client registration with `saygo setup --uninstall`
+then rerun `saygo setup --extension-id ehomcchjfomfkcmbeinlcmpbaamdhfbo` for the store extension; remove client registration with `saygo setup --uninstall`
 before removing the pipx application. Managed runtime updates remain a separate,
 opt-in GitHub release channel.
 
@@ -93,7 +93,7 @@ From a checkout, developers can use `python3 scripts/install_agent_plugin.py`. C
 
 Managed installations check for updates in the background and report new releases. Automatic runtime updates are opt-in: add `--auto-update --update-channel beta` when running the installer. Prepared updates activate on a later idle Agent startup; browser/Skill changes prompt a full upgrade. See [update controls and limits](distribution/README.md#update-and-uninstall).
 
-For browser control, load the installer-provided extension directory through **Load unpacked** at `chrome://extensions` (or Edge's extension page), then click **Connect local bridge** in its popup. Restart the Agent client and describe a task, for example:
+For browser control, install [Saygo Browser from the Chrome Web Store](https://chromewebstore.google.com/detail/ehomcchjfomfkcmbeinlcmpbaamdhfbo) (Chrome or Edge). The store extension ID is `ehomcchjfomfkcmbeinlcmpbaamdhfbo`. Open its popup and click **Connect local bridge**. Store installations receive approved updates automatically. Restart the Agent client and describe a task, for example:
 
 > List the connected sessions, connect the test browser page as `mail`, and show me its current screen before making changes.
 
@@ -261,9 +261,9 @@ Saygo 致力于支持 Windows、Windows WSL 和 macOS 环境下的设备操控�
 
 Saygo 为外部编程 Agent 提供手机、浏览器和桌面窗口的视觉操作能力：**观察 → 操作 → 新观察**，并保存跨端任务进度、执行事实和截图。
 
-- **命令行用户**：安装 Claude Code / Codex / Qoder / QoderCN 的集成，由现有 Agent 决策，无需给 Saygo 配模型 Key。通过 `pipx install "saygo-agent-control[mcp]"` 从 PyPI 安装，再运行 `saygo setup --client codex`（或选择其他客户端）完成接入。安装后重启客户端。
+- **命令行用户**：安装 Claude Code / Codex / Qoder / QoderCN 的集成，由现有 Agent 决策，无需给 Saygo 配模型 Key。通过 `pipx install "saygo-agent-control[mcp]"` 从 PyPI 安装，再运行 `saygo setup --client codex --extension-id ehomcchjfomfkcmbeinlcmpbaamdhfbo`（或选择其他客户端）完成接入。安装后重启客户端。
 - **窗口桌面用户**：使用 Qt 桌面版，在界面配置自己的视觉模型 API、模型名和 Key。Windows 原生便携包无需 WSL、Python 或 pyenv。macOS DMG 的脚本和 CI 已就绪，但尚未完成 macOS 构建与实测。
-- **浏览器**：MCP 和桌面版使用 Chrome/Edge 扩展，保留现有页面和登录状态；MCP 不支持 Playwright。扩展暂通过开发者模式加载，未声称已上架商店。
+- **浏览器**：MCP 和桌面版使用 Chrome/Edge 扩展，保留现有页面和登录状态；MCP 不支持 Playwright。从 [Chrome 网上应用店](https://chromewebstore.google.com/detail/ehomcchjfomfkcmbeinlcmpbaamdhfbo) 安装 Saygo Browser，打开弹窗点击 **Connect local bridge**；审核通过的新版本由浏览器自动更新。
 - **恢复与接管**：CLI/MCP 共用命名会话；`saygo task` 保存操作记录、支持人工接管和中断恢复。结果不确定的动作需核对，不自动重放。点击派发成功或画面稳定都不等于业务完成。
 - **测试边界**：Windows EXE 已通过启动和桥接握手验证，完整跨端业务验收与干净机器安装仍需实测；不要将模拟测试当作真机兼容性证明。
 

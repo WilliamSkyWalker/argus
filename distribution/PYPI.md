@@ -1,7 +1,7 @@
 # Python package release
 
 Package: `saygo-agent-control`. CLI: `saygo`. Version: `0.4.12` (beta software).
-Version 0.4.4 is published on PyPI. Its wheel passed installation and plugin preparation
+Version 0.4.12 is published on PyPI. Its wheel passed installation and plugin preparation
 checks on Linux, Windows and macOS before upload.
 
 ## Build and verify
@@ -57,8 +57,12 @@ After publication, verify from outside the checkout:
 ```sh
 pipx install 'saygo-agent-control[mcp]'
 saygo setup --help
-saygo setup --client codex
+saygo setup --client codex --extension-id ehomcchjfomfkcmbeinlcmpbaamdhfbo
 ```
+
+Install [Saygo Browser from the Chrome Web Store](https://chromewebstore.google.com/detail/ehomcchjfomfkcmbeinlcmpbaamdhfbo), then click
+**Connect local bridge** in its popup. The explicit setup ID also switches old
+development installations to the store host registration.
 
 The website uses `installMode: "pypi"`. The pipx application and managed plugin runtime are separate:
 `pipx upgrade saygo-agent-control` followed by `saygo setup` updates both. The

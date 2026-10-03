@@ -179,23 +179,13 @@ def make_window():
 
         def install_bridge(self):
             def install(emit):
-                import base64,hashlib,shutil
-                from saygo.integrations.browser_setup import setup
+                from saygo.integrations.browser_setup import setup, STORE_EXTENSION_ID, STORE_EXTENSION_URL
                 from saygo.integrations.browser_bridge import atomic_json
                 from saygo.platforms import device_session as ds
-                source=Path(__file__).parent/'assets/extension'
-                if not source.exists(): source=Path(__file__).resolve().parents[2]/'extensions/saygo-browser'
-                if not source.exists(): source=Path(sys.prefix)/'share/saygo/browser-extension'
-                manifest=json.loads((source/'manifest.json').read_text())
-                eid=''.join(chr(97+int(c,16)) for c in hashlib.sha256(base64.b64decode(manifest['key'])).hexdigest()[:32])
-                result=setup(eid)
-                target=Path(result['directory'])/'extension'; shutil.copytree(source,target,dirs_exist_ok=True)
+                result=setup(STORE_EXTENSION_ID)
                 ds.STATE_DIR.parent.mkdir(parents=True,exist_ok=True); atomic_json(ds.STATE_DIR.parent/'browser-bridge.json',result)
-                display=str(target)
-                if result.get('host')=='windows':
-                    from saygo.devices.mobile_host import wsl_path
-                    display=wsl_path(target,windows=True)
-                return {'message':'打开 chrome://extensions，开启开发者模式并加载以下目录，然后在扩展中点击 Connect。','extension_directory':display,**result}
+                return {'message':'从 Chrome 网上应用店安装 Saygo Browser，然后打开扩展弹窗点击 Connect local bridge。如果之前使用开发版，请先在浏览器中手动断开并停用旧扩展。',
+                        'extension_id':STORE_EXTENSION_ID,'extension_url':STORE_EXTENSION_URL,**result}
             self.job(install)
 
         def task_page(self):

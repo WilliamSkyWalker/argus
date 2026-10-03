@@ -12,6 +12,9 @@ import tempfile
 
 from . import browser_bridge
 
+STORE_EXTENSION_ID = "ehomcchjfomfkcmbeinlcmpbaamdhfbo"
+STORE_EXTENSION_URL = "https://chromewebstore.google.com/detail/" + STORE_EXTENSION_ID
+
 
 def setup(extension_id, browser='chrome', directory=None):
     if not re.fullmatch('[a-p]{32}', extension_id):

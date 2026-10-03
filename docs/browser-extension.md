@@ -25,41 +25,70 @@ in a repository or cloud-synced folder.
 
 ## Install on the browser's operating system
 
-Python 3.11+ is required on that OS. The native host uses only the Python standard
-library; Windows does not need the rest of Saygo or Playwright installed.
+Install [Saygo Browser from the Chrome Web Store](https://chromewebstore.google.com/detail/ehomcchjfomfkcmbeinlcmpbaamdhfbo) in Chrome or Edge.
+The store extension ID is `ehomcchjfomfkcmbeinlcmpbaamdhfbo`. Developer mode is not required.
 
-1. Open `chrome://extensions` (Edge: `edge://extensions`), enable Developer mode,
-   and **Load unpacked** → `extensions/saygo-browser`. Keep these files at a
-   permanent path. Copy the extension's 32-letter ID.
-2. Register the native host for that exact extension ID. Run this command on the
-   **same OS as Chrome**, using the Python executable you want Chrome to launch.
+Register the bridge from the environment where your Agent runs (including WSL):
 
-   Linux/macOS, from the repository:
+```bash
+pipx install 'saygo-agent-control[mcp]'
+saygo setup --client codex --extension-id ehomcchjfomfkcmbeinlcmpbaamdhfbo
+```
 
-   ```bash
-   python3 -m saygo.integrations.browser_bridge install \
-     --extension-id YOUR_EXTENSION_ID \
-     --directory "$HOME/.saygo/browser-bridge"
-   ```
+Use `--client claude`, `both`, or another supported client as needed; add
+`--browser edge` for Edge. The installer provisions the native host on the
+browser's OS, including Windows when invoked from WSL.
 
-   Windows PowerShell, with a permanent copy of `saygo/integrations/browser_bridge.py`:
+Open a normal website, then open the Saygo Browser popup and click **Connect
+local bridge**. Restart the Agent client. All existing and newly opened website
+tabs become available; no per-tab sharing is required. Chrome may display its
+normal debugger control banner when Saygo operates.
 
-   ```powershell
-   py -3 C:\Saygo\browser_bridge.py install `
-     --extension-id YOUR_EXTENSION_ID `
-     --directory "$env:LOCALAPPDATA\Saygo\browser-bridge"
-   ```
+### Upgrade or switch from the unpacked development extension
 
-   Add `--browser edge` for Edge. Windows registration is per user (HKCU);
-   administrator access is unnecessary. Linux/macOS registration targets the
-   normal Chrome/Edge user data directory. For a custom `--user-data-dir`, copy
-   the generated `com.saygo.browser.json` into its `NativeMessagingHosts/`
-   subdirectory. Managed browser policy can block unpacked extensions or native
-   messaging.
-3. Open a normal website, then open the Saygo extension popup. Click **Connect
-   local bridge**. All existing and newly opened website tabs become available;
-   no per-tab sharing is required. The popup shows available page IDs.
-   Chrome may display its normal debugger control banner when Saygo operates.
+```bash
+pipx upgrade saygo-agent-control
+saygo setup --client codex --extension-id ehomcchjfomfkcmbeinlcmpbaamdhfbo
+```
+
+Install the store extension using the link above. If the unpacked development
+extension is connected, manually release it in its popup before connecting the
+store extension. Manually disable or remove the old extension to avoid confusing
+the two. Saygo does not disconnect or reload either extension automatically.
+The explicit `--extension-id` changes the native host registration from the saved
+development ID to the store ID; package upgrades alone do not make that change.
+Store updates arrive after Google's approval and browser update delivery.
+
+### Development builds and manual host registration
+
+Use an unpacked extension only when developing or explicitly testing an
+unreleased build: open `chrome://extensions` (Edge: `edge://extensions`), enable
+Developer mode and **Load unpacked** → `extensions/saygo-browser`. Keep the folder.
+Its development ID is `oifpojkdkggpmdfbbochlclhjahkkmpc`; configure it explicitly
+with `saygo setup --extension-id oifpojkdkggpmdfbbochlclhjahkkmpc`.
+The development manifest key remains specific to unpacked builds.
+
+For manual native host installation, use Python 3.11+ on the **same OS as Chrome**:
+
+```bash
+python3 -m saygo.integrations.browser_bridge install \
+  --extension-id ehomcchjfomfkcmbeinlcmpbaamdhfbo \
+  --directory "$HOME/.saygo/browser-bridge"
+```
+
+Windows PowerShell, with a permanent copy of `saygo/integrations/browser_bridge.py`:
+
+```powershell
+py -3 C:\Saygo\browser_bridge.py install `
+  --extension-id ehomcchjfomfkcmbeinlcmpbaamdhfbo `
+  --directory "$env:LOCALAPPDATA\Saygo\browser-bridge"
+```
+
+Add `--browser edge` for Edge. For development builds replace the ID with the
+development ID above. Windows registration is per user (HKCU), with no administrator
+access required. Linux/macOS registration targets the normal Chrome/Edge profile;
+for a custom `--user-data-dir`, copy `com.saygo.browser.json` into its
+`NativeMessagingHosts/` directory. Managed browser policies can block native messaging.
 
 ## Bind to Saygo and operate
 

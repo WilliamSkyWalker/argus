@@ -1,9 +1,12 @@
 # Chrome Web Store submission — Saygo Browser 0.4.12
 
-Status: the publisher dashboard showed version 0.4.8 as Published - public on
-2026-10-03. This document describes the current checkout, not the currently
-published store version. The 0.4.11 release pipeline failed its regression checks;
-that version has not been automatically submitted to the store.
+Status on 2026-10-03: version 0.4.8 is Published - public. Version 0.4.12
+was uploaded and submitted automatically with state PENDING_REVIEW; it will be
+published after approval. Query the Chrome Web Store status workflow for the
+latest review state. Install the public store item using the link below.
+
+[Install Saygo Browser](https://chromewebstore.google.com/detail/ehomcchjfomfkcmbeinlcmpbaamdhfbo)
+
 Store ID: ehomcchjfomfkcmbeinlcmpbaamdhfbo. Runtime minimum for targeted scrolling:
 Saygo 0.4.11, native bridge protocol 1. Extension and runtime versions are independent.
 

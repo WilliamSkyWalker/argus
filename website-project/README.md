@@ -20,7 +20,7 @@ python3 -m http.server 8080 --bind 127.0.0.1
 
 ## 安装入口
 
-首屏支持 Codex / Claude Code 和 macOS、Linux、WSL / Windows 切换。默认使用已发布的 PyPI 包，显示 `pipx install` 与 `saygo setup`。在 `site-config.js` 中设置 `installMode: "source"` 可切换回源码安装。复制使用 Clipboard API，失败时选中命令供手动复制。
+首屏支持 Codex / Claude Code 和 macOS、Linux、WSL / Windows 切换。默认使用已发布的 PyPI 包，显示 `pipx install` 与指定商店插件 ID 的 `saygo setup`。浏览器安装入口指向 Chrome 网上应用店的 Saygo Browser（`ehomcchjfomfkcmbeinlcmpbaamdhfbo`），中英文文案保持一致。在 `site-config.js` 中设置 `installMode: "source"` 可切换回源码安装。复制使用 Clipboard API，失败时选中命令供手动复制。
 
 ## 视频
 

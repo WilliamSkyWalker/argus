@@ -60,11 +60,14 @@ Windows Python for the browser host. It does not require Git or a user-managed
 Python installation on Windows. Native Windows users run `py -3` instead of
 `python3`. In WSL the extension files are copied onto the Windows filesystem.
 
-Until the store listing is available, open `chrome://extensions`, enable Developer
-mode, choose **Load unpacked**, and select the path printed by the installer.
-The development extension ID is `oifpojkdkggpmdfbbochlclhjahkkmpc` (public key in
-manifest); it is not an official Web Store ID. Open its popup and click **Connect
-local bridge**. All website tabs in that profile become accessible to Saygo.
+Install [Saygo Browser from the Chrome Web Store](https://chromewebstore.google.com/detail/ehomcchjfomfkcmbeinlcmpbaamdhfbo).
+The store ID is `ehomcchjfomfkcmbeinlcmpbaamdhfbo`; Developer mode is not required.
+When switching an existing installation from the unpacked version, run
+`saygo setup --extension-id ehomcchjfomfkcmbeinlcmpbaamdhfbo` (or pass the same
+option to the release installer). This overrides the previously saved development
+ID. Manually release the old extension before connecting the store extension,
+and disable or remove the old copy in the browser. Open the store extension popup
+and click **Connect local bridge**. All website tabs in that profile become accessible to Saygo.
 Restart the Agent client. Ask it to list browser pages and connect a named session.
 The bridge path is saved in `~/.saygo/browser-bridge.json` (or `SAYGO_HOME_DIR`), so
 new MCP extension connections no longer require a manually supplied path.
@@ -114,8 +117,9 @@ The versioned installer itself still installs its named version. The desktop GUI
 and unmanaged installations are not automatically updated by this mechanism.
 
 Close active Saygo tasks. Run the newer release installer using the same root,
-reload the unpacked extension in Chrome, reconnect it, then start a new Agent
-session. Old runtimes are preserved for rollback; existing sessions are retained.
+let Chrome update the store extension after approval, then start a new Agent
+session. For an explicitly selected development build, manually reload the unpacked
+extension and reconnect it. Old runtimes are preserved for rollback; existing sessions are retained.
 The extension and host negotiate protocol version before any actions are sent.
 Protocol mismatch instructs the user to update both sides; it is not reported as
 successful connection. Versions 0.3.x lack this handshake and need both updated.
@@ -136,8 +140,10 @@ Browser extension versions come from `extensions/saygo-browser/manifest.json`
 and are independent of the Python package version. Only change the extension
 version when its files change. Build an extension-only upload with
 `python3 scripts/build_release.py --extension-only --out dist/browser-store`.
-The first store item ID is `ehomcchjfomfkcmbeinlcmpbaamdhfbo`; its review/publication
-is still pending. Existing development installations are not migrated automatically.
+The store item ID is `ehomcchjfomfkcmbeinlcmpbaamdhfbo`. Version 0.4.8 is public;
+0.4.12 was submitted for review on 2026-10-03. Use the Chrome Web Store status
+workflow for current status. Existing development installations switch through
+the explicit setup command above.
 
 
 ```sh
@@ -151,19 +157,16 @@ included. `--prepare-only --client both --root /tmp/saygo-package-check` builds
 client bundles without registering clients/hosts. Running from the checkout is
 also supported via `python3 scripts/install_agent_plugin.py`.
 
-Tag `v0.4.3` triggers artifact generation and a **draft** GitHub Release. Manual
-workflow runs only generate artifacts. Review it before publishing. For the first
-Web Store upload, upload the `-store.zip`, obtain its ID, set `store_extension_id`
-in `release.json`, and rebuild the release installer (or use
-`--store-extension-id ID`). The store identity differs from the development one.
-The installer then prints the store link and registers that exact origin. Do not
-load the development ZIP when configured for the store ID. Test installation from
-the actual store before calling it verified.
+Push a tag matching `distribution/release.json` to run regression checks, publish
+GitHub release artifacts and automatically submit the store ZIP for review. Google
+publishes it after approval. The Python package workflow separately publishes to
+PyPI after its checks. Manual Build release runs only produce artifacts.
 
-Complete the listing and privacy fields in `STORE_LISTING.md`; publish the privacy
-policy on a public HTTPS page. Take actual screenshots from the final extension
-build for the listing. Account registration, store review, screenshots and public
-publication remain release-owner steps, not automated claims of completion.
+The store ZIP excludes the development manifest key. Keep the store ID in
+`release.json`; native host registration must match the installed extension.
+Development builds remain available with an explicit development ID. See
+[store setup and review status](STORE_LISTING.md) for credentials, listing fields
+and the read-only status workflow.
 
 ## Verification boundary
 
