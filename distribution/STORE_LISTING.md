@@ -1,10 +1,63 @@
 # Chrome Web Store submission — Saygo Browser 0.4.11
 
-Status: package uploaded by publisher; store review not submitted. Isolated
-Chromium/native-host validation passed for input, independently targeted left/right
-scrolling, screenshots and release. Screenshots use a fictional local test page.
+Status: the publisher dashboard showed version 0.4.8 as Published - public on
+2026-10-03. This document describes the current checkout, not the currently
+published store version. The 0.4.11 release pipeline failed its regression checks;
+that version has not been automatically submitted to the store.
 Store ID: ehomcchjfomfkcmbeinlcmpbaamdhfbo. Runtime minimum for targeted scrolling:
 Saygo 0.4.11, native bridge protocol 1. Extension and runtime versions are independent.
+
+## Automatic updates from GitHub
+
+The tag-triggered `Build release` workflow runs core and browser regression checks,
+builds the release artifacts, then uploads the **store** ZIP and submits it using
+the official Chrome Web Store v2 API. `DEFAULT_PUBLISH` makes Google publish the
+version after approval. A successful submission is reported as pending review,
+not as an approved release. The existing visibility setting is preserved.
+
+Configure these repository Actions settings once:
+
+| Kind | Name | Value |
+| --- | --- | --- |
+| Variable | `CWS_PUBLISHER_ID` | Publisher > Settings in the store dashboard |
+| Secret | `CWS_CLIENT_ID` | Google OAuth client ID |
+| Secret | `CWS_CLIENT_SECRET` | OAuth client secret |
+| Secret | `CWS_REFRESH_TOKEN` | Refresh token authorized by the store publisher |
+
+Enable Chrome Web Store API in a Google Cloud project. Create a Web application
+OAuth client with `https://developers.google.com/oauthplayground` as a redirect
+URI. In OAuth Playground, select **Use your own OAuth credentials**, authorize
+`https://www.googleapis.com/auth/chromewebstore` with the Google account that owns
+the store item, and exchange the authorization code for tokens. Store the refresh
+token directly in GitHub Secrets; do not commit credentials or paste them into
+issues or chat. Follow the [official setup instructions](https://developer.chrome.com/docs/webstore/using-api).
+
+For unattended use, check the OAuth consent application's publishing status and
+token lifetime; an External application left in Testing can have short-lived
+refresh tokens. See Google's [refresh token expiration rules](https://developers.google.com/identity/protocols/oauth2#expiration).
+A revoked or expired token requires renewed authorization.
+
+Future releases must increment the extension manifest version. Push the matching
+release tag using the normal release process. Failed regression checks prevent
+the store job from running; missing credentials fail explicitly. The known
+minimized-window screenshot failures still block submission until addressed.
+
+To inspect review status independently of release checks, open GitHub Actions >
+**Chrome Web Store status** > **Run workflow**. Its summary shows published and
+submitted versions, upload state and policy flags. This workflow performs only
+status queries. It does not submit, cancel, or publish an item.
+
+An already published version or the same version pending review is not uploaded
+again. A different pending review, staged submission, in-progress upload or policy
+action stops publication for inspection. Upload processing is polled for up to
+three minutes; review itself is handled asynchronously by Google. Network errors
+do not automatically repeat uploads or submissions. If the result is unknown,
+query status and check the dashboard before rerunning the failed store job.
+
+Implementation: `scripts/publish_chrome_store.py`. It reads credentials only from
+the environment and never logs access tokens or OAuth error response bodies.
+The store item ID comes from `distribution/release.json`; the development
+extension ID and manifest key are not used for store uploads.
 
 ## Store listing
 
