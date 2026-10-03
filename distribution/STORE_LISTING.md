@@ -1,4 +1,4 @@
-# Chrome Web Store submission — Saygo Browser 0.4.11
+# Chrome Web Store submission — Saygo Browser 0.4.12
 
 Status: the publisher dashboard showed version 0.4.8 as Published - public on
 2026-10-03. This document describes the current checkout, not the currently
@@ -15,7 +15,11 @@ the official Chrome Web Store v2 API. `DEFAULT_PUBLISH` makes Google publish the
 version after approval. A successful submission is reported as pending review,
 not as an approved release. The existing visibility setting is preserved.
 
-Configure these repository Actions settings once:
+The repository settings below were configured on 2026-10-03. The read-only
+Chrome Web Store status workflow successfully authenticated and returned the
+published 0.4.8 item. The OAuth application is in production mode.
+
+Required repository Actions settings:
 
 | Kind | Name | Value |
 | --- | --- | --- |
@@ -39,8 +43,9 @@ A revoked or expired token requires renewed authorization.
 
 Future releases must increment the extension manifest version. Push the matching
 release tag using the normal release process. Failed regression checks prevent
-the store job from running; missing credentials fail explicitly. The known
-minimized-window screenshot failures still block submission until addressed.
+the store job from running; missing credentials fail explicitly. Minimized
+windows are outside the requested acceptance scope. Browser checks retain
+inactive-tab operation and short idle in a normal window.
 
 To inspect review status independently of release checks, open GitHub Actions >
 **Chrome Web Store status** > **Run workflow**. Its summary shows published and
@@ -119,7 +124,7 @@ No Saygo account, login credentials or payment are required. Please use a clean
 browser profile with test pages, not a profile containing private accounts.
 
 1. Install Python 3.10+, pipx and a supported Agent CLI (Codex, Claude Code, Qoder or QoderCN). Install the extension from the review package.
-2. Run: pipx install 'saygo-agent-control[mcp]>=0.4.11'
+2. Run: pipx install 'saygo-agent-control[mcp]>=0.4.12'
 3. Run: saygo setup --client codex --extension-id ehomcchjfomfkcmbeinlcmpbaamdhfbo
    Use --client claude/qoder/qodercn if appropriate. On WSL, run setup in WSL; it prepares the native host on Windows. On macOS/Linux, run setup on the browser's host OS. Do not load the development extension when testing the store ID.
 4. Open https://example.com/ in the test browser, open Saygo Browser, and click Connect local bridge. Verify Connected and the test tab title in the popup. Chrome may display a debugger indicator.

@@ -226,6 +226,7 @@ async function runRequest(operation, args = {}, requestId = null) {
     return await Promise.race([work, new Promise((_, reject) => {
       timer = setTimeout(() => {
         trace.expired = true;
+        trace.onTimeout?.();
         const detail = viewport ? `; capture=${JSON.stringify(captureStatus(trace))}` : "";
         reject(new Error(`${captureNotice(trace) || ""} Browser request timed out at ${trace.stage}; outcome unknown; connection retained${detail}`));
       }, (20 + duration) * 1000);
@@ -246,6 +247,30 @@ async function execute(operation, args = {}, trace = {}) {
       return result;
     } catch (error) { entry.status = "failed"; throw error; }
     finally { entry.elapsed_ms = Date.now() - trace.started - entry.started_ms; }
+  };
+  const wheel = async (tabId, x, y, deltaY) => {
+    if (trace.expired) throw new Error("Scroll expired; input not dispatched");
+    const ticket = generation;
+    if (!captureDocuments.has(tabId)) captureDocuments.set(tabId, {});
+    const document = captureDocuments.get(tabId);
+    let cleanup;
+    const resetFocus = () => cleanup ||= (async () => {
+      // Manual release already removes debugger emulation. Never reattach here.
+      if (ticket === generation && attached.has(tabId))
+        await cdp(tabId,"Emulation.setFocusEmulationEnabled",{enabled:false});
+    })();
+    // Cleanup on timeout must not unlock/replay the unresolved input command.
+    trace.onTimeout = () => { void resetFocus().catch(() => {}); };
+    try {
+      // Logical page focus only: never activate the tab or focus its window.
+      await command(tabId,"Emulation.setFocusEmulationEnabled",{enabled:true});
+      await target(args.page_id);
+      if (trace.expired || ticket !== generation || captureDocuments.get(tabId) !== document)
+        throw new Error("Scroll expired or page/control changed; input not dispatched");
+      await command(tabId,"Input.dispatchMouseEvent",{type:"mouseWheel",x,y,deltaX:0,deltaY});
+    } finally {
+      try { await resetFocus(); } finally { delete trace.onTimeout; }
+    }
   };
   if (operation === "pages") return pages();
   if (operation === "new_page") {
@@ -378,18 +403,15 @@ async function execute(operation, args = {}, trace = {}) {
   } else if (operation === "scroll") {
     const metrics = await command(tabId,"Page.getLayoutMetrics");
     const v = metrics.cssVisualViewport;
-    await command(tabId,"Input.synthesizeScrollGesture",{x:v.clientWidth/2,y:v.clientHeight/2,
-      xDistance:0,yDistance:args.direction === "up" ? 300 : -300,
-      gestureSourceType:"mouse",preventFling:true,speed:1000});
+    await wheel(tabId,v.clientWidth/2,v.clientHeight/2,args.direction === "up" ? -300 : 300);
   } else if (operation === "scroll_at") {
     const p = point(args.x,args.y);
     if (!Number.isFinite(args.amount) || Math.abs(args.amount) > 100) throw new Error("Invalid scroll amount");
     const {cssVisualViewport:v} = await command(tabId,"Page.getLayoutMetrics");
     if (p.x >= v.clientWidth || p.y >= v.clientHeight) throw new Error("Scroll coordinates outside viewport");
-    // Use the complete scroll gesture, whose reply marks gesture completion.
-    // A raw mouseWheel can scroll while its CDP acknowledgement stays pending.
-    await command(tabId,"Input.synthesizeScrollGesture",{...p,xDistance:0,yDistance:args.amount*100,
-      gestureSourceType:"mouse",preventFling:true,speed:1000});
+    // Hidden tabs can stall synthesized gestures. Focus emulation lets wheel
+    // input complete without foregrounding; the following screenshot verifies it.
+    await wheel(tabId,p.x,p.y,-args.amount*100);
   } else if (operation === "swipe") {
     const a = point(args.x1,args.y1), b = point(args.x2,args.y2);
     await command(tabId,"Input.dispatchMouseEvent",{type:"mousePressed",button:"left",clickCount:1,...a});

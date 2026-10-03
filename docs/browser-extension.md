@@ -91,6 +91,11 @@ minimized windows. Explicit page selection still brings the selected page forwar
 Screenshots use `Page.captureScreenshot` with the existing PNG surface and viewport
 clip settings. No alternate capture source or automatic reconnect is used.
 
+Supported acceptance scenarios include inactive tabs, background windows and
+fully covered windows. Minimized windows are outside the current support scope;
+their screenshot behavior is not a release gate. Short-idle checks keep the
+window normal and the target tab inactive.
+
 Only one viewport request per page may remain outstanding. A request timeout does
 not cancel Chrome's underlying command: later requests for that page report the
 pending capture instead of piling up more screenshots. Other pages and read-only
@@ -125,11 +130,19 @@ against browser/process exits. No heartbeat-triggered shutdown is used.
 Use `device_act` with `{"type":"scroll_at","x":30,"y":60,"coordinate_space":"percent","amount":-3}`
 and a fresh observation ID to send the wheel event inside the intended pane.
 Positive amounts scroll up; negative amounts scroll down. One unit requests
-100 CSS pixels, delivered as a mouse scroll gesture at the chosen point. The browser determines the responding scroll container and actual
+100 CSS pixels, delivered as a mouse wheel event at the chosen point. The browser determines the responding scroll container and actual
 movement; observe again to verify. At a container boundary, normal browser scroll
 chaining can move an ancestor. `scroll_up`/`scroll_down` still target the viewport
 center, while `swipe` is a mouse drag. Updated runtime and extension files are
 required for `scroll_at`; reload the extension after updating it.
+
+Wheel input temporarily enables CDP logical focus emulation so an inactive tab
+can process the event. This can trigger the page's focus/visibility handlers;
+it does not select the tab or foreground its window. The extension disables
+emulation when the command settles, and also attempts cleanup on timeout.
+A timed-out wheel command remains locked until Chrome replies, and is never
+automatically replayed. Screenshot capture continues using `Page.captureScreenshot`.
+Minimized-window capture remains a separate known limitation.
 
 The extension backend also supports the pointer actions `hover`, `double_click`,
 `right_click` and `long_press` through `device_act`. `hover` moves the pointer

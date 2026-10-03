@@ -77,6 +77,12 @@ class Handler(BaseHTTPRequestHandler):
 @unittest.skipUnless(os.environ.get("SAYGO_TEST_CHROME"),"set SAYGO_TEST_CHROME for real extension integration")
 class ExtensionLive(unittest.TestCase):
     def test_native_host_existing_tab_visual_input_and_release(self):
+        self.run_live(self.check_capture_and_scroll)
+
+    def test_background_tab_input_after_manual_tab_switch(self):
+        self.run_live(self.check_background_input)
+
+    def run_live(self, check):
         from playwright.sync_api import sync_playwright
         from PIL import Image
         with tempfile.TemporaryDirectory() as tmp, sync_playwright() as pw:
@@ -89,6 +95,9 @@ class ExtensionLive(unittest.TestCase):
             env={**os.environ,"HOME":tmp,"XDG_CONFIG_HOME":str(root/".config")}
             context=pw.chromium.launch_persistent_context(str(root/"profile"),
                 no_viewport=True, executable_path=os.environ["SAYGO_TEST_CHROME"],headless=os.environ.get("SAYGO_TEST_HEADED") != "1",
+                ignore_default_args=["--disable-background-timer-throttling",
+                                     "--disable-backgrounding-occluded-windows",
+                                     "--disable-renderer-backgrounding"],
                 env=env,args=["--no-sandbox",f"--disable-extensions-except={extension}",f"--load-extension={extension}"])
             try:
                 worker=context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker")
@@ -243,13 +252,59 @@ class ExtensionLive(unittest.TestCase):
                     self.assertEqual(created_state["status"],"succeeded",created_state.get("error"))
                     new_id=created_state["outputs"]["create"]["created_page_id"]
                     platform.close_page(new_id)
-                self.check_capture_and_scroll(context, page, ui, platform, url, root)
+                check(context, page, ui, platform, url, root)
                 send("release")
                 with self.assertRaises(RuntimeError): platform.tap(1,1)
                 self.assertEqual(send("status")["pages"],[])
                 self.assertFalse(page.is_closed())
             finally:
                 context.close()
+
+    def check_background_input(self, context, page, ui, platform, url, root):
+        """Exercise the native bridge with an actually inactive owned tab."""
+        page.goto(url+'/scroll')
+        page.evaluate("window.fixtureClicks=0; document.body.addEventListener('click',()=>window.fixtureClicks++)")
+        # Playwright enables focus emulation by default. Disable that test-only
+        # assistance so switching tabs resembles a user's ordinary browser.
+        session = context.new_cdp_session(page)
+        session.send('Emulation.setFocusEmulationEnabled', {'enabled':False})
+        tab = int(platform.page_id.split(':')[-1])
+        window = ui.evaluate('id => chrome.tabs.get(id)', tab)['windowId']
+        other = ui.evaluate('o => chrome.tabs.create(o)',
+                            {'windowId':window, 'url':url+'/inactive', 'active':True})
+        epoch = json.loads((root/'bridge/status.json').read_text())['epoch']
+        try:
+            for index in range(12):
+                completed = False
+                with self.subTest(background_switch=index):
+                    # Chrome APIs arrange fixtures; only the bridge sends input
+                    # and captures screenshots of the target.
+                    ui.evaluate('id => chrome.tabs.update(id,{active:true})', tab)
+                    platform.screenshot_raw()
+                    ui.evaluate('id => chrome.tabs.update(id,{active:true})', other['id'])
+                    before = platform.diagnose()
+                    self.assertFalse(before['tab_active'])
+                    platform.screenshot_raw()
+                    platform.tap(150,100)
+                    platform.scroll_at(150,200,-1 if index % 2 == 0 else 1)
+                    platform.screenshot_raw()
+                    after = platform.diagnose()
+                    for key in ('window_id','window_state','window_focused','tab_active'):
+                        self.assertEqual(after[key],before[key],key)
+                    self.assertTrue(after['connection_retained'])
+                    self.assertFalse(after['last_capture']['pending'])
+                    self.assertEqual(page.evaluate('window.fixtureClicks'),index+1)
+                    offsets = page.evaluate('[left.scrollTop,right.scrollTop,window.scrollY]')
+                    self.assertAlmostEqual(offsets[0],100 if index % 2 == 0 else 0,delta=3)
+                    self.assertEqual(offsets[1:],[0,0])
+                    self.assertEqual(json.loads((root/'bridge/status.json').read_text())['epoch'],epoch)
+                    completed = True
+                # An ambiguous input must not be followed by another test input.
+                if not completed:
+                    break
+        finally:
+            ui.evaluate('id => chrome.tabs.remove(id)', other['id'])
+            session.detach()
 
     def check_capture_and_scroll(self, context, page, ui, platform, url, root):
         """Chrome APIs arrange isolated fixtures; all captures/input use the bridge."""
@@ -264,7 +319,8 @@ class ExtensionLive(unittest.TestCase):
         cover = ui.evaluate("url => chrome.windows.create({url, focused:true, width:900, height:700})",url+'/cover')
         cover_id = cover['id']
         inactive = None
-        modes = ['foreground', 'background', 'covered', 'minimized', 'inactive'] if os.environ.get('SAYGO_TEST_HEADED') == '1' else ['inactive']
+        # Minimized windows are outside the supported acceptance scope.
+        modes = ['foreground', 'background', 'covered', 'inactive'] if os.environ.get('SAYGO_TEST_HEADED') == '1' else ['inactive']
         bridge_before = json.loads((root/'bridge/status.json').read_text())
         try:
             for index, mode in enumerate(modes):
@@ -279,14 +335,10 @@ class ExtensionLive(unittest.TestCase):
                         ui.evaluate('id => chrome.windows.update(id,{left:800,top:0,width:700,height:650,focused:true})',cover_id)
                     elif mode == 'covered':
                         ui.evaluate('id => chrome.windows.update(id,{state:"maximized",focused:true})',cover_id)
-                    elif mode == 'minimized':
-                        ui.evaluate('id => chrome.windows.update(id,{state:"minimized"})',window)
-                        ui.evaluate('id => chrome.windows.update(id,{focused:true})',cover_id)
                     else:
                         inactive=ui.evaluate('o => chrome.tabs.create(o)',{'windowId':window,'url':url+'/inactive','active':True})
                     page.wait_for_timeout(250)
                     before=platform.diagnose()
-                    if mode=='minimized': self.assertEqual(before['window_state'],'minimized')
                     if mode=='inactive': self.assertFalse(before['tab_active'])
                     elif mode=='foreground': self.assertTrue(before['window_focused'])
                     else: self.assertFalse(before['window_focused'])
@@ -303,9 +355,12 @@ class ExtensionLive(unittest.TestCase):
                         ui.evaluate('id => chrome.tabs.remove(id)',inactive['id']);inactive=None
             # Cross the worker's ordinary idle interval without screenshot requests.
             # This is a 35-second check, not a multi-hour endurance test.
-            with self.subTest(capture_mode='short_idle'):
-                if os.environ.get('SAYGO_TEST_HEADED') == '1':
-                    ui.evaluate('id => chrome.windows.update(id,{state:"minimized"})',window)
+            with self.subTest(capture_mode='inactive_short_idle'):
+                ui.evaluate('id => chrome.windows.update(id,{state:"normal"})',window)
+                inactive=ui.evaluate('o => chrome.tabs.create(o)',{'windowId':window,'url':url+'/inactive','active':True})
+                before=platform.diagnose()
+                self.assertFalse(before['tab_active'])
+                self.assertEqual(before['window_state'],'normal')
                 time.sleep(35)
                 self.assertTrue(platform.diagnose()['connection_retained'])
                 page.evaluate('document.body.style.background="rgb(12,34,56)"')
@@ -314,6 +369,12 @@ class ExtensionLive(unittest.TestCase):
                 bridge_after=json.loads((root/'bridge/status.json').read_text())
                 self.assertEqual(bridge_after['epoch'],bridge_before['epoch'])
                 self.assertTrue(bridge_after['connected'])
+                after=platform.diagnose()
+                for key in ('window_id','window_state','window_focused','tab_active'):
+                    self.assertEqual(after[key],before[key],key)
+                self.assertFalse(after['last_capture']['pending'])
+            if inactive:
+                ui.evaluate('id => chrome.tabs.remove(id)',inactive['id']);inactive=None
             ui.evaluate('id => chrome.windows.update(id,{state:"normal"})',window)
             ui.evaluate('id => chrome.tabs.update(id,{active:true})',tab)
             platform.select_page(platform.page_id)
