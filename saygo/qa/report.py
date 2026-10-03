@@ -66,6 +66,10 @@ def _render_heal_report(report: dict | None) -> str:
             f'<pre><code>{_esc(case_fix)}</code></pre></details>'
         )
 
+    suggestion_html = (
+        f'<div class="heal-suggestion"><b>建议</b>：{suggestion}</div>'
+        if suggestion else ""
+    )
     return (
         f'<div class="heal-report {meta["cls"]}">'
         f'<div class="heal-header">'
@@ -74,7 +78,7 @@ def _render_heal_report(report: dict | None) -> str:
         f'<span class="heal-confidence">置信度 {confidence}</span>'
         f'</div>'
         f'<div class="heal-summary">{summary}</div>'
-        f'{f"<div class=\"heal-suggestion\"><b>建议</b>：{suggestion}</div>" if suggestion else ""}'
+        f'{suggestion_html}'
         f'{fix_html}'
         f'</div>'
     )
