@@ -212,3 +212,30 @@ test('closing short-lived capture tabs leaves no retained capture state',async (
   assert.equal(vm.runInContext('viewportPending.size',b.context),0);
   assert.equal(b.clock.timers.size,0);
 });
+
+test('diagnostics correlate timed-out captures and count late CDP completion without payloads',async () => {
+  let finish;
+  const b=browser({command:(_,method) => {
+    if (method === 'Page.captureScreenshot') return new Promise(resolve => {finish=resolve;});
+  }});
+  const request=b.context.runRequest('screenshot',{page_id:'test:1'},'trace-request');
+  const rejected=assert.rejects(request,/timed out/);
+  await b.clock.advance(20000);
+  await rejected;
+  const pending=await b.run('diagnose');
+  assert.equal(pending.last_capture.request_id,'trace-request');
+  assert.equal(pending.page_id,'test:1');
+  assert.equal(pending.last_capture.timeline.at(-1).status,'pending');
+  assert.equal(pending.debug.commands['Page.captureScreenshot'].pending,1);
+  assert.equal(pending.debug.commands['Page.captureScreenshot'].completed,0);
+  assert.equal(pending.debug.pending_captures,1);
+  finish({data:'private-image-payload'});
+  await b.clock.flush();
+  const done=await b.run('diagnose');
+  assert.equal(done.last_capture.pending,false);
+  assert.equal(done.last_capture.timeline.at(-1).status,'completed');
+  assert.equal(done.debug.commands['Page.captureScreenshot'].pending,0);
+  assert.equal(done.debug.commands['Page.captureScreenshot'].completed,1);
+  assert.equal(done.debug.pending_captures,0);
+  assert.equal(JSON.stringify(done).includes('private-image-payload'),false);
+});

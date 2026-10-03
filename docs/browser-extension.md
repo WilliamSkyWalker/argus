@@ -106,6 +106,14 @@ focus, tab activity, debugger attachment, and last screenshot stage/timing. Upda
 both the runtime and extension to use these diagnostics. Screenshot timeout errors
 also include the recorded state without needing a new runtime.
 
+When a screenshot times out inside `Page.captureScreenshot`, the error and
+diagnostic `user_notice` explain that Chrome's screenshot interface has not
+responded, the connection is retained, and the user should retry observation
+later. While the original request is pending, wait for it to finish first.
+Never interpret this as permission to repeat a click or resend a message;
+observe and check the previous action's outcome first. This identifies the
+unresponsive interface, not a confirmed internal Chrome root cause.
+
 Native Messaging connections keep the extension worker alive; active debugger
 sessions also do so on Chrome 118 and later. See the
 [Chrome lifecycle documentation](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle).

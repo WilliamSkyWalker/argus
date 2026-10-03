@@ -39,6 +39,8 @@ let inputPending = false;
 const viewportPending = new Map();
 const captureHistory = new Map();
 const captureDocuments = new Map();
+const debugStarted = Date.now();
+const commandStats = new Map();
 const READ_OPERATIONS = new Set(["pages", "metadata", "diagnose", "size", "screenshot", "network_read"]);
 const attached = new Set();
 const attaching = new Map();
@@ -96,7 +98,23 @@ async function attach(tabId) {
   try { await job; } finally { if (attaching.get(tabId) === job) attaching.delete(tabId); }
 }
 async function cdp(tabId, method, params = {}) {
-  return chrome.debugger.sendCommand({tabId}, method, params);
+  // Aggregate only: never retain command parameters, images or network bodies.
+  let stat = commandStats.get(method);
+  if (!stat) { stat = {started:0, completed:0, failed:0, pending:0}; commandStats.set(method, stat); }
+  const started = Date.now();
+  stat.started++;
+  if (stat.pending++ === 0) stat.busy_since_ms = started;
+  try {
+    const result = await chrome.debugger.sendCommand({tabId}, method, params);
+    stat.completed++;
+    return result;
+  } catch (error) { stat.failed++; throw error; }
+  finally {
+    stat.pending--;
+    if (!stat.pending) stat.busy_since_ms = null;
+    stat.last_elapsed_ms = Date.now() - started;
+    stat.max_elapsed_ms = Math.max(stat.max_elapsed_ms || 0, stat.last_elapsed_ms);
+  }
 }
 async function captureState(tabId) {
   const tab = await chrome.tabs.get(tabId);
@@ -106,10 +124,17 @@ async function captureState(tabId) {
 }
 function captureStatus(trace) {
   if (!trace) return null;
-  return {operation:trace.operation, stage:trace.stage, timed_out:trace.expired, pending:!trace.finished,
+  return {request_id:trace.requestId || null, started_at_ms:trace.started, finished_at_ms:trace.finished || null,
+    timeline:trace.timeline || [], operation:trace.operation, stage:trace.stage, timed_out:trace.expired, pending:!trace.finished,
     elapsed_ms:(trace.finished || Date.now())-trace.started,
     stage_elapsed_ms:(trace.finished || Date.now())-trace.stageStarted,
     before:trace.before || null, error:trace.error || null};
+}
+function captureNotice(trace) {
+  if (!trace?.expired || trace.stage !== "Page.captureScreenshot") return null;
+  return "Chrome 的截图接口未及时响应，Saygo 连接仍保留。" +
+    (!trace.finished ? "上一次截图仍在等待 Chrome 返回，请稍候再重试截图。" : "上一次请求已结束，请重试截图。") +
+    "请勿重复点击或发送消息；取得新截图后先核对上一次操作结果。无需重连插件。";
 }
 async function detachAll() {
   network.reset(); networkPaused.clear();
@@ -151,7 +176,7 @@ async function connect() {
         await ready;
         if (port !== current || ticket !== generation) throw new Error("Control was released");
         if (Date.now() / 1000 >= request.deadline) throw new Error("Request expired before dispatch");
-        response = {result: await runRequest(request.operation, request.arguments)};
+        response = {result: await runRequest(request.operation, request.arguments, request.id)};
       } catch (error) { response = {error: String(error.message || error)}; }
       const text = JSON.stringify(response);
       // Native host receives <= 1 MiB per frame, including Unicode JSON overhead.
@@ -172,16 +197,16 @@ async function connect() {
 }
 // Input stays serialized while an underlying browser call is unresolved. Reads
 // remain available, including after a timed-out input. Never replay old input.
-async function runRequest(operation, args = {}) {
+async function runRequest(operation, args = {}, requestId = null) {
   const input = !READ_OPERATIONS.has(operation);
   const viewport = operation === "screenshot" || operation === "size";
   const pending = viewportPending.get(args.page_id);
   if (viewport && pending) {
-    throw new Error(`Previous browser capture is still pending: ${JSON.stringify(captureStatus(pending))}; connection retained`);
+    throw new Error(`${captureNotice(pending) || ""} Previous browser capture is still pending: ${JSON.stringify(captureStatus(pending))}; connection retained`);
   }
   if (input && inputPending) throw new Error("Previous browser input is still pending; observe before continuing");
   if (input) inputPending = true;
-  const trace = {operation, stage: "target", expired:false, started:Date.now(), stageStarted:Date.now()};
+  const trace = {requestId, timeline:[], operation, stage: "target", expired:false, started:Date.now(), stageStarted:Date.now()};
   if (viewport) {
     viewportPending.set(args.page_id, trace);
     // Observation also asks for size; that must not erase screenshot evidence.
@@ -202,16 +227,25 @@ async function runRequest(operation, args = {}) {
       timer = setTimeout(() => {
         trace.expired = true;
         const detail = viewport ? `; capture=${JSON.stringify(captureStatus(trace))}` : "";
-        reject(new Error(`Browser request timed out at ${trace.stage}; outcome unknown; connection retained${detail}`));
+        reject(new Error(`${captureNotice(trace) || ""} Browser request timed out at ${trace.stage}; outcome unknown; connection retained${detail}`));
       }, (20 + duration) * 1000);
     })]);
   } finally { clearTimeout(timer); }
 }
 async function execute(operation, args = {}, trace = {}) {
-  const command = (tabId, method, params) => {
+  const command = async (tabId, method, params) => {
     trace.stage = method;
     trace.stageStarted = Date.now();
-    return cdp(tabId, method, params);
+    const entry = {method, started_ms:Date.now() - trace.started, status:"pending"};
+    trace.timeline ||= [];
+    trace.timeline.push(entry);
+    if (trace.timeline.length > 48) trace.timeline.shift();
+    try {
+      const result = await cdp(tabId, method, params);
+      entry.status = "completed";
+      return result;
+    } catch (error) { entry.status = "failed"; throw error; }
+    finally { entry.elapsed_ms = Date.now() - trace.started - entry.started_ms; }
   };
   if (operation === "pages") return pages();
   if (operation === "new_page") {
@@ -223,8 +257,12 @@ async function execute(operation, args = {}, trace = {}) {
   }
   const tabId = await target(args.page_id);
   if (operation === "diagnose") {
-    return {capture_mode:"cdp_surface", ...await captureState(tabId),
+    return {capture_mode:"cdp_surface", sampled_at_ms:Date.now(), page_id:args.page_id, ...await captureState(tabId),
+      debug:{worker_started_at_ms:debugStarted, worker_uptime_ms:Date.now()-debugStarted,
+        pending_captures:viewportPending.size, input_pending:inputPending,
+        attached_tabs:attached.size, commands:Object.fromEntries(commandStats)},
       last_capture:captureStatus(captureHistory.get(args.page_id)),
+      user_notice:captureNotice(captureHistory.get(args.page_id)),
       connection_retained:!!port && negotiated, debugger_attached:attached.has(tabId)};
   }
   if (operation.startsWith('network_')) {
